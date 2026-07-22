@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown,
+  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
+import * as bank from "./lib/bank";
 import { askClaude } from "./lib/extract";
 
 /* ================= palettes: midnight & daylight ledger ================= */
@@ -566,6 +567,8 @@ function Ledger({ onSignOut }) {
   const [fatal, setFatal] = useState(null);              // "migration" | null
   const [newLedgerOpen, setNewLedgerOpen] = useState(false);
   const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
+  const [bankReview, setBankReview] = useState(null); // rows from a Plaid sync awaiting review
+  const [accountOpen, setAccountOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
 
@@ -964,12 +967,12 @@ function Ledger({ onSignOut }) {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={onSignOut}
-              title="Sign out"
+              onClick={() => setAccountOpen(true)}
+              title="Profile, membership, and settings"
               style={{ color: P.muted, border: `1px solid ${P.line}` }}
               className="rounded p-2"
             >
-              <LogOut size={15} />
+              <User size={15} />
             </button>
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -1029,7 +1032,7 @@ function Ledger({ onSignOut }) {
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
-        {tab === "integrations" && <IntegrationsTab data={data} updateLedgerMeta={(patch) => {
+        {tab === "integrations" && <IntegrationsTab data={data} openBankReview={(rows) => setBankReview(rows)} updateLedgerMeta={(patch) => {
           setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
@@ -1062,7 +1065,18 @@ function Ledger({ onSignOut }) {
       </div>
 
       <PreviewModal preview={preview} onClose={closePreview} />
+      {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onClose={() => setAccountOpen(false)} />}
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
+      {bankReview && (
+        <ImportModal
+          data={data}
+          addSub={addSub}
+          initialRows={bankReview}
+          sourceLabel="bank sync"
+          onImport={importStatement}
+          onClose={() => setBankReview(null)}
+        />
+      )}
       {transferOpen && (
         <TransferModal
           data={data}
@@ -1157,6 +1171,25 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // rows arriving from a bank sync skip the AI step entirely
+  useEffect(() => {
+    if (!initialRows) return;
+    const defaults = initialRows.map((t) => ({
+      date: t.date,
+      amount: Math.abs(Number(t.amount)) || 0,
+      direction: t.direction === "credit" ? "credit" : "debit",
+      description: t.description || "·",
+      category: t.direction === "credit"
+        ? (data.categories.income[0]?.name || "Other")
+        : (data.categories.expense[0]?.name || "Other"),
+      subcategory: "",
+      account: data.ledger.kind === "personal" ? "personal" : "business",
+      recurrence: "once",
+    })).filter((t) => t.amount > 0 && t.date);
+    setRows(markDuplicates(defaults));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const parsed = parseFloat(amount);
   const valid = !Number.isNaN(parsed) && date;
   const drift = valid && currentValue != null ? parsed - currentValue : null;
@@ -1217,8 +1250,8 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
 }
 
 /* ================= statement import & reconciliation ================= */
-function ImportModal({ data, addSub, onImport, onClose }) {
-  const [step, setStep] = useState("input"); // input | review
+function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel }) {
+  const [step, setStep] = useState(initialRows ? "review" : "input"); // input | review
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -3029,7 +3062,7 @@ const TOUR_COPY = {
   arap: ["Who owes you, who you owe", "Upload an invoice and the fields fill themselves. Recurring items queue their next occurrence automatically when you settle them. Tap any open item to edit everything about it."],
   credits: ["Money that isn't cash", "Pools for AWS credits, compute credits, and the like. Anything paid via a pool draws the pool down instead of your bank balance. Tap a pool to edit it, including credits used before you started tracking."],
   calendar: ["What's coming due", "List view shows the next 30 or 90 days. Calendar view is a month grid, and recurring items are projected onto their future dates. Tap a day to see what lands on it."],
-  integrations: ["The outside world", "The T2 draft maps your year onto CRA's GIFI codes, computes your deadlines, and preps the accountant email. The bank feed is scaffolded and activates once aggregator keys are added."],
+  integrations: ["The outside world", "Connect your bank with Plaid right here, and new transactions arrive in a review you confirm. Tax drafts map your year onto CRA's forms, compute deadlines, and prep the accountant email."],
 };
 
 function TourCard({ tab, onDismiss }) {
@@ -3151,7 +3184,7 @@ const addMonths = (dateStr, m) => {
   return d.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
 };
 
-function IntegrationsTab({ data, updateLedgerMeta }) {
+function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
   const yearsAvail = [...new Set(bizTx.map((t) => Number((t.date || "").slice(0, 4))).filter(Boolean))].sort((a, b) => b - a);
@@ -3215,35 +3248,10 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
 
   return (
     <div className="space-y-6">
-      {/* ---------- bank feed ---------- */}
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Bank feed</h2>
-            <p style={{ color: P.muted }} className="text-sm">Automatic transaction sync via Plaid</p>
-          </div>
-          <span style={{ fontFamily: MONO, color: P.faint, border: `1px solid ${P.line}` }} className="text-xs rounded-full px-2 py-0.5">not connected</span>
-        </div>
-        <p style={{ color: P.muted }} className="text-sm mt-3">
-          Canadian banks don't expose direct APIs, feeds run through an aggregator. Once keys are in place, new
-          purchases and deposits land in the same review queue as statement import: duplicates auto-detected,
-          categories pre-assigned, nothing saved until confirmed. Until then, the statement import in Transactions
-          covers the same ground manually.
-        </p>
-        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3 space-y-1.5">
-          {[
-            ["1", "Create a Plaid account (plaid.com), the free tier covers a small number of linked banks"],
-            ["2", "Add PLAID_CLIENT_ID and PLAID_SECRET as Supabase Edge Function secrets (same place as the Anthropic key)"],
-            ["3", "Ask your developer (or Claude) to deploy the sync function, the app is structured so this slots in without reworking anything"],
-          ].map(([n, t]) => (
-            <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
-              <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>
-            </div>
-          ))}
-        </div>
-      </section>
+      <BankFeedCard data={data} openBankReview={openBankReview} />
 
-      {/* ---------- CRA T2 ---------- */}
+      {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
+      {!isBiz ? <PersonalTaxCard data={data} /> : (
       <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -3396,6 +3404,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }
@@ -3508,6 +3517,439 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
             </p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+
+/* ================= live bank feed (Plaid) ================= */
+function BankFeedCard({ data, openBankReview }) {
+  const [conns, setConns] = useState(null); // null = loading
+  const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(null);
+  const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");
+  const [showSetup, setShowSetup] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try { setConns(await bank.listConnections(data.ledger.id)); }
+      catch { setConns([]); setShowSetup(true); }
+    })();
+  }, [data.ledger.id]);
+
+  const connect = async () => {
+    setErr(""); setNotice(""); setBusy(true);
+    try {
+      const { link_token } = await bank.plaid("create_link_token");
+      const Plaid = await bank.loadPlaidLink();
+      const handler = Plaid.create({
+        token: link_token,
+        onSuccess: async (public_token, metadata) => {
+          try {
+            await bank.plaid("exchange", {
+              public_token,
+              ledger_id: data.ledger.id,
+              institution: metadata?.institution?.name || "Bank",
+            });
+            setConns(await bank.listConnections(data.ledger.id));
+            setNotice("Bank connected. Tap Sync now to pull transactions into review.");
+          } catch (e) { setErr(String(e.message || e)); }
+        },
+        onExit: () => {},
+      });
+      handler.open();
+    } catch (e) {
+      const msg = String(e.message || e);
+      setErr(/configured|PLAID|client_id|secret/i.test(msg)
+        ? "Plaid isn't set up on the server yet. Open the setup steps below."
+        : msg);
+      setShowSetup(true);
+    }
+    setBusy(false);
+  };
+
+  const sync = async (id) => {
+    setErr(""); setNotice(""); setSyncing(id);
+    try {
+      const { transactions } = await bank.plaid("sync", { connection_id: id });
+      setConns(await bank.listConnections(data.ledger.id));
+      if (!transactions.length) setNotice("Up to date. Nothing new since the last sync.");
+      else openBankReview(transactions);
+    } catch (e) { setErr(String(e.message || e)); }
+    setSyncing(null);
+  };
+
+  const disconnect = async (id) => {
+    if (!window.confirm("Disconnect this bank? Entries you already imported stay in the ledger.")) return;
+    try {
+      await bank.plaid("disconnect", { connection_id: id });
+      setConns((c) => (c || []).filter((x) => x.id !== id));
+    } catch (e) { setErr(String(e.message || e)); }
+  };
+
+  return (
+    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Bank feed</h2>
+          <p style={{ color: P.muted }} className="text-sm">Connect a bank and pull new transactions into review, right here</p>
+        </div>
+        <span style={{ fontFamily: MONO, color: conns?.length ? P.credit : P.faint, border: `1px solid ${conns?.length ? P.credit : P.line}` }} className="text-xs rounded-full px-2 py-0.5 whitespace-nowrap">
+          {conns === null ? "checking…" : conns.length ? `${conns.length} connected` : "not connected"}
+        </span>
+      </div>
+
+      {conns?.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {conns.map((c) => (
+            <div key={c.id} style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm truncate">{c.institution || "Bank"}</div>
+                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+                  {c.last_synced ? `last synced ${String(c.last_synced).slice(0, 10)}` : "never synced"}
+                </div>
+              </div>
+              <Btn tone="ghost" onClick={() => sync(c.id)} disabled={syncing === c.id}>
+                {syncing === c.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Sync now
+              </Btn>
+              <button onClick={() => disconnect(c.id)} style={{ color: P.faint }} title="Disconnect"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 mt-4">
+        <Btn onClick={connect} disabled={busy}>
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Connect a bank
+        </Btn>
+        <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">opens Plaid inside the app · your banking password never touches Brasstally</span>
+      </div>
+      {notice && <p style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-2">{notice}</p>}
+      {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
+
+      <button onClick={() => setShowSetup(!showSetup)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted mt-4">
+        {showSetup ? "hide" : "show"} one-time server setup
+      </button>
+      {showSetup && (
+        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-2 space-y-1.5">
+          {[
+            ["1", "Run supabase/migration-bank-connections.sql in the SQL Editor"],
+            ["2", "Edge Functions: add secrets PLAID_CLIENT_ID, PLAID_SECRET, and PLAID_ENV (sandbox to test, production when approved)"],
+            ["3", "Deploy the function: Edge Functions, New function, name it exactly \"plaid\", paste supabase/functions/plaid/index.ts, Deploy"],
+            ["4", "Reload this page and tap Connect a bank"],
+          ].map(([n, t]) => (
+            <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
+              <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ================= personal tax (T1) for Personal Ledgers ================= */
+function PersonalTaxCard({ data }) {
+  const yearsAvail = [...new Set(data.transactions.map((t) => Number((t.date || "").slice(0, 4))).filter(Boolean))].sort((a, b) => b - a);
+  const [ty, setTy] = useState(yearsAvail[0] || new Date().getFullYear());
+  const [draft, setDraft] = useState(false);
+  const [path, setPath] = useState("A");
+  const [copied, setCopied] = useState(false);
+  const [accEmail, setAccEmail] = useState("");
+  const [accNote, setAccNote] = useState(`Hi, below is my ${new Date().getFullYear()} personal tax summary from Brasstally. Slips (T4/T5) will come via CRA auto-fill. Can you review and let me know what else you need?`);
+  const [emailCopied, setEmailCopied] = useState(false);
+
+  const yrTx = data.transactions.filter((t) => (t.date || "").startsWith(String(ty)) && !t.plExclude);
+  const incomeByCat = {};
+  yrTx.filter((t) => t.type === "income").forEach((t) => { incomeByCat[t.category] = (incomeByCat[t.category] || 0) + t.amount; });
+  const totalIncome = Object.values(incomeByCat).reduce((s, v) => s + v, 0);
+
+  // self-employment slice: business-account entries inside a personal ledger
+  const seTx = yrTx.filter((t) => t.account === "business");
+  const seIncome = seTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const seExpByCat = {};
+  seTx.filter((t) => t.type === "expense").forEach((t) => { seExpByCat[t.category] = (seExpByCat[t.category] || 0) + t.amount; });
+  const seExpenses = Object.values(seExpByCat).reduce((s, v) => s + v, 0);
+  const hasSE = seIncome > 0 || seExpenses > 0;
+
+  // deduction and credit candidates, straight from categories
+  const catSum = (name) => yrTx.filter((t) => t.type === "expense" && t.category === name).reduce((s, t) => s + t.amount, 0);
+  const medical = catSum("Health");
+  const donations = catSum("Gifts");
+
+  const lines = [
+    ["Income", null, null],
+    ...Object.entries(incomeByCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => ["  " + c, v, null]),
+    ["Total income recorded", totalIncome, "strong"],
+    ...(hasSE ? [
+      ["Self-employment (T2125)", null, null],
+      ["  Gross self-employment income", seIncome, null],
+      ...Object.entries(seExpByCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => ["  " + c, -v, null]),
+      ["  Net self-employment income", seIncome - seExpenses, "strong"],
+    ] : []),
+    ["Possible deductions and credits", null, null],
+    ...(medical > 0 ? [["  Medical expenses (line 33099)", medical, null]] : []),
+    ...(donations > 0 ? [["  Charitable donations (line 34900)", donations, null]] : []),
+    ...(medical === 0 && donations === 0 ? [["  None detected from your categories this year", null, null]] : []),
+  ];
+
+  const draftText = () =>
+    `T1 PREP · ${data.ledger.name} · tax year ${ty}\n` +
+    lines.map(([label, v]) => v === null ? label.toUpperCase() : `${label}: ${v.toFixed(2)}`).join("\n") +
+    "\nNote: T4/T5 slips come from CRA auto-fill; this covers what CRA can't see.";
+
+  const copyDraft = () => {
+    navigator.clipboard?.writeText(draftText()).catch(() => {});
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
+  };
+  const exportCSV = () => {
+    downloadCSV(`T1_prep_${ty}.csv`, [
+      [`T1 prep · ${data.ledger.name}`, `tax year ${ty}`],
+      [],
+      ["Line", "Amount"],
+      ...lines.map(([label, v]) => [label.trim(), v === null ? "" : v.toFixed(2)]),
+    ]);
+  };
+  const mailtoHref = () => {
+    const subject = encodeURIComponent(`Personal tax ${ty}, summary for review`);
+    const body = encodeURIComponent(accNote + "\n\n" + draftText());
+    return `mailto:${accEmail}?subject=${subject}&body=${body}`;
+  };
+
+  return (
+    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">CRA · Personal tax (T1)</h2>
+          <p style={{ color: P.muted }} className="text-sm">A filing-ready summary of this Personal Ledger's year, for NETFILE software or your accountant</p>
+        </div>
+      </div>
+
+      <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3">
+        <p style={{ color: P.muted }} className="text-xs">
+          Straight talk: personal returns file through NETFILE-certified software or an accountant's EFILE, and CRA's
+          auto-fill already knows your T4s and T5s. What CRA can't see is everything in this ledger: self-employment
+          income, deductible expenses, medical, donations. That's the part this prepares.
+        </p>
+      </div>
+
+      <div className="grid sm:grid-cols-4 gap-3 mt-4 items-end">
+        <div>
+          <Label>Tax year</Label>
+          <Select value={ty} onChange={(e) => { setTy(Number(e.target.value)); setDraft(false); }}>
+            {(yearsAvail.length ? yearsAvail : [new Date().getFullYear()]).map((y) => <option key={y} value={y}>{y}</option>)}
+          </Select>
+        </div>
+        <div className="sm:col-span-3">
+          <Btn onClick={() => setDraft(true)}><FileText size={14} /> Generate T1 summary</Btn>
+        </div>
+      </div>
+
+      {draft && (
+        <div className="mt-4 space-y-4">
+          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+            <Label>Deadlines for tax year {ty}</Label>
+            <div className="grid sm:grid-cols-3 gap-3 mt-1">
+              {[
+                [`Mar 2, ${ty + 1}`, "RRSP deadline", "Contributions in the first 60 days still count for this year"],
+                [`Apr 30, ${ty + 1}`, "Return and balance due", "Filing and payment deadline for most people"],
+                ...(hasSE ? [[`Jun 15, ${ty + 1}`, "Self-employed filing", "Extra time to file, but any balance is still due Apr 30"]] : [[`Jul – Aug ${ty + 1}`, "Benefit recalcs", "GST/HST credit and benefits reset off this return"]]),
+              ].map(([date, title, sub]) => (
+                <div key={title}>
+                  <div style={{ fontFamily: MONO, color: P.brass }} className="text-sm">{date}</div>
+                  <div className="text-sm" style={{ color: P.text }}>{title}</div>
+                  <div className="text-xs" style={{ color: P.faint }}>{sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+            <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
+              <Label>T1 prep · {ty}</Label>
+              <div className="flex gap-2">
+                <Btn tone="ghost" onClick={copyDraft}>{copied ? <Check size={13} /> : null} {copied ? "Copied" : "Copy"}</Btn>
+                <Btn tone="ghost" onClick={exportCSV}><Download size={13} /> CSV</Btn>
+              </div>
+            </div>
+            {yrTx.length === 0 ? (
+              <p style={{ color: P.faint }} className="text-sm py-3">Nothing recorded in {ty} yet.</p>
+            ) : (
+              <div className="divide-y" style={{ borderColor: P.line }}>
+                {lines.map(([label, v, strong], idx) => (
+                  <div key={idx} className="flex items-center gap-3 py-1.5" style={{ borderColor: P.line }}>
+                    <span className={"flex-1 text-sm truncate " + (v === null ? "uppercase tracking-widest text-xs" : strong ? "font-medium" : "")}
+                      style={{ color: v === null ? P.faint : strong ? P.text : P.muted, fontFamily: v === null ? MONO : undefined }}>
+                      {label.trim()}
+                    </span>
+                    {v !== null && (
+                      <span style={{ fontFamily: MONO, color: strong ? (v >= 0 ? P.credit : P.debit) : v >= 0 ? P.text : P.muted }} className="text-sm tabular-nums">{fmt(v)}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <p style={{ color: P.faint }} className="text-xs mt-2">
+              Deduction lines are candidates from your categories; eligibility rules apply, so confirm before claiming.
+            </p>
+          </div>
+
+          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+            <Label>How to file this</Label>
+            <div className="flex gap-1 mt-1 mb-3 flex-wrap">
+              {[["A", "File it myself"], ["B", "Through an accountant"]].map(([k, label]) => (
+                <button key={k} onClick={() => setPath(k)}
+                  style={{ fontFamily: MONO, background: path === k ? P.surface2 : "transparent", border: `1px solid ${path === k ? P.brass : P.line}`, color: path === k ? P.text : P.muted }}
+                  className="rounded px-3 py-1 text-xs">
+                  {label}
+                </button>
+              ))}
+            </div>
+            {(path === "A" ? [
+              ["Pick NETFILE-certified software", "Wealthsimple Tax (free), TurboTax, or UFile. The certified list is on canada.ca."],
+              ["Auto-fill from CRA My Account", "One click pulls every T4, T5, and RRSP slip CRA already has. No typing slips."],
+              ["Enter what CRA can't see", "This summary: self-employment income and expenses (the T2125 section), medical, donations."],
+              ["NETFILE and keep the confirmation", "File from the software, then attach the confirmation to a $0 entry here so the record lives with the books."],
+            ] : [
+              ["Send the package below", "This summary plus the P&L export. Slips arrive via their CRA access, so this is the missing half."],
+              ["Authorize them once", "Approve their RepID in CRA My Account so they can pull your slips and EFILE."],
+              ["Review and sign the T183", "The one form you personally sign before they transmit."],
+              ["File the NOA here", "When the Notice of Assessment arrives, attach it to a $0 entry so next year starts organized."],
+            ]).map(([t, b], i) => (
+              <div key={i} className="flex gap-2 mb-2">
+                <span style={{ fontFamily: MONO, color: P.brass }} className="text-sm shrink-0">{i + 1}.</span>
+                <div><div className="text-sm" style={{ color: P.text }}>{t}</div><div className="text-xs" style={{ color: P.muted }}>{b}</div></div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+            <Label>Send to your accountant</Label>
+            <div className="space-y-2 mt-1">
+              <div><Label>Accountant's email</Label><Input type="email" value={accEmail} onChange={(e) => setAccEmail(e.target.value)} placeholder="taxes@yourcpa.ca" /></div>
+              <div>
+                <Label>Message</Label>
+                <textarea value={accNote} onChange={(e) => setAccNote(e.target.value)} rows={3}
+                  style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.text }}
+                  className="rounded px-2 py-1.5 text-sm w-full outline-none" />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <a href={accEmail.includes("@") ? mailtoHref() : undefined}
+                  style={{ background: accEmail.includes("@") ? P.brass : P.surface2, color: "#10120C", opacity: accEmail.includes("@") ? 1 : 0.4, pointerEvents: accEmail.includes("@") ? "auto" : "none" }}
+                  className="rounded px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5">
+                  <Mail size={14} /> Open in your email app
+                </a>
+                <Btn tone="ghost" onClick={() => {
+                  navigator.clipboard?.writeText(`To: ${accEmail}\nSubject: Personal tax ${ty}, summary for review\n\n${accNote}\n\n${draftText()}`).catch(() => {});
+                  setEmailCopied(true); setTimeout(() => setEmailCopied(false), 2000);
+                }}>
+                  {emailCopied ? <Check size={13} /> : null} {emailCopied ? "Copied" : "Copy as email text"}
+                </Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ================= account: profile, membership, billing, settings ================= */
+function AccountModal({ theme, setTheme, onSignOut, onClose }) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setEmail(data?.user?.email || "");
+      setName(data?.user?.user_metadata?.name || "");
+    });
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const saveName = async () => {
+    setSaving(true); setMsg("");
+    const { error } = await supabase.auth.updateUser({ data: { name: name.trim() } });
+    setSaving(false);
+    setMsg(error ? error.message : "Saved.");
+  };
+  const sendReset = async () => {
+    setMsg("");
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    setMsg(error ? error.message : `Password link sent to ${email}.`);
+  };
+  const replayTours = () => {
+    Object.keys(window.localStorage).filter((k) => k.startsWith("tour:")).forEach((k) => window.localStorage.removeItem(k));
+    setMsg("Tutorials will show again on each tab.");
+  };
+
+  const Section = ({ title, children }) => (
+    <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4">
+      <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest mb-2">{title}</div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-start">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Account</h3>
+          <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+        </div>
+
+        <Section title="Profile">
+          <Label>Email</Label>
+          <div style={{ fontFamily: MONO, color: P.muted, border: `1px solid ${P.line}`, background: P.bg }} className="rounded px-2 py-1.5 text-sm mb-2">{email || "…"}</div>
+          <Label>Name</Label>
+          <div className="flex gap-2">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="How should we address you?" />
+            <Btn onClick={saveName} disabled={saving}>{saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</Btn>
+          </div>
+        </Section>
+
+        <Section title="Membership">
+          <div className="flex items-center gap-2">
+            <span style={{ fontFamily: MONO, color: P.bg, background: P.brass }} className="text-xs rounded px-2 py-0.5">Early access</span>
+            <span style={{ color: P.muted }} className="text-sm">Free · founding member</span>
+          </div>
+          <p style={{ color: P.faint }} className="text-xs mt-2">Unlimited ledgers while Brasstally is in early access. When paid plans arrive, founding members hear first, and your books stay yours either way.</p>
+        </Section>
+
+        <Section title="Billing">
+          <p style={{ color: P.muted }} className="text-sm">Nothing to bill yet. Cards, invoices, and receipts will live here when plans launch.</p>
+        </Section>
+
+        <Section title="Settings">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span style={{ color: P.muted }} className="text-sm">Appearance</span>
+              <Btn tone="ghost" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />} {theme === "dark" ? "Switch to daylight" : "Switch to midnight"}
+              </Btn>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span style={{ color: P.muted }} className="text-sm">Tab tutorials</span>
+              <Btn tone="ghost" onClick={replayTours}><RotateCcw size={13} /> Show again</Btn>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span style={{ color: P.muted }} className="text-sm">Password</span>
+              <Btn tone="ghost" onClick={sendReset}><Mail size={13} /> Send reset link</Btn>
+            </div>
+          </div>
+        </Section>
+
+        {msg && <p style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-3">{msg}</p>}
+
+        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4">
+          <Btn tone="ghost" className="w-full justify-center" onClick={onSignOut}><LogOut size={14} /> Sign out</Btn>
+        </div>
       </div>
     </div>
   );
