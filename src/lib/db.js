@@ -134,6 +134,20 @@ export async function loadAll() {
   if (txs.error) throw txs.error;
   if (obs.error) throw obs.error;
 
+  // anchor history is optional — tolerate a missing table if the migration hasn't run yet
+  let anchorHistory = [];
+  try {
+    const { data: anchors } = await supabase
+      .from("balance_anchors").select("*")
+      .order("created_at", { ascending: false }).limit(20);
+    anchorHistory = (anchors || []).map((a) => ({
+      amount: Number(a.amount),
+      date: a.anchor_date,
+      source: a.source,
+      createdAt: (a.created_at || "").slice(0, 10),
+    }));
+  } catch { /* table not created yet */ }
+
   return {
     settings: {
       startingBalance: Number(settings.starting_balance),
@@ -148,6 +162,7 @@ export async function loadAll() {
     transactions: txs.data.map(rowToTx),
     receivables: obs.data.filter((o) => o.kind === "receivable").map(rowToOb),
     payables: obs.data.filter((o) => o.kind === "payable").map(rowToOb),
+    anchorHistory,
   };
 }
 
@@ -165,10 +180,15 @@ export async function insertTransactions(txs) {
 }
 
 export async function updateTransaction(id, patch) {
+  const map = {
+    date: "date", amount: "amount", type: "type", category: "category",
+    description: "description", account: "account", recurrence: "recurrence",
+    attachmentId: "attachment_path", attachmentName: "attachment_name",
+  };
   const row = {};
-  if ("attachmentId" in patch) row.attachment_path = patch.attachmentId || null;
-  if ("attachmentName" in patch) row.attachment_name = patch.attachmentName || null;
-  if ("recurrence" in patch) row.recurrence = patch.recurrence;
+  for (const [k, col] of Object.entries(map)) {
+    if (k in patch) row[col] = patch[k] ?? null;
+  }
   const { error } = await supabase.from("transactions").update(row).eq("id", id);
   if (error) throw error;
 }
@@ -202,13 +222,17 @@ export async function deleteObligation(id) {
 }
 
 // Reconcile: "my real combined balance was `amount` as of `date`".
-export async function setAnchor(amount, date) {
+// Also logs the event to balance_anchors so there's an audit trail.
+export async function setAnchor(amount, date, source = "manual") {
   const { data: { user } } = await supabase.auth.getUser();
   const { error } = await supabase
     .from("settings")
     .update({ starting_balance: amount, anchor_date: date })
     .eq("user_id", user.id);
   if (error) throw error;
+  try {
+    await supabase.from("balance_anchors").insert({ amount, anchor_date: date, source });
+  } catch { /* history table optional until migration runs */ }
 }
 
 export async function setTheme(theme) {

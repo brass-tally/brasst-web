@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail,
+  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -352,7 +352,7 @@ function Ledger({ onSignOut }) {
         setData({
           settings: { startingBalance: 0, anchorDate: "1970-01-01", currency: "CAD", theme: "dark" },
           categories: { expense: [], income: [] },
-          transactions: [], receivables: [], payables: [],
+          transactions: [], receivables: [], payables: [], anchorHistory: [],
         });
       }
     })();
@@ -414,6 +414,13 @@ function Ledger({ onSignOut }) {
     if (t?.attachmentId) deleteAttachment(t.attachmentId);
     setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.id !== id) }));
     dbTry(() => db.deleteTransaction(id));
+  };
+  const updateTx = (id, patch) => {
+    setData((d) => ({
+      ...d,
+      transactions: d.transactions.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    }));
+    dbTry(() => db.updateTransaction(id, patch));
   };
   const setTxAttachment = (id, attachmentId, attachmentName) => {
     setData((d) => ({
@@ -482,19 +489,20 @@ function Ledger({ onSignOut }) {
       setData((d) => ({ ...d, transactions: [...recs, ...d.transactions] }));
       dbTry(() => db.insertTransactions(recs));
     }
-    if (anchor) {
-      setData((d) => ({ ...d, settings: { ...d.settings, startingBalance: anchor.amount, anchorDate: anchor.date } }));
-      dbTry(() => db.setAnchor(anchor.amount, anchor.date));
-    }
+    if (anchor) setAnchor(anchor.amount, anchor.date, "statement");
     const latest = recs.reduce((m, t) => (t.date && t.date > m ? t.date : m), "");
     if (latest) setMonth(latest.slice(0, 7));
     setImporting(false);
   };
 
-  const setAnchor = (amount, date) => {
-    setData((d) => ({ ...d, settings: { ...d.settings, startingBalance: amount, anchorDate: date } }));
+  const setAnchor = (amount, date, source = "manual") => {
+    setData((d) => ({
+      ...d,
+      settings: { ...d.settings, startingBalance: amount, anchorDate: date },
+      anchorHistory: [{ amount, date, source, createdAt: todayStr() }, ...(d.anchorHistory || [])],
+    }));
     setReconciling(false);
-    dbTry(() => db.setAnchor(amount, date));
+    dbTry(() => db.setAnchor(amount, date, source));
   };
 
   const setTheme = (t) => {
@@ -589,7 +597,7 @@ function Ledger({ onSignOut }) {
         )}
 
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
-        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} month={month} />}
+        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} openPreview={openPreview} />}
       </div>
@@ -626,6 +634,7 @@ function Ledger({ onSignOut }) {
           anchorAmount={balance.anchorAmount}
           anchorDate={balance.anchorDate}
           onSave={setAnchor}
+          anchorHistory={data.anchorHistory || []}
           onImportInstead={() => { setReconciling(false); setImporting(true); }}
           onClose={() => setReconciling(false)}
         />
@@ -693,7 +702,7 @@ function PreviewModal({ preview, onClose }) {
 }
 
 /* ================= balance reconciliation ================= */
-function ReconcileModal({ currentValue, anchorAmount, anchorDate, onSave, onImportInstead, onClose }) {
+function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory = [], onSave, onImportInstead, onClose }) {
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayStr());
 
@@ -738,6 +747,19 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, onSave, onImpo
           Currently anchored: {fmt(anchorAmount)} on {anchorDate}. Entries dated on or before the anchor stay in your
           P&L and history — they just don't feed the balance.
         </p>
+        {anchorHistory.length > 0 && (
+          <div className="mb-4">
+            <Label>Balance history</Label>
+            <div className="divide-y" style={{ borderColor: P.line }}>
+              {anchorHistory.slice(0, 8).map((h, i) => (
+                <div key={i} className="flex justify-between gap-3 py-1.5 text-xs" style={{ fontFamily: MONO, borderColor: P.line }}>
+                  <span style={{ color: P.text }}>{fmt(h.amount)} <span style={{ color: P.faint }}>as of {h.date}</span></span>
+                  <span style={{ color: P.faint }}>{h.source === "statement" ? "statement import" : "manual fix"} · {h.createdAt}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <Btn className="w-full justify-center" disabled={!valid} onClick={() => onSave(parsed, date)}>
           <Check size={14} /> Anchor balance here
         </Btn>
@@ -1482,10 +1504,62 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
   );
 }
 
-function Transactions({ data, monthTx, addTx, delTx, setTxAttachment, openPreview, openImport, month }) {
+/* inline editor for an existing transaction row */
+function TxEditor({ tx, data, onSave, onCancel }) {
+  const [f, setF] = useState({ ...tx, amount: String(tx.amount) });
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const cats = data.categories[f.type].map((c) => c.name);
+
+  const save = () => {
+    const amount = parseFloat(f.amount);
+    onSave({
+      date: f.date,
+      amount: Number.isNaN(amount) ? tx.amount : Math.abs(amount),
+      type: f.type,
+      category: cats.includes(f.category) ? f.category : cats[0],
+      description: f.description,
+      account: f.account,
+      recurrence: f.recurrence === "recurring" ? "recurring" : "once",
+    });
+  };
+
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-3 my-2 grid sm:grid-cols-6 gap-2 items-end">
+      <div><Label>Date</Label><Input type="date" value={f.date || ""} onChange={(e) => set("date", e.target.value)} /></div>
+      <div><Label>Amount</Label><Input type="number" value={f.amount} onChange={(e) => set("amount", e.target.value)} style={{ fontFamily: MONO }} /></div>
+      <div>
+        <Label>Type</Label>
+        <Select value={f.type} onChange={(e) => { const t = e.target.value; setF((p) => ({ ...p, type: t, category: data.categories[t][0].name })); }}>
+          <option value="expense">Expense</option><option value="income">Income</option>
+        </Select>
+      </div>
+      <div>
+        <Label>Category</Label>
+        <Select value={cats.includes(f.category) ? f.category : cats[0]} onChange={(e) => set("category", e.target.value)}>
+          {cats.map((c) => <option key={c}>{c}</option>)}
+        </Select>
+      </div>
+      <div>
+        <Label>Account</Label>
+        <Select value={f.account} onChange={(e) => set("account", e.target.value)}>
+          <option value="business">GENIE AI</option><option value="personal">Personal</option>
+        </Select>
+      </div>
+      <div><Label>Frequency</Label><RecToggle value={f.recurrence === "recurring" ? "recurring" : "once"} onChange={(v) => set("recurrence", v)} /></div>
+      <div className="sm:col-span-4"><Label>Description</Label><Input value={f.description} onChange={(e) => set("description", e.target.value)} /></div>
+      <div className="sm:col-span-2 flex gap-2">
+        <Btn className="flex-1 justify-center" onClick={save}><Check size={14} /> Save changes</Btn>
+        <Btn tone="ghost" onClick={onCancel}><X size={14} /></Btn>
+      </div>
+    </div>
+  );
+}
+
+function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, month }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const blank = { date: `${month}-15`, amount: "", type: "expense", category: "GENIE AI", description: "", account: "business", recurrence: "once" };
   const [form, setForm] = useState(blank);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
@@ -1526,6 +1600,7 @@ function Transactions({ data, monthTx, addTx, delTx, setTxAttachment, openPrevie
           <Btn onClick={() => setAdding(!adding)}><Plus size={14} /> Add</Btn>
         </div>
       </div>
+      <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3">tap any entry to change its category, account, or anything else</p>
       {recOnly && (
         <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3">
           Recurring net this month: <span style={{ color: recTotal >= 0 ? P.credit : P.debit }}>{fmt(recTotal)}</span>
@@ -1567,25 +1642,38 @@ function Transactions({ data, monthTx, addTx, delTx, setTxAttachment, openPrevie
         <p style={{ color: P.faint }} className="text-sm py-8 text-center">{recOnly ? "No recurring entries this month." : "Nothing logged this month yet — add one above or capture a receipt."}</p>
       ) : (
         <div className="divide-y" style={{ borderColor: P.line }}>
-          {list.map((t) => (
-            <div key={t.id} className="flex items-center gap-3 py-2 group" style={{ borderColor: P.line }}>
-              <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs w-12 shrink-0">{t.date?.slice(5)}</div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm truncate">{t.description}</div>
-                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1">
-                  {isRec(t) && <RecMark />}
-                  {t.category} · {t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}
+          {list.map((t) =>
+            editingId === t.id ? (
+              <TxEditor
+                key={t.id}
+                tx={t}
+                data={data}
+                onSave={(patch) => { updateTx(t.id, patch); setEditingId(null); }}
+                onCancel={() => setEditingId(null)}
+              />
+            ) : (
+              <div key={t.id} className="flex items-center gap-3 py-2" style={{ borderColor: P.line }}>
+                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs w-12 shrink-0">{t.date?.slice(5)}</div>
+                <button onClick={() => setEditingId(t.id)} className="flex-1 min-w-0 text-left" title="Edit this entry">
+                  <div className="text-sm truncate">{t.description}</div>
+                  <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1">
+                    {isRec(t) && <RecMark />}
+                    {t.category} · {t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}
+                  </div>
+                </button>
+                <TxAttachment tx={t} setTxAttachment={setTxAttachment} openPreview={openPreview} />
+                <div style={{ fontFamily: MONO, color: t.type === "income" ? P.credit : P.text }} className="text-sm tabular-nums">
+                  {t.type === "income" ? "+" : "−"}{fmt(t.amount)}
                 </div>
+                <button onClick={() => setEditingId(t.id)} style={{ color: P.faint }} title="Edit">
+                  <Pencil size={14} />
+                </button>
+                <button onClick={() => delTx(t.id)} style={{ color: P.faint }} title="Delete">
+                  <Trash2 size={14} />
+                </button>
               </div>
-              <TxAttachment tx={t} setTxAttachment={setTxAttachment} openPreview={openPreview} />
-              <div style={{ fontFamily: MONO, color: t.type === "income" ? P.credit : P.text }} className="text-sm tabular-nums">
-                {t.type === "income" ? "+" : "−"}{fmt(t.amount).replace("$", "$")}
-              </div>
-              <button onClick={() => delTx(t.id)} style={{ color: P.faint }} className="opacity-0 group-hover:opacity-100">
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
+            )
+          )}
         </div>
       )}
     </section>
