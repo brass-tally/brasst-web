@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight,
+  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -565,6 +565,7 @@ function Ledger({ onSignOut }) {
   const [currentLedger, setCurrentLedger] = useState(null);
   const [fatal, setFatal] = useState(null);              // "migration" | null
   const [newLedgerOpen, setNewLedgerOpen] = useState(false);
+  const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
 
@@ -913,25 +914,49 @@ function Ledger({ onSignOut }) {
             <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">
               Brasstally
             </div>
-            <div className="flex items-center gap-2">
-              <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight">{data.ledger.name}</h1>
-              {ledgers.length >= 1 && (
-                <select
-                  value={data.ledger.id}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === "__new__") { setNewLedgerOpen(true); return; }
-                    const l = ledgers.find((x) => x.id === v);
-                    if (l && l.id !== data.ledger.id) setCurrentLedger(l);
-                  }}
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <button
+                  onClick={() => setLedgerMenuOpen((o) => !o)}
                   title="Switch ledger"
-                  style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
-                  className="rounded px-2 py-1 text-xs outline-none"
+                  className="flex items-center gap-1.5 text-left"
                 >
-                  {ledgers.map((l) => <option key={l.id} value={l.id}>{l.name} · {kindLabel(l.kind)}</option>)}
-                  <option value="__new__">+ new ledger…</option>
-                </select>
-              )}
+                  <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight">{data.ledger.name}</h1>
+                  <ChevronDown size={20} style={{ color: P.brass, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                </button>
+                {ledgerMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setLedgerMenuOpen(false)} />
+                    <div
+                      style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 12px 32px rgba(0,0,0,0.35)" }}
+                      className="absolute left-0 top-full mt-2 rounded-lg z-50 min-w-56 overflow-hidden py-1"
+                    >
+                      {ledgers.map((l) => (
+                        <button
+                          key={l.id}
+                          onClick={() => { setLedgerMenuOpen(false); if (l.id !== data.ledger.id) setCurrentLedger(l); }}
+                          style={{ color: l.id === data.ledger.id ? P.text : P.muted }}
+                          className="w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-3 hover:opacity-80"
+                        >
+                          <span className="truncate">{l.name}</span>
+                          {l.id === data.ledger.id
+                            ? <Check size={14} style={{ color: P.brass }} className="shrink-0" />
+                            : <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs shrink-0">{kindLabel(l.kind).split(" ")[0]}</span>}
+                        </button>
+                      ))}
+                      <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-1 pt-1">
+                        <button
+                          onClick={() => { setLedgerMenuOpen(false); setNewLedgerOpen(true); }}
+                          style={{ color: P.brass, fontFamily: MONO }}
+                          className="w-full text-left px-3 py-2 text-xs"
+                        >
+                          + new ledger…
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
               <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="rounded-full px-2 py-0.5 text-xs whitespace-nowrap">
                 {kindLabel(data.ledger.kind)}
               </span>
