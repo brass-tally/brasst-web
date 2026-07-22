@@ -36,7 +36,7 @@ const PALETTES = {
     overlay: "rgba(40,44,36,0.45)",
   },
 };
-// Mutable palette object — every component reads P at render time, so swapping
+// Mutable palette object, every component reads P at render time, so swapping
 // its values and re-rendering the tree re-themes the whole app.
 const P = { ...PALETTES.dark };
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
@@ -189,7 +189,7 @@ const RecToggle = ({ value, onChange }) => (
 );
 const RecMark = () => <Repeat size={11} style={{ color: P.brass, display: "inline", verticalAlign: "-1px" }} title="Recurring" />;
 
-/* subcategory dropdown — lists the category's subs and lets you add a new one inline */
+/* subcategory dropdown, lists the category's subs and lets you add a new one inline */
 const subsFor = (data, type, category) =>
   (data.categories[type]?.find((c) => c.name === category)?.subs) || [];
 
@@ -214,7 +214,7 @@ function SubPicker({ data, type, category, value, onChange, addSub, compact }) {
       className={compact ? "rounded px-1 py-0.5 text-xs w-24" : "rounded px-2 py-1.5 text-sm w-full outline-none"}
       title="Subcategory"
     >
-      <option value="">{compact ? "— sub —" : "— no subcategory —"}</option>
+      <option value="">{compact ? "sub" : "no subcategory"}</option>
       {subs.map((s) => <option key={s} value={s}>{s}</option>)}
       {value && !subs.includes(value) && <option value={value}>{value}</option>}
       <option value="__add__">+ add subcategory…</option>
@@ -289,15 +289,15 @@ Subcategories per category (use only if clearly applicable, else null): ${subPro
 Today's date: ${todayStr()}.
 Respond ONLY with raw JSON (no markdown, no preamble):
 {"type":"expense"|"income","amount":number,"date":"YYYY-MM-DD","description":"vendor/short description","category":"one of the listed categories for that type","subcategory":"one of that category's subcategories or null","account":"business"|"personal","recurrence":"recurring"|"once","note":"one short line on anything you were unsure about, else empty string"}
-Software/SaaS/cloud/contractor items are business expenses — pick the closest business category (software, hosting, salaries, etc.). If the date is missing, use today's date. Amount is the total paid.
-recurrence: "recurring" for subscriptions, SaaS, hosting, rent/mortgage, salaries, retainers, utilities — anything billed on a repeating cycle; "once" for one-off purchases.`;
+Software/SaaS/cloud/contractor items are business expenses, pick the closest business category (software, hosting, salaries, etc.). If the date is missing, use today's date. Amount is the total paid.
+recurrence: "recurring" for subscriptions, SaaS, hosting, rent/mortgage, salaries, retainers, utilities, anything billed on a repeating cycle; "once" for one-off purchases.`;
 }
 
 function arExtractionPrompt(kind) {
   const who =
     kind === "receivables"
-      ? `This document is an invoice the user's business ISSUED to a client — money owed TO the user. "party" is the client being billed (the bill-to / customer name), NOT the user's own company.`
-      : `This document is an invoice or bill the user RECEIVED — money the user owes. "party" is the vendor/company that issued it.`;
+      ? `This document is an invoice the user's business ISSUED to a client, money owed TO the user. "party" is the client being billed (the bill-to / customer name), NOT the user's own company.`
+      : `This document is an invoice or bill the user RECEIVED, money the user owes. "party" is the vendor/company that issued it.`;
   return `You extract accounts-${kind === "receivables" ? "receivable" : "payable"} data from an invoice for a budget app.
 ${who}
 Today's date: ${todayStr()}.
@@ -318,7 +318,7 @@ class Boundary extends React.Component {
         <div style={{ maxWidth: 480 }}>
           <h1 style={{ fontFamily: "ui-serif, Georgia, serif" }} className="text-xl mb-2">Something broke</h1>
           <p style={{ color: "#8B9389" }} className="text-sm mb-3">
-            The app hit an error instead of rendering. Reloading usually clears it — if it keeps happening, send this to whoever maintains the app:
+            The app hit an error instead of rendering. Reloading usually clears it, if it keeps happening, send this to whoever maintains the app:
           </p>
           <pre style={{ background: "#171F1B", border: "1px solid #2A3530", color: "#C4574E", whiteSpace: "pre-wrap" }} className="rounded p-3 text-xs mb-4">{String(this.state.err)}</pre>
           <button onClick={() => window.location.reload()} style={{ background: "#C9A24B", color: "#10120C" }} className="rounded px-4 py-2 text-sm font-medium">Reload</button>
@@ -331,10 +331,14 @@ class Boundary extends React.Component {
 /* ================= auth gate ================= */
 export default function App() {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
+  const [recovery, setRecovery] = useState(false);   // arrived via a password-reset link
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s);
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -344,7 +348,8 @@ export default function App() {
         <Loader2 className="animate-spin mr-2" size={18} /> Connecting…
       </div>
     );
-  if (!session) return <Login />;
+  if (!session) return <AuthScreen />;
+  if (recovery) return <SetNewPassword onDone={() => setRecovery(false)} />;
   return (
     <Boundary>
       <Ledger key={session.user.id} onSignOut={() => supabase.auth.signOut()} />
@@ -352,55 +357,183 @@ export default function App() {
   );
 }
 
-function Login() {
-  const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-
-  const send = async () => {
-    if (!email.trim()) return;
-    setBusy(true);
-    setErr("");
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
-    });
-    setBusy(false);
-    if (error) setErr(error.message);
-    else setSent(true);
-  };
-
+function AuthCard({ children }) {
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif" }} className="flex items-center justify-center p-4">
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-6 w-full max-w-sm">
-        <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">Business & personal books</div>
-        <h1 style={{ fontFamily: SERIF }} className="text-2xl mb-4">The Ledger</h1>
-        {sent ? (
-          <p style={{ color: P.muted }} className="text-sm">
-            Check <span style={{ color: P.text }}>{email}</span> for a sign-in link. You can close this tab — the link opens the ledger.
-          </p>
-        ) : (
-          <>
-            <Label>Email</Label>
-            <Input type="email" placeholder="you@example.com" value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !busy && send()} />
-            {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
-            <Btn className="w-full justify-center mt-3" onClick={send} disabled={busy || !email.trim()}>
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />} Send sign-in link
-            </Btn>
-            <p style={{ color: P.faint }} className="text-xs mt-3">No password — a magic link lands in your inbox.</p>
-          </>
-        )}
+        <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">Down to brass tacks</div>
+        <h1 style={{ fontFamily: SERIF }} className="text-2xl mb-4">Brass<span style={{ color: P.brass }}>t</span>ally</h1>
+        {children}
       </div>
     </div>
   );
 }
 
+function AuthScreen() {
+  const [mode, setMode] = useState("signin"); // signin | signup | magic | forgot
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const switchMode = (m) => { setMode(m); setErr(""); setNotice(""); setPw(""); setPw2(""); };
+
+  const go = async () => {
+    const em = email.trim();
+    if (!em || busy) return;
+    setErr(""); setNotice(""); setBusy(true);
+    try {
+      if (mode === "signup") {
+        if (pw.length < 8) { setErr("Use at least 8 characters for your password."); return; }
+        if (pw !== pw2) { setErr("The two passwords don't match."); return; }
+        const { data, error } = await supabase.auth.signUp({
+          email: em, password: pw, options: { emailRedirectTo: window.location.origin },
+        });
+        if (error) setErr(error.message);
+        else if (!data.session) setNotice(`Almost there. A verification link is on its way to ${em}. Tap it to confirm your email, then sign in here.`);
+      } else if (mode === "signin") {
+        const { error } = await supabase.auth.signInWithPassword({ email: em, password: pw });
+        if (error) {
+          setErr(/confirm/i.test(error.message)
+            ? "This email isn't verified yet. Check your inbox for the verification link, then try again."
+            : "That email and password don't match. Reset the password below, or use a sign-in link instead.");
+        }
+      } else if (mode === "magic") {
+        const { error } = await supabase.auth.signInWithOtp({ email: em, options: { emailRedirectTo: window.location.origin } });
+        if (error) setErr(error.message);
+        else setNotice(`Check ${em} for a one-tap sign-in link. It verifies your email automatically, and it works for new accounts too.`);
+      } else if (mode === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(em, { redirectTo: window.location.origin });
+        if (error) setErr(error.message);
+        else setNotice(`A password reset link is on its way to ${em}. It brings you back here to set a new one.`);
+      }
+    } finally { setBusy(false); }
+  };
+
+  const linkStyle = { color: P.faint, fontFamily: MONO };
+
+  return (
+    <AuthCard>
+      {(mode === "signin" || mode === "signup") && (
+        <div className="flex gap-1 mb-4">
+          {[["signin", "Sign in"], ["signup", "Create account"]].map(([k, label]) => (
+            <button key={k} onClick={() => switchMode(k)}
+              style={{ fontFamily: MONO, background: mode === k ? P.surface2 : "transparent", border: `1px solid ${mode === k ? P.brass : P.line}`, color: mode === k ? P.text : P.muted }}
+              className="flex-1 rounded px-2 py-1.5 text-xs">
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {notice ? (
+        <>
+          <p style={{ color: P.muted }} className="text-sm">{notice}</p>
+          <button onClick={() => setNotice("")} style={linkStyle} className="text-xs underline decoration-dotted mt-3">back</button>
+        </>
+      ) : (
+        <>
+          <Label>Email</Label>
+          <Input type="email" placeholder="you@example.com" value={email} autoComplete="email"
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && (mode === "magic" || mode === "forgot") && go()} />
+
+          {(mode === "signin" || mode === "signup") && (
+            <div className="mt-2">
+              <Label>Password</Label>
+              <Input type="password" placeholder={mode === "signup" ? "At least 8 characters" : "Your password"} value={pw}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                onChange={(e) => setPw(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && mode === "signin" && go()} />
+            </div>
+          )}
+          {mode === "signup" && (
+            <div className="mt-2">
+              <Label>Password, again</Label>
+              <Input type="password" placeholder="Same password" value={pw2} autoComplete="new-password"
+                onChange={(e) => setPw2(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && go()} />
+            </div>
+          )}
+          {mode === "forgot" && (
+            <p style={{ color: P.muted }} className="text-xs mt-2">Enter your email and we'll send a link to set a new password.</p>
+          )}
+          {mode === "magic" && (
+            <p style={{ color: P.muted }} className="text-xs mt-2">No password needed. A one-tap link lands in your inbox and opens your books.</p>
+          )}
+
+          {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
+
+          <Btn className="w-full justify-center mt-3" onClick={go}
+            disabled={busy || !email.trim() || ((mode === "signin" || mode === "signup") && !pw)}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+            {mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : mode === "magic" ? "Send sign-in link" : "Send reset link"}
+          </Btn>
+
+          <div className="flex justify-between mt-3">
+            {mode !== "magic" ? (
+              <button onClick={() => switchMode("magic")} style={linkStyle} className="text-xs underline decoration-dotted">Email me a sign-in link instead</button>
+            ) : (
+              <button onClick={() => switchMode("signin")} style={linkStyle} className="text-xs underline decoration-dotted">Use a password instead</button>
+            )}
+            {mode === "signin" && (
+              <button onClick={() => switchMode("forgot")} style={linkStyle} className="text-xs underline decoration-dotted">Forgot password?</button>
+            )}
+            {(mode === "forgot") && (
+              <button onClick={() => switchMode("signin")} style={linkStyle} className="text-xs underline decoration-dotted">Back to sign in</button>
+            )}
+          </div>
+
+          <p style={{ color: P.faint }} className="text-xs mt-4">
+            Verified email, encrypted connection, and your books are isolated to your account.
+          </p>
+        </>
+      )}
+    </AuthCard>
+  );
+}
+
+function SetNewPassword({ onDone }) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    setErr("");
+    if (pw.length < 8) { setErr("Use at least 8 characters."); return; }
+    if (pw !== pw2) { setErr("The two passwords don't match."); return; }
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ password: pw });
+    setBusy(false);
+    if (error) setErr(error.message);
+    else onDone();
+  };
+
+  return (
+    <AuthCard>
+      <p style={{ color: P.muted }} className="text-sm mb-3">You followed a password reset link. Set the new password for this account.</p>
+      <Label>New password</Label>
+      <Input type="password" value={pw} autoComplete="new-password" placeholder="At least 8 characters" onChange={(e) => setPw(e.target.value)} />
+      <div className="mt-2">
+        <Label>New password, again</Label>
+        <Input type="password" value={pw2} autoComplete="new-password" placeholder="Same password" onChange={(e) => setPw2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
+      </div>
+      {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
+      <Btn className="w-full justify-center mt-3" onClick={save} disabled={busy || !pw || !pw2}>
+        {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save new password
+      </Btn>
+    </AuthCard>
+  );
+}
+
+
+
 function statementPrompt(cats, ledgerName) {
   return `You parse bank and credit-card statements for a budget app. The ledger is "${ledgerName}".
-Extract EVERY transaction line — do not summarize, skip, or merge lines.
+Extract EVERY transaction line, do not summarize, skip, or merge lines.
 Expense categories (for debits): ${cats.expense.map((c) => c.name).join(", ")}.
 Income categories (for credits): ${cats.income.map((c) => c.name).join(", ")}.
 Subcategories per category (use only if clearly applicable, else null): ${subPromptInfo(cats)}.
@@ -413,7 +546,7 @@ Respond ONLY with raw JSON (no markdown, no preamble):
 Rules: debit = money leaving the account (purchases, fees, transfers out); credit = money in (deposits, refunds, payroll).
 Software/SaaS/cloud/hosting/contractor charges → account "business" with the closest business category. Payroll deposits → the paycheck/salary income category if one exists.
 recurrence: "recurring" for subscriptions, rent/mortgage, utilities, payroll; otherwise "once".
-Ignore running-balance columns, section headers, and totals rows — they are not transactions.`;
+Ignore running-balance columns, section headers, and totals rows, they are not transactions.`;
 }
 
 /* ================= main app ================= */
@@ -432,6 +565,7 @@ function Ledger({ onSignOut }) {
   const [fatal, setFatal] = useState(null);              // "migration" | null
   const [newLedgerOpen, setNewLedgerOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
 
   /* ---- 1) list this user's ledgers ---- */
   useEffect(() => {
@@ -501,7 +635,7 @@ function Ledger({ onSignOut }) {
     () => (data ? data.transactions.filter((t) => t.date && t.date.startsWith(month)) : []),
     [data, month]
   );
-  // ledger line shows CASH flow — entries paid/received in credits don't move money
+  // ledger line shows CASH flow, entries paid/received in credits don't move money
   const sums = useMemo(() => {
     const cash = monthTx.filter((t) => !isCredits(t));
     const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -661,7 +795,7 @@ function Ledger({ onSignOut }) {
           ? (data.categories.income.find((c) => c.name === "Client revenue")?.name || data.categories.income[0]?.name || "Other")
           : (data.categories.expense[0]?.name || "Other")),
       subcategory: item.subcategory,
-      description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party} — ${item.description}`,
+      description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}, ${item.description}`,
       account: item.account || "business",
       recurrence: item.recurrence,
       payMethod: item.payMethod === "credits" ? "credits" : "cash",
@@ -708,7 +842,7 @@ function Ledger({ onSignOut }) {
   };
   const delAR = (kind, id) => {
     const item = data[kind].find((x) => x.id === id);
-    // keep the file if it was settled — the transaction still points at it
+    // keep the file if it was settled, the transaction still points at it
     if (item?.attachmentId && item.status === "open") deleteAttachment(item.attachmentId);
     setData((d) => ({ ...d, [kind]: d[kind].filter((x) => x.id !== id) }));
     dbTry(() => db.deleteObligation(id));
@@ -776,7 +910,7 @@ function Ledger({ onSignOut }) {
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">
-              The Ledger · {data.ledger.kind === "personal" ? "personal" : "business"}
+              Brasstally · {data.ledger.kind === "personal" ? "personal" : "business"}
             </div>
             <div className="flex items-center gap-2">
               <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight">{data.ledger.name}</h1>
@@ -849,10 +983,16 @@ function Ledger({ onSignOut }) {
 
         {loadErr && (
           <div style={{ border: `1px solid ${P.debit}`, color: P.debit }} className="rounded p-2 text-sm mb-4">
-            Couldn't reach the database — the last change shows on screen but may not have saved. Check your connection and retry.
+            Couldn't reach the database, the last change shows on screen but may not have saved. Check your connection and retry.
           </div>
         )}
 
+        {!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`) && (
+          <TourCard tab={tab} onDismiss={() => {
+            window.localStorage.setItem(`tour:${tab}`, "1");
+            setSeenTours((s) => ({ ...s, [tab]: true }));
+          }} />
+        )}
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} />}
@@ -959,7 +1099,7 @@ function PreviewModal({ preview, onClose }) {
         </div>
         {preview.error ? (
           <p style={{ color: P.debit }} className="text-sm p-6">
-            Couldn't load this file from storage. It may have been removed — try re-attaching it.
+            Couldn't load this file from storage. It may have been removed, try re-attaching it.
           </p>
         ) : isImage ? (
           <div className="overflow-auto flex items-center justify-center p-4" style={{ background: P.bg, maxHeight: "75vh" }}>
@@ -969,7 +1109,7 @@ function PreviewModal({ preview, onClose }) {
           <iframe src={preview.url} title={preview.name} className="w-full" style={{ height: "75vh", border: "none", background: "#525659" }} />
         ) : (
           <p style={{ color: P.muted }} className="text-sm p-6">
-            No inline preview for this file type — use the download button above.
+            No inline preview for this file type, use the download button above.
           </p>
         )}
       </div>
@@ -1000,7 +1140,7 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
         <p style={{ color: P.muted }} className="text-sm mb-4">
-          Check your real accounts and enter the combined total. The ledger anchors to that number on that date —
+          Check your real accounts and enter the combined total. The ledger anchors to that number on that date ,
           months you never tracked before it stop affecting the balance, and only entries you log after it count.
         </p>
         <div className="grid grid-cols-2 gap-3 mb-3">
@@ -1016,12 +1156,12 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
         </div>
         {drift !== null && Math.abs(drift) > 0.005 && (
           <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3">
-            That's {fmt(Math.abs(drift))} {drift > 0 ? "more" : "less"} than the ledger currently shows — the gap is what went untracked.
+            That's {fmt(Math.abs(drift))} {drift > 0 ? "more" : "less"} than the ledger currently shows, the gap is what went untracked.
           </p>
         )}
         <p style={{ color: P.faint }} className="text-xs mb-4">
           Currently anchored: {fmt(anchorAmount)} on {anchorDate}. Entries dated on or before the anchor stay in your
-          P&L and history — they just don't feed the balance.
+          P&L and history, they just don't feed the balance.
         </p>
         {anchorHistory.length > 0 && (
           <div className="mb-4">
@@ -1089,7 +1229,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
           date: t.date,
           amount: Math.abs(Number(t.amount)) || 0,
           direction: t.direction === "credit" ? "credit" : "debit",
-          description: t.description || "—",
+          description: t.description || "·",
           category: t.category,
           subcategory: t.subcategory || "",
           account: t.account === "personal" ? "personal" : "business",
@@ -1120,7 +1260,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
   const handleFile = async (file) => {
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
-      setErr(`That file is ${(file.size / 1048576).toFixed(1)} MB — max 8 MB. Export a smaller range or paste the text.`);
+      setErr(`That file is ${(file.size / 1048576).toFixed(1)} MB, max 8 MB. Export a smaller range or paste the text.`);
       return;
     }
     const name = file.name || "";
@@ -1138,7 +1278,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
         runParse([block, { type: "text", text: statementPrompt(data.categories, data.ledger.name) }]);
       }
     } catch {
-      setErr("Couldn't read that file from your device — try again or paste the text.");
+      setErr("Couldn't read that file from your device, try again or paste the text.");
     }
   };
 
@@ -1180,7 +1320,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
         {step === "input" && (
           <div className="p-5 space-y-3 overflow-y-auto">
             <p style={{ color: P.muted }} className="text-sm">
-              Paste the purchases and deposits straight from your online banking — any format, dates and amounts included —
+              Paste the purchases and deposits straight from your online banking, any format, dates and amounts included ,
               or upload the statement itself (PDF, CSV, or a screenshot). Every line gets read, matched against what's
               already in the ledger, and queued for your review before anything is saved.
             </p>
@@ -1217,7 +1357,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
             <div className="px-5 py-3 space-y-2" style={{ borderBottom: `1px solid ${P.line}` }}>
               <p style={{ color: P.muted }} className="text-sm">
                 Found <span style={{ color: P.text }}>{rows.length}</span> lines
-                {dupCount > 0 && <> · <span style={{ color: P.brass }}>{dupCount} look like they're already in the ledger</span> (unchecked — tick any that aren't actually duplicates)</>}.
+                {dupCount > 0 && <> · <span style={{ color: P.brass }}>{dupCount} look like they're already in the ledger</span> (unchecked, tick any that aren't actually duplicates)</>}.
               </p>
               {err && <p style={{ color: P.faint }} className="text-xs">{err}</p>}
               {ending && (
@@ -1226,7 +1366,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
                   <span>
                     Also anchor the balance to the statement's ending balance:{" "}
                     <span style={{ fontFamily: MONO, color: P.brass }}>{fmt(ending.amount)}</span> on{" "}
-                    <span style={{ fontFamily: MONO }}>{ending.date}</span> — after this, Balance to date matches the bank exactly.
+                    <span style={{ fontFamily: MONO }}>{ending.date}</span>, after this, Balance to date matches the bank exactly.
                   </span>
                 </label>
               )}
@@ -1301,11 +1441,11 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
         <button onClick={onReconcile} className="text-left" title="Set or correct the balance against your real accounts">
           <Label>Balance to date · fix</Label>
           <div style={{ fontFamily: MONO, color: P.brass }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
-            {balance.beforeAnchor ? "—" : fmt(balance.value)}
+            {balance.beforeAnchor ? "," : fmt(balance.value)}
           </div>
         </button>
         {creditsLeft !== null && (
-          <button onClick={onCredits} className="text-left" title="Non-cash credits remaining across all pools — tap to manage">
+          <button onClick={onCredits} className="text-left" title="Non-cash credits remaining across all pools, tap to manage">
             <Label>Credits left</Label>
             <div style={{ fontFamily: MONO, color: creditsLeft > 0 ? P.credit : P.debit }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4">
               {fmt(creditsLeft)}
@@ -1337,7 +1477,7 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
       )}
       <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs mt-2">
         {balance.beforeAnchor
-          ? `this month ends before your balance anchor (${balance.anchorDate}) — no balance shown`
+          ? `this month ends before your balance anchor (${balance.anchorDate}), no balance shown`
           : `anchored: ${fmt(balance.anchorAmount)} on ${balance.anchorDate} · tap the balance to correct it`}
       </div>
     </div>
@@ -1573,7 +1713,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
   const [msgs, setMsgs] = useState([
     {
       role: "assistant",
-      text: "Drop a receipt screenshot or an invoice PDF — or just type something like “paid Vercel $70 today”. I'll read it and pre-fill everything; you confirm the category, personal vs. business, one-time vs. recurring, and whether it's paid or owed. Files are filed with the entry for tax time.",
+      text: "Drop a receipt screenshot or an invoice PDF, or just type something like “paid Vercel $70 today”. I'll read it and pre-fill everything; you confirm the category, personal vs. business, one-time vs. recurring, and whether it's paid or owed. Files are filed with the entry for tax time.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -1588,7 +1728,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
     if (!file) return;
     const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
     if (file.size > MAX_FILE_BYTES) {
-      push({ role: "assistant", text: `That file is ${(file.size / 1048576).toFixed(1)} MB — I can file attachments up to 8 MB. Try exporting a smaller PDF or a screenshot of it.` });
+      push({ role: "assistant", text: `That file is ${(file.size / 1048576).toFixed(1)} MB, I can file attachments up to 8 MB. Try exporting a smaller PDF or a screenshot of it.` });
       return;
     }
     let b64;
@@ -1610,7 +1750,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
         ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
         : { type: "image", source: { type: "base64", media_type: att.type, data: b64 } };
       const draft = await askClaude([block, { type: "text", text: extractionPrompt(data.categories, data.ledger.name) }]);
-      push({ role: "assistant", text: draft.note || "Here's what I read — confirm or adjust:", draft, att });
+      push({ role: "assistant", text: draft.note || "Here's what I read, confirm or adjust:", draft, att });
     } catch {
       push({ role: "assistant", text: "I couldn't read that one. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”)." });
     }
@@ -1625,7 +1765,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
     setBusy(true);
     try {
       const draft = await askClaude([{ type: "text", text: `${extractionPrompt(data.categories, data.ledger.name)}\n\nUser message: "${text}"` }]);
-      push({ role: "assistant", text: draft.note || "Got it — confirm or adjust:", draft });
+      push({ role: "assistant", text: draft.note || "Got it, confirm or adjust:", draft });
     } catch {
       push({ role: "assistant", text: "I couldn't parse that. Try including an amount, e.g. “paid Canva $40 yesterday”." });
     }
@@ -1650,7 +1790,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
         attachmentId: attachmentId || undefined,
         attachmentName: attachmentId ? att.name : undefined,
       });
-      push({ role: "assistant", text: `Logged ${fmt(Number(draft.amount) || 0)} — ${draft.description} → ${draft.category}${recurrence === "recurring" ? " (recurring)" : ""}. Totals are updated.${filed}`, done: true });
+      push({ role: "assistant", text: `Logged ${fmt(Number(draft.amount) || 0)}, ${draft.description} → ${draft.category}${recurrence === "recurring" ? " (recurring)" : ""}. Totals are updated.${filed}`, done: true });
     } else {
       const kind = draft.type === "income" ? "receivables" : "payables";
       addAR(kind, {
@@ -1663,7 +1803,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
         attachmentId: attachmentId || undefined,
         attachmentName: attachmentId ? att.name : undefined,
       });
-      push({ role: "assistant", text: `Added to ${kind === "receivables" ? "receivables (they owe you)" : "payables (you owe)"} — ${fmt(Number(draft.amount) || 0)} · ${draft.description}${recurrence === "recurring" ? " (recurring)" : ""}. Find it in AR / AP.${filed}`, done: true });
+      push({ role: "assistant", text: `Added to ${kind === "receivables" ? "receivables (they owe you)" : "payables (you owe)"}, ${fmt(Number(draft.amount) || 0)} · ${draft.description}${recurrence === "recurring" ? " (recurring)" : ""}. Find it in AR / AP.${filed}`, done: true });
     }
   };
 
@@ -1781,7 +1921,7 @@ function DraftCard({ draft, att, data, addSub, onSave }) {
         <Label>4 · Status</Label>
         <div className="flex gap-1">
           <Btn tone={d.type === "income" ? "credit" : "brass"} className="flex-1 justify-center" onClick={() => { onSave(d, "paid", att); setSaved(true); }}>
-            <Check size={14} /> {d.type === "income" ? "Received" : "Paid"} — log it
+            <Check size={14} /> {d.type === "income" ? "Received" : "Paid"}, log it
           </Btn>
           <Btn tone="ghost" className="flex-1 justify-center" onClick={() => { onSave(d, "owed", att); setSaved(true); }}>
             {d.type === "income" ? "Owed to me" : "I owe this"}
@@ -1934,7 +2074,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   return (
     <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
       <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg">{monthLabel(month)} — {list.length} entries</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-lg">{monthLabel(month)}, {list.length} entries</h2>
         <div className="flex gap-2 items-center">
           {["all", "business", "personal"].map((f) => (
             <button key={f} onClick={() => setFilter(f)}
@@ -1951,7 +2091,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           <Btn tone="ghost" onClick={openTransfer} title="Move money between your ledgers">
             <ArrowLeftRight size={14} /> Transfer
           </Btn>
-          <Btn tone="ghost" onClick={openImport} title="Import a bank statement — paste text or upload a file">
+          <Btn tone="ghost" onClick={openImport} title="Import a bank statement, paste text or upload a file">
             <FileText size={14} /> Import
           </Btn>
           <Btn onClick={() => setAdding(!adding)}><Plus size={14} /> Add</Btn>
@@ -2006,7 +2146,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
       )}
 
       {list.length === 0 ? (
-        <p style={{ color: P.faint }} className="text-sm py-8 text-center">{recOnly ? "No recurring entries this month." : "Nothing logged this month yet — add one above or capture a receipt."}</p>
+        <p style={{ color: P.faint }} className="text-sm py-8 text-center">{recOnly ? "No recurring entries this month." : "Nothing logged this month yet, add one above or capture a receipt."}</p>
       ) : (
         <div className="divide-y" style={{ borderColor: P.line }}>
           {list.map((t) =>
@@ -2032,7 +2172,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                   </div>
                 </button>
                 {isCredits(t) && (
-                  <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1 shrink-0" title="Paid with credits — doesn't affect cash balance">
+                  <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1 shrink-0" title="Paid with credits, doesn't affect cash balance">
                     {creditName(data, t.creditId)}
                   </span>
                 )}
@@ -2091,7 +2231,7 @@ function ProfitLoss({ data, month }) {
   const scopeLabel = scope === "business" ? "Business" : scope === "personal" ? "Personal" : "Combined";
   const exportCSV = () => {
     downloadCSV(`PL_${scopeLabel.replace(/\s/g, "")}_${month}.csv`, [
-      [`Profit & Loss — ${monthLabel(month)}`, scopeLabel],
+      [`Profit & Loss, ${monthLabel(month)}`, scopeLabel],
       [],
       ["Revenue", revenue.toFixed(2)],
       ["Costs & expenses", (-costs).toFixed(2)],
@@ -2226,8 +2366,8 @@ function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openP
     downloadCSV(`AR_AP_${todayStr()}.csv`, [
       [`Receivables & Payables`, `exported ${todayStr()}`],
       [],
-      ["Open — owed to you", openAR.toFixed(2)],
-      ["Open — you owe", openAP.toFixed(2)],
+      ["Open, owed to you", openAR.toFixed(2)],
+      ["Open, you owe", openAP.toFixed(2)],
       ["Net position", net.toFixed(2)],
       [],
       ["Kind", "Party", "For", "Amount", "Due", "Status", "Settled on", "Account", "Frequency", "Category", "Subcategory", "Paid via"],
@@ -2253,8 +2393,8 @@ function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openP
         </div>
       </div>
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="Receivables — they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
-        <ARList kind="payables" title="Payables — you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
+        <ARList kind="receivables" title="Receivables · they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
+        <ARList kind="payables" title="Payables · you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
       </div>
     </div>
   );
@@ -2302,7 +2442,7 @@ function ARFields({ kind, f, set, data, addSub, addCredit }) {
         <PayViaSelect data={data} payMethod={f.payMethod} creditId={f.creditId} addCredit={addCredit}
           onChange={(pm, cid) => { set("payMethod", pm); set("creditId", cid); }} />
         {f.payMethod === "credits" && (
-          <p style={{ color: P.faint }} className="text-xs mt-1">Settling this moves credits, not cash — your balance won't change.</p>
+          <p style={{ color: P.faint }} className="text-xs mt-1">Settling this moves credits, not cash, your balance won't change.</p>
         )}
       </div>
     </>
@@ -2333,7 +2473,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
     if (!file) return;
     setReadErr("");
     if (file.size > MAX_FILE_BYTES) {
-      setReadErr(`That file is ${(file.size / 1048576).toFixed(1)} MB — max 8 MB. Try a smaller export or a screenshot.`);
+      setReadErr(`That file is ${(file.size / 1048576).toFixed(1)} MB, max 8 MB. Try a smaller export or a screenshot.`);
       return;
     }
     const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
@@ -2356,7 +2496,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
       if (d.note) setReadErr(d.note);
       setAdding(true);
     } catch {
-      setReadErr("Couldn't read that invoice — check the fields yourself or try a clearer file.");
+      setReadErr("Couldn't read that invoice, check the fields yourself or try a clearer file.");
       setAdding(true);
     }
     setReading(false);
@@ -2410,7 +2550,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
           onChange={(e) => { onInvoice(e.target.files[0]); e.target.value = ""; }} />
         <Btn tone="ghost" onClick={() => fileRef.current.click()} disabled={reading}
-          title={`Upload an invoice — I'll read it and pre-fill this ${kind === "receivables" ? "receivable" : "payable"}`}>
+          title={`Upload an invoice, I'll read it and pre-fill this ${kind === "receivables" ? "receivable" : "payable"}`}>
           {reading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
         </Btn>
         <Btn tone="ghost" onClick={() => (adding ? cancelAdd() : setAdding(true))} title="Add manually">
@@ -2460,12 +2600,12 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
                   <div className="text-sm truncate">{i.party}</div>
                   <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap">
                     {isRec(i) && <RecMark />}
-                    {i.description || "—"} · due {i.dueDate}{overdue ? " · overdue" : ""}
+                    {i.description || "·"} · due {i.dueDate}{overdue ? " · overdue" : ""}
                     {isRec(i) ? ` · ${freqLabel(i.frequency || "monthly")}` : ""}
                     {i.subcategory ? ` · ${i.subcategory}` : ""}
                   </div>
                   {isCredits(i) && (
-                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits — no cash moves</div>
+                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits, no cash moves</div>
                   )}
                 </button>
                 <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
@@ -2477,7 +2617,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
                 <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
                   <Pencil size={13} />
                 </button>
-                <Btn tone="ghost" onClick={() => settleAR(kind, i.id)} title={`${action} — logs a transaction dated today`}>
+                <Btn tone="ghost" onClick={() => settleAR(kind, i.id)} title={`${action}, logs a transaction dated today`}>
                   <Check size={13} />
                 </Btn>
                 <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
@@ -2543,7 +2683,7 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
         <Btn tone="ghost" onClick={() => setAdding(!adding)}>{adding ? <X size={14} /> : <Plus size={14} />}</Btn>
       </div>
       <p style={{ color: P.faint }} className="text-xs mb-3">
-        Non-cash pools — AWS credits, AI compute credits, MongoDB credits, SR&ED. Anything "paid via" a pool draws it
+        Non-cash pools, AWS credits, AI compute credits, MongoDB credits, SR&ED. Anything "paid via" a pool draws it
         down instead of your bank balance; the total left shows next to Balance to date up top.
       </p>
 
@@ -2557,7 +2697,7 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
       )}
 
       {pools.length === 0 && !adding ? (
-        <p style={{ color: P.faint }} className="text-sm py-2">No credit pools yet — add one with +, or pick "+ add a credit pool…" right inside any Paid via dropdown.</p>
+        <p style={{ color: P.faint }} className="text-sm py-2">No credit pools yet, add one with +, or pick "+ add a credit pool…" right inside any Paid via dropdown.</p>
       ) : (
         <div className="grid sm:grid-cols-2 gap-3">
           {pools.map((c) => {
@@ -2570,7 +2710,7 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
                     <div><Label>Used outside the app</Label><Input type="number" value={edit.usedAdjustment} onChange={(e) => setEdit((p) => ({ ...p, usedAdjustment: e.target.value }))} /></div>
                   </div>
                   <p style={{ color: P.faint }} className="text-xs">
-                    "Used outside the app" covers burn that never went through the ledger — everything you log with
+                    "Used outside the app" covers burn that never went through the ledger, everything you log with
                     "Paid via {c.name}" is subtracted automatically on top of it.
                   </p>
                   <div className="flex gap-2">
@@ -2658,7 +2798,7 @@ function CashCalendar({ data }) {
       <div className="flex-1 min-w-0">
         <div className="text-sm truncate">{o.party}</div>
         <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-          {o.description || "—"}{isRec(o) ? ` · ${freqLabel(o.frequency || "monthly")}` : ""}{o.projected ? " · projected" : ""}
+          {o.description || "·"}{isRec(o) ? ` · ${freqLabel(o.frequency || "monthly")}` : ""}{o.projected ? " · projected" : ""}
         </div>
       </div>
       {isCredits(o) && <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1">{creditName(data, o.creditId)}</span>}
@@ -2715,7 +2855,7 @@ function CashCalendar({ data }) {
           </div>
           {creditsOut > 0 && (
             <p style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-              plus {fmt(creditsOut)} due in credits — not counted in cash impact
+              plus {fmt(creditsOut)} due in credits, not counted in cash impact
             </p>
           )}
         </div>
@@ -2844,6 +2984,32 @@ function CashCalendar({ data }) {
 }
 
 
+/* ================= first-visit tutorials ================= */
+const TOUR_COPY = {
+  overview: ["Your month at a glance", "Planned versus actual, per category. Tap a planned amount to set a budget, tap a category name to see the entries behind it, and use the small arrow to expand subcategories. The chat bubble in the corner captures receipts anywhere in the app."],
+  transactions: ["Every entry lives here", "Add one manually, import a whole bank statement, or use Transfer to move money between your ledgers. Tap the pencil on any row to edit it, and the paperclip to file its receipt."],
+  pl: ["Your profit and loss", "Switch between business, personal, and combined scope. Owner draws are excluded, credit-paid costs get their own line, and Export produces a CSV your accountant can use as is."],
+  arap: ["Who owes you, who you owe", "Upload an invoice and the fields fill themselves. Recurring items queue their next occurrence automatically when you settle them. Tap any open item to edit everything about it."],
+  credits: ["Money that isn't cash", "Pools for AWS credits, compute credits, and the like. Anything paid via a pool draws the pool down instead of your bank balance. Tap a pool to edit it, including credits used before you started tracking."],
+  calendar: ["What's coming due", "List view shows the next 30 or 90 days. Calendar view is a month grid, and recurring items are projected onto their future dates. Tap a day to see what lands on it."],
+  integrations: ["The outside world", "The T2 draft maps your year onto CRA's GIFI codes, computes your deadlines, and preps the accountant email. The bank feed is scaffolded and activates once aggregator keys are added."],
+};
+
+function TourCard({ tab, onDismiss }) {
+  const copy = TOUR_COPY[tab];
+  if (!copy) return null;
+  return (
+    <div style={{ background: P.surface, border: `1px solid ${P.line}`, borderLeft: `3px solid ${P.brass}` }} className="rounded-lg p-4 mb-5 flex items-start gap-3">
+      <div className="flex-1">
+        <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest mb-1">First time here</div>
+        <div style={{ fontFamily: SERIF }} className="text-base mb-1">{copy[0]}</div>
+        <p style={{ color: P.muted }} className="text-sm">{copy[1]}</p>
+      </div>
+      <Btn tone="ghost" onClick={onDismiss} title="Hide this tip"><Check size={14} /> Got it</Btn>
+    </div>
+  );
+}
+
 /* ================= new ledger (onboarding + switcher) ================= */
 function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
   const [name, setName] = useState("");
@@ -2866,12 +3032,12 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
         {!onboarding && <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>}
       </div>
       <p style={{ color: P.muted }} className="text-sm mb-4">
-        A ledger is one set of books — a company, or your personal finances. You can add more anytime and switch from the header.
+        A ledger is one set of books, a company, or your personal finances. You can add more anytime and switch from the header.
       </p>
       <div className="space-y-3">
         <div>
           <Label>Name</Label>
-          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "business" ? "e.g. GENIE AI" : "e.g. Bilal — personal"} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "business" ? "e.g. GENIE AI" : "e.g. Bilal, personal"} onKeyDown={(e) => e.key === "Enter" && submit()} />
         </div>
         <div>
           <Label>Type</Label>
@@ -2957,7 +3123,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
   const [path, setPath] = useState("B");
   const [copied, setCopied] = useState(false);
   const [accEmail, setAccEmail] = useState("");
-  const [accNote, setAccNote] = useState(`Hi — below is our GIFI-coded T2 draft for ${data.ledger.name}. Balance sheet items still to come from your side. Can you review and let me know what else you need?`);
+  const [accNote, setAccNote] = useState(`Hi, below is our GIFI-coded T2 draft for ${data.ledger.name}. Balance sheet items still to come from your side. Can you review and let me know what else you need?`);
   const [emailCopied, setEmailCopied] = useState(false);
 
   const fye = data.ledger.fye || "12-31";
@@ -2988,7 +3154,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
   const draftText = () =>
     `T2 DRAFT · ${data.ledger.name} · FY ${fyStart} to ${fyEnd}\n` +
     gifiRows.map((r) => `${r.code}  ${r.name}: ${r.amount.toFixed(2)}`).join("\n") +
-    (creditsCovered > 0 ? `\nNote: ${creditsCovered.toFixed(2)} of expenses covered by vendor credits (non-cash) — flag for SR&ED/ITC review.` : "");
+    (creditsCovered > 0 ? `\nNote: ${creditsCovered.toFixed(2)} of expenses covered by vendor credits (non-cash), flag for SR&ED/ITC review.` : "");
 
   const copyDraft = () => {
     navigator.clipboard?.writeText(draftText().replace(/\\n/g, "\n")).catch(() => {});
@@ -2996,7 +3162,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
   };
   const exportGifiCSV = () => {
     downloadCSV(`T2_GIFI_${data.ledger.name.replace(/\s/g, "")}_FY${fy}.csv`, [
-      [`T2 draft (GIFI) — ${data.ledger.name}`, `${fyStart} to ${fyEnd}`],
+      [`T2 draft (GIFI) · ${data.ledger.name}`, `${fyStart} to ${fyEnd}`],
       [],
       ["GIFI code", "Line", "Amount"],
       ...gifiRows.map((r) => [r.code, r.name, r.amount.toFixed(2)]),
@@ -3005,7 +3171,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
     ]);
   };
   const mailtoHref = () => {
-    const subject = encodeURIComponent(`${data.ledger.name} — T2 draft (GIFI) for review`);
+    const subject = encodeURIComponent(`${data.ledger.name}, T2 draft (GIFI) for review`);
     const body = encodeURIComponent(accNote + "\n\n" + draftText().replace(/\\n/g, "\n"));
     return `mailto:${accEmail}?subject=${subject}&body=${body}`;
   };
@@ -3022,16 +3188,16 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
           <span style={{ fontFamily: MONO, color: P.faint, border: `1px solid ${P.line}` }} className="text-xs rounded-full px-2 py-0.5">not connected</span>
         </div>
         <p style={{ color: P.muted }} className="text-sm mt-3">
-          Canadian banks don't expose direct APIs — feeds run through an aggregator. Once keys are in place, new
+          Canadian banks don't expose direct APIs, feeds run through an aggregator. Once keys are in place, new
           purchases and deposits land in the same review queue as statement import: duplicates auto-detected,
           categories pre-assigned, nothing saved until confirmed. Until then, the statement import in Transactions
           covers the same ground manually.
         </p>
         <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3 space-y-1.5">
           {[
-            ["1", "Create a Plaid account (plaid.com) — the free tier covers a small number of linked banks"],
+            ["1", "Create a Plaid account (plaid.com), the free tier covers a small number of linked banks"],
             ["2", "Add PLAID_CLIENT_ID and PLAID_SECRET as Supabase Edge Function secrets (same place as the Anthropic key)"],
-            ["3", "Ask your developer (or Claude) to deploy the sync function — the app is structured so this slots in without reworking anything"],
+            ["3", "Ask your developer (or Claude) to deploy the sync function, the app is structured so this slots in without reworking anything"],
           ].map(([n, t]) => (
             <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
               <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>
@@ -3044,14 +3210,14 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
       <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">CRA — Corporate tax (T2)</h2>
+            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">CRA · Corporate tax (T2)</h2>
             <p style={{ color: P.muted }} className="text-sm">GIFI-coded draft from {isBiz ? "this ledger" : "this ledger's business entries"}, ready for certified software or your accountant</p>
           </div>
         </div>
 
         <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3">
           <p style={{ color: P.muted }} className="text-xs">
-            Straight talk: the CRA has no public API for T2 filing — returns go through CRA-certified software or an
+            Straight talk: the CRA has no public API for T2 filing, returns go through CRA-certified software or an
             accountant's EFILE. This does the 90% before that: your year mapped onto GIFI line codes, so filing becomes
             data entry instead of bookkeeping archaeology.
           </p>
@@ -3084,8 +3250,8 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
               <div className="grid sm:grid-cols-3 gap-3 mt-1">
                 {[
                   [addMonths(fyEnd, 3), "Balance owing due", "3 months after year-end (CCPC claiming the small business deduction)"],
-                  [addMonths(fyEnd, 6), "T2 return due", "6 months after year-end — file even if no tax is owing"],
-                  [addMonths(fyEnd, 18), "SR&ED claim cutoff", "T661 within 18 months of year-end — hard deadline, no extensions"],
+                  [addMonths(fyEnd, 6), "T2 return due", "6 months after year-end, file even if no tax is owing"],
+                  [addMonths(fyEnd, 18), "SR&ED claim cutoff", "T661 within 18 months of year-end, hard deadline, no extensions"],
                 ].map(([date, title, sub]) => (
                   <div key={title}>
                     <div style={{ fontFamily: MONO, color: P.brass }} className="text-sm">{date}</div>
@@ -3098,7 +3264,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
 
             <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
               <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
-                <Label>Schedule 125 — income statement (GIFI) · {fyStart} → {fyEnd}</Label>
+                <Label>Schedule 125 · income statement (GIFI) · {fyStart} → {fyEnd}</Label>
                 <div className="flex gap-2">
                   <Btn tone="ghost" onClick={copyDraft}>{copied ? <Check size={13} /> : null} {copied ? "Copied" : "Copy"}</Btn>
                   <Btn tone="ghost" onClick={exportGifiCSV}><Download size={13} /> CSV</Btn>
@@ -3119,11 +3285,11 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
               )}
               {creditsCovered > 0 && (
                 <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-2">
-                  note for your accountant: {fmt(creditsCovered)} of expenses were covered by vendor credits (non-cash) — flag for SR&ED/ITC review
+                  note for your accountant: {fmt(creditsCovered)} of expenses were covered by vendor credits (non-cash), flag for SR&ED/ITC review
                 </p>
               )}
               <p style={{ color: P.faint }} className="text-xs mt-2">
-                GIFI codes are inferred from your categories/subcategories — have your accountant confirm the mapping.
+                GIFI codes are inferred from your categories/subcategories, have your accountant confirm the mapping.
                 Schedule 100 (balance sheet) needs assets/liabilities the ledger doesn't track.
               </p>
             </div>
@@ -3140,18 +3306,18 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
                 ))}
               </div>
               {(path === "A" ? [
-                ["Pick CRA-certified T2 software", "UFile T2 (~$200/return), TaxTron T2, or WebTax4B — the certified list is on canada.ca. This CSV pastes into their GIFI screens line-for-line."],
+                ["Pick CRA-certified T2 software", "UFile T2 (~$200/return), TaxTron T2, or WebTax4B, the certified list is on canada.ca. This CSV pastes into their GIFI screens line-for-line."],
                 ["Enter identification + GIFI lines", "BN (9 digits + RC0001), tax year dates, then Schedule 125 from this draft. Schedule 100 needs your bank balance, receivables (AR tab), payables, and share capital."],
                 ["Get your Web Access Code", "The software fetches it with your BN, or call CRA business enquiries (1-800-959-5525)."],
                 ["Transmit + save the confirmation", "File, save the confirmation number, and attach it to a $0 entry in the ledger so the paper trail lives with the books."],
               ] : path === "B" ? [
-                ["Send the package below", "GIFI draft + P&L export + AR/AP export — a complete handoff. Every entry already has its invoice filed in the app."],
+                ["Send the package below", "GIFI draft + P&L export + AR/AP export, a complete handoff. Every entry already has its invoice filed in the app."],
                 ["Flag the SR&ED angle", "Dev salaries and compute costs are claim material, and credit-covered expenses need specific T661 treatment."],
-                ["Authorize them in Represent a Client", "Approve their RepID in CRA My Business Account — they EFILE, you never touch a form."],
+                ["Authorize them in Represent a Client", "Approve their RepID in CRA My Business Account, they EFILE, you never touch a form."],
                 ["Review + sign the T183CORP", "The one thing you personally sign before they transmit."],
               ] : [
                 ["Track the return", "CRA My Business Account shows assessment status, balance owing, and instalments."],
-                ["Watch for the Notice of Assessment", "Usually 2–6 weeks e-filed — attach it to a $0 entry in the ledger."],
+                ["Watch for the Notice of Assessment", "Usually 2 to 6 weeks e-filed, attach it to a $0 entry in the ledger."],
                 ["Instalments if owing > $3,000", "Add next year's quarterly instalments as recurring payables so the Calendar warns you."],
                 ["Anchor after paying", "When the tax payment clears the bank, log it and re-anchor the balance."],
               ]).map(([t, b], i) => (
@@ -3179,7 +3345,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
                     <Mail size={14} /> Open in your email app
                   </a>
                   <Btn tone="ghost" onClick={() => {
-                    navigator.clipboard?.writeText(`To: ${accEmail}\nSubject: ${data.ledger.name} — T2 draft (GIFI) for review\n\n${accNote}\n\n${draftText().replace(/\\n/g, "\n")}`).catch(() => {});
+                    navigator.clipboard?.writeText(`To: ${accEmail}\nSubject: ${data.ledger.name}, T2 draft (GIFI) for review\n\n${accNote}\n\n${draftText().replace(/\\n/g, "\n")}`).catch(() => {});
                     setEmailCopied(true); setTimeout(() => setEmailCopied(false), 2000);
                   }}>
                     {emailCopied ? <Check size={13} /> : null} {emailCopied ? "Copied" : "Copy as email text"}
@@ -3238,7 +3404,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
         {others.length === 0 ? (
           <div className="py-2">
-            <p style={{ color: P.muted }} className="text-sm mb-3">You only have one ledger — create a second one (e.g. your personal books) and transfers unlock.</p>
+            <p style={{ color: P.muted }} className="text-sm mb-3">You only have one ledger, create a second one (e.g. your personal books) and transfers unlock.</p>
             <Btn className="w-full justify-center" onClick={onNewLedger}><Plus size={14} /> Create another ledger</Btn>
           </div>
         ) : (
@@ -3267,8 +3433,8 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
               <Label>What kind of movement?</Label>
               <div className="space-y-1.5">
                 {[
-                  ["transfer", "Transfer / owner draw", "Moves cash between balances. Excluded from both P&L — like chequing → savings."],
-                  ["payment", "Payment (salary, invoice)", `A real expense for ${data.ledger.name} and real income for the other ledger — shows in both P&L (and the T2 draft).`],
+                  ["transfer", "Transfer / owner draw", "Moves cash between balances. Excluded from both P&L, like chequing → savings."],
+                  ["payment", "Payment (salary, invoice)", `A real expense for ${data.ledger.name} and real income for the other ledger, shows in both P&L (and the T2 draft).`],
                 ].map(([k, title, sub]) => (
                   <button key={k} onClick={() => setMode(k)}
                     style={{ background: mode === k ? P.surface2 : P.bg, border: `1px solid ${mode === k ? P.brass : P.line}` }}
@@ -3300,8 +3466,8 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
               {" "}Move {amount ? fmt(Math.abs(parseFloat(amount)) || 0) : "money"} to {toLedger?.name || "…"}
             </Btn>
             <p style={{ color: P.faint }} className="text-xs">
-              Both sides are written together and stay linked — deleting one removes the other, so the books can't drift.
-              {mode === "payment" && " The receiving side lands in that ledger's Paycheck/revenue category — adjust it there if needed."}
+              Both sides are written together and stay linked, deleting one removes the other, so the books can't drift.
+              {mode === "payment" && " The receiving side lands in that ledger's Paycheck/revenue category, adjust it there if needed."}
             </p>
           </div>
         )}
