@@ -225,6 +225,7 @@ function SubPicker({ data, type, category, value, onChange, addSub, compact }) {
 /* frequency cadences for recurring AR/AP */
 const FREQS = [["weekly", "Weekly"], ["biweekly", "Every 2 weeks"], ["monthly", "Monthly"], ["quarterly", "Quarterly"], ["yearly", "Yearly"]];
 const freqLabel = (f) => (FREQS.find(([k]) => k === f) || [null, "Recurring"])[1];
+const kindLabel = (k) => (k === "personal" ? "Personal Ledger" : "Business Ledger");
 const addInterval = (dateStr, freq) => {
   const d = new Date(dateStr + "T00:00:00");
   if (freq === "weekly") d.setDate(d.getDate() + 7);
@@ -910,7 +911,7 @@ function Ledger({ onSignOut }) {
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">
-              Brasstally · {data.ledger.kind === "personal" ? "personal" : "business"}
+              Brasstally
             </div>
             <div className="flex items-center gap-2">
               <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight">{data.ledger.name}</h1>
@@ -927,10 +928,13 @@ function Ledger({ onSignOut }) {
                   style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
                   className="rounded px-2 py-1 text-xs outline-none"
                 >
-                  {ledgers.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  {ledgers.map((l) => <option key={l.id} value={l.id}>{l.name} · {kindLabel(l.kind)}</option>)}
                   <option value="__new__">+ new ledger…</option>
                 </select>
               )}
+              <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="rounded-full px-2 py-0.5 text-xs whitespace-nowrap">
+                {kindLabel(data.ledger.kind)}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1590,7 +1594,7 @@ function CategoryDrill({ drill, monthTx, month, onClose }) {
                   <div className="flex-1 min-w-0">
                     <div className="text-sm truncate">{t.description}</div>
                     <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-                      {isRec(t) && <RecMark />} {t.subcategory ? t.subcategory + " · " : ""}{t.account === "business" ? "business" : "personal"}{isRec(t) ? " · recurring" : ""}{t.attachmentId ? " · 📎 filed" : ""}
+                      {isRec(t) && <RecMark />} {t.transferId ? "transferred · " : ""}{t.subcategory ? t.subcategory + " · " : ""}{t.account === "business" ? "business" : "personal"}{isRec(t) ? " · recurring" : ""}{t.attachmentId ? " · 📎 filed" : ""}
                     </div>
                   </div>
                   <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">
@@ -2166,11 +2170,19 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 <button onClick={() => setEditingId(t.id)} className="flex-1 min-w-0 text-left" title="Edit this entry">
                   <div className="text-sm truncate">{t.description}</div>
                   <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1">
-                    {t.transferId && <ArrowLeftRight size={11} style={{ color: P.brass, display: "inline" }} />}
                     {isRec(t) && <RecMark />}
                     {t.category}{t.subcategory ? " / " + t.subcategory : ""} · {t.account === "business" ? "business" : "personal"}{isRec(t) ? " · recurring" : ""}{t.plExclude ? " · transfer (not in P&L)" : ""}
                   </div>
                 </button>
+                {t.transferId && (
+                  <span
+                    style={{ fontFamily: MONO, color: P.bg, background: P.brass }}
+                    className="text-xs rounded px-1.5 py-0.5 shrink-0 inline-flex items-center gap-1"
+                    title={t.plExclude ? "Transferred between your ledgers. Excluded from P&L." : "Paid across ledgers as a real expense/income. Counted in P&L."}
+                  >
+                    <ArrowLeftRight size={10} /> {t.type === "expense" ? "transferred out" : "transferred in"}
+                  </span>
+                )}
                 {isCredits(t) && (
                   <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1 shrink-0" title="Paid with credits, doesn't affect cash balance">
                     {creditName(data, t.creditId)}
@@ -3032,7 +3044,7 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
         {!onboarding && <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>}
       </div>
       <p style={{ color: P.muted }} className="text-sm mb-4">
-        A ledger is one set of books, a company, or your personal finances. You can add more anytime and switch from the header.
+        Brasstally is built from ledgers. A Business Ledger keeps a company's books; a Personal Ledger keeps yours. Add as many as you run and switch from the header.
       </p>
       <div className="space-y-3">
         <div>
@@ -3042,7 +3054,7 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
         <div>
           <Label>Type</Label>
           <div className="flex gap-1">
-            {[["business", "Business"], ["personal", "Personal"]].map(([k, label]) => (
+            {[["business", "Business Ledger"], ["personal", "Personal Ledger"]].map(([k, label]) => (
               <button key={k} onClick={() => setKind(k)}
                 style={{ background: kind === k ? P.surface2 : "transparent", border: `1px solid ${kind === k ? P.brass : P.line}`, color: kind === k ? P.text : P.muted }}
                 className="flex-1 rounded px-2 py-1.5 text-sm">
@@ -3051,7 +3063,7 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
             ))}
           </div>
           <p style={{ color: P.faint }} className="text-xs mt-1">
-            {kind === "business" ? "Starts with business categories (revenue, salaries, software, hosting…) and unlocks the CRA T2 draft." : "Starts with personal categories (home, food, transport…)."}
+            {kind === "business" ? "A Business Ledger starts with revenue, salaries, software, and hosting categories, and unlocks the CRA T2 draft." : "A Personal Ledger starts with home, food, and transport categories, and keeps your own money out of the company's books."}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -3412,13 +3424,13 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
             <div className="flex items-center gap-2">
               <div className="flex-1">
                 <Label>From</Label>
-                <div style={{ background: P.bg, border: `1px solid ${P.line}`, fontFamily: MONO }} className="rounded px-2 py-1.5 text-sm">{data.ledger.name}</div>
+                <div style={{ background: P.bg, border: `1px solid ${P.line}`, fontFamily: MONO }} className="rounded px-2 py-1.5 text-sm truncate">{data.ledger.name} <span style={{ color: P.faint }}>· {kindLabel(data.ledger.kind)}</span></div>
               </div>
               <ArrowLeftRight size={16} style={{ color: P.brass }} className="mt-4 shrink-0" />
               <div className="flex-1">
                 <Label>To</Label>
                 <Select value={toId} onChange={(e) => setToId(e.target.value)}>
-                  {others.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  {others.map((l) => <option key={l.id} value={l.id}>{l.name} · {kindLabel(l.kind)}</option>)}
                 </Select>
               </div>
             </div>
