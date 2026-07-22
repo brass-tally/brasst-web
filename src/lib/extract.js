@@ -3,9 +3,9 @@
 
 import { supabase } from "./supabase";
 
-export async function askClaude(content) {
+export async function askClaude(content, maxTokens = 1000) {
   const { data, error } = await supabase.functions.invoke("extract", {
-    body: { content },
+    body: { content, max_tokens: maxTokens },
   });
   if (error) throw error;
   if (data?.error) throw new Error(data.error);

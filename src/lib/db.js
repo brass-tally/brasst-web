@@ -158,6 +158,12 @@ export async function insertTransaction(tx) {
   if (error) throw error;
 }
 
+export async function insertTransactions(txs) {
+  if (!txs.length) return;
+  const { error } = await supabase.from("transactions").insert(txs.map(txToRow));
+  if (error) throw error;
+}
+
 export async function updateTransaction(id, patch) {
   const row = {};
   if ("attachmentId" in patch) row.attachment_path = patch.attachmentId || null;

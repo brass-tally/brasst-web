@@ -306,6 +306,23 @@ function Login() {
   );
 }
 
+function statementPrompt(cats) {
+  return `You parse bank and credit-card statements for a personal + business (GENIE AI) budget app.
+Extract EVERY transaction line — do not summarize, skip, or merge lines.
+Expense categories (for debits): ${cats.expense.map((c) => c.name).join(", ")}.
+Income categories (for credits): ${cats.income.map((c) => c.name).join(", ")}.
+Today's date: ${todayStr()}. If the statement omits the year, infer it from context.
+Respond ONLY with raw JSON (no markdown, no preamble):
+{"transactions":[{"date":"YYYY-MM-DD","amount":number (always positive),"direction":"debit"|"credit","description":"cleaned-up merchant/description","category":"best fit from the matching list","account":"business"|"personal","recurrence":"recurring"|"once"}],
+"endingBalance":number or null (the statement's closing/ending balance if shown),
+"endingBalanceDate":"YYYY-MM-DD" or null (the statement period end date),
+"note":"one short line about anything skipped or ambiguous, else empty string"}
+Rules: debit = money leaving the account (purchases, fees, transfers out); credit = money in (deposits, refunds, payroll).
+Software/SaaS/cloud/hosting/contractor charges → account "business", category "GENIE AI". Salaries/payroll deposits → "Paycheck".
+recurrence: "recurring" for subscriptions, rent/mortgage, utilities, payroll; otherwise "once".
+Ignore running-balance columns, section headers, and totals rows — they are not transactions.`;
+}
+
 /* ================= main app ================= */
 function Ledger({ onSignOut }) {
   const [data, setData] = useState(null);
@@ -316,6 +333,7 @@ function Ledger({ onSignOut }) {
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [chatOpen, setChatOpen] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   /* ---- load from Supabase (seeds the spreadsheet data on first sign-in) ---- */
   useEffect(() => {
@@ -458,6 +476,21 @@ function Ledger({ onSignOut }) {
     window.location.reload();
   };
 
+  const importStatement = (txs, anchor) => {
+    const recs = txs.map((t) => ({ ...t, id: crypto.randomUUID() }));
+    if (recs.length) {
+      setData((d) => ({ ...d, transactions: [...recs, ...d.transactions] }));
+      dbTry(() => db.insertTransactions(recs));
+    }
+    if (anchor) {
+      setData((d) => ({ ...d, settings: { ...d.settings, startingBalance: anchor.amount, anchorDate: anchor.date } }));
+      dbTry(() => db.setAnchor(anchor.amount, anchor.date));
+    }
+    const latest = recs.reduce((m, t) => (t.date && t.date > m ? t.date : m), "");
+    if (latest) setMonth(latest.slice(0, 7));
+    setImporting(false);
+  };
+
   const setAnchor = (amount, date) => {
     setData((d) => ({ ...d, settings: { ...d.settings, startingBalance: amount, anchorDate: date } }));
     setReconciling(false);
@@ -556,7 +589,7 @@ function Ledger({ onSignOut }) {
         )}
 
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
-        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} setTxAttachment={setTxAttachment} openPreview={openPreview} month={month} />}
+        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} openPreview={openPreview} />}
       </div>
@@ -593,8 +626,12 @@ function Ledger({ onSignOut }) {
           anchorAmount={balance.anchorAmount}
           anchorDate={balance.anchorDate}
           onSave={setAnchor}
+          onImportInstead={() => { setReconciling(false); setImporting(true); }}
           onClose={() => setReconciling(false)}
         />
+      )}
+      {importing && (
+        <ImportModal data={data} onImport={importStatement} onClose={() => setImporting(false)} />
       )}
     </div>
   );
@@ -656,7 +693,7 @@ function PreviewModal({ preview, onClose }) {
 }
 
 /* ================= balance reconciliation ================= */
-function ReconcileModal({ currentValue, anchorAmount, anchorDate, onSave, onClose }) {
+function ReconcileModal({ currentValue, anchorAmount, anchorDate, onSave, onImportInstead, onClose }) {
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayStr());
 
@@ -704,6 +741,244 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, onSave, onClos
         <Btn className="w-full justify-center" disabled={!valid} onClick={() => onSave(parsed, date)}>
           <Check size={14} /> Anchor balance here
         </Btn>
+        <button onClick={onImportInstead} style={{ color: P.brass, fontFamily: MONO }} className="w-full text-center text-xs mt-3 underline decoration-dotted underline-offset-2">
+          or import a bank statement to reconcile line by line →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ================= statement import & reconciliation ================= */
+function ImportModal({ data, onImport, onClose }) {
+  const [step, setStep] = useState("input"); // input | review
+  const [pasted, setPasted] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [rows, setRows] = useState([]); // parsed + { checked, dup }
+  const [ending, setEnding] = useState(null); // { amount, date } from the statement
+  const [anchorToo, setAnchorToo] = useState(true);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  /* a parsed line is a duplicate if the ledger already has an entry with the
+     same amount + direction within 3 days of it */
+  const markDuplicates = (parsed) => {
+    const day = 86400000;
+    return parsed.map((r) => {
+      const dup = data.transactions.some((t) => {
+        if (Math.abs(t.amount - r.amount) > 0.005) return false;
+        if (t.type !== (r.direction === "credit" ? "income" : "expense")) return false;
+        if (!t.date || !r.date) return false;
+        return Math.abs(new Date(t.date) - new Date(r.date)) <= 3 * day;
+      });
+      return { ...r, dup, checked: !dup };
+    });
+  };
+
+  const runParse = async (content) => {
+    setBusy(true);
+    setErr("");
+    try {
+      const out = await askClaude(content, 8000);
+      const parsed = (out.transactions || [])
+        .map((t) => ({
+          date: t.date,
+          amount: Math.abs(Number(t.amount)) || 0,
+          direction: t.direction === "credit" ? "credit" : "debit",
+          description: t.description || "—",
+          category: t.category,
+          account: t.account === "personal" ? "personal" : "business",
+          recurrence: t.recurrence === "recurring" ? "recurring" : "once",
+        }))
+        .filter((t) => t.amount > 0 && t.date);
+      if (!parsed.length) throw new Error("no transactions found");
+      setRows(markDuplicates(parsed));
+      setEnding(
+        out.endingBalance != null && !Number.isNaN(Number(out.endingBalance))
+          ? { amount: Number(out.endingBalance), date: out.endingBalanceDate || parsed.reduce((m, t) => (t.date > m ? t.date : m), "") || todayStr() }
+          : null
+      );
+      if (out.note) setErr(out.note);
+      setStep("review");
+    } catch (e) {
+      setErr("Couldn't read that statement. Try pasting the transaction lines as text, or import one month at a time.");
+    }
+    setBusy(false);
+  };
+
+  const handlePaste = () => {
+    const text = pasted.trim();
+    if (!text) return;
+    runParse([{ type: "text", text: `${statementPrompt(data.categories)}\n\nSTATEMENT TEXT:\n${text.slice(0, 60000)}` }]);
+  };
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      setErr(`That file is ${(file.size / 1048576).toFixed(1)} MB — max 8 MB. Export a smaller range or paste the text.`);
+      return;
+    }
+    const name = file.name || "";
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(name);
+    const isText = /\.(csv|txt|tsv)$/i.test(name) || (file.type || "").startsWith("text/") || file.type === "text/csv";
+    try {
+      if (isText) {
+        const text = await file.text();
+        runParse([{ type: "text", text: `${statementPrompt(data.categories)}\n\nSTATEMENT TEXT:\n${text.slice(0, 60000)}` }]);
+      } else {
+        const b64 = await fileToB64(file);
+        const block = isPdf
+          ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
+          : { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: b64 } };
+        runParse([block, { type: "text", text: statementPrompt(data.categories) }]);
+      }
+    } catch {
+      setErr("Couldn't read that file from your device — try again or paste the text.");
+    }
+  };
+
+  const setRow = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const selected = rows.filter((r) => r.checked);
+  const dupCount = rows.filter((r) => r.dup).length;
+  const netSelected = selected.reduce((s, r) => s + (r.direction === "credit" ? r.amount : -r.amount), 0);
+
+  const doImport = () => {
+    const txs = selected.map((r) => {
+      const type = r.direction === "credit" ? "income" : "expense";
+      const list = data.categories[type].map((c) => c.name);
+      return {
+        date: r.date,
+        amount: r.amount,
+        type,
+        category: list.includes(r.category) ? r.category : list[0],
+        description: r.description,
+        account: r.account,
+        recurrence: r.recurrence,
+      };
+    });
+    onImport(txs, anchorToo && ending ? { amount: ending.amount, date: ending.date } : null);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div
+        style={{ background: P.surface, border: `1px solid ${P.line}` }}
+        className="rounded-lg w-full max-w-2xl max-h-full flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
+          <h3 style={{ fontFamily: SERIF }} className="text-lg">Import a statement</h3>
+          <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+        </div>
+
+        {step === "input" && (
+          <div className="p-5 space-y-3 overflow-y-auto">
+            <p style={{ color: P.muted }} className="text-sm">
+              Paste the purchases and deposits straight from your online banking — any format, dates and amounts included —
+              or upload the statement itself (PDF, CSV, or a screenshot). Every line gets read, matched against what's
+              already in the ledger, and queued for your review before anything is saved.
+            </p>
+            <textarea
+              value={pasted}
+              onChange={(e) => setPasted(e.target.value)}
+              placeholder={"Mar 10  MORTGAGE PAYMENT        -1,200.00\nMar 10  VERCEL INC              -70.00\nMar 02  PAYROLL DEPOSIT       +4,709.00\n…"}
+              rows={8}
+              style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, fontFamily: MONO }}
+              className="w-full rounded p-3 text-xs outline-none"
+            />
+            <div className="flex items-center gap-3">
+              <Btn onClick={handlePaste} disabled={busy || !pasted.trim()}>
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Read pasted text
+              </Btn>
+              <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">or</span>
+              <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.tsv,image/*,application/pdf,text/csv" className="hidden"
+                onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ""; }} />
+              <Btn tone="ghost" onClick={() => fileRef.current.click()} disabled={busy}>
+                <FileText size={14} /> Upload statement
+              </Btn>
+            </div>
+            {busy && (
+              <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex items-center gap-2">
+                <Loader2 size={12} className="animate-spin" /> reading every line… longer statements take a moment
+              </div>
+            )}
+            {err && <p style={{ color: P.debit }} className="text-xs">{err}</p>}
+          </div>
+        )}
+
+        {step === "review" && (
+          <>
+            <div className="px-5 py-3 space-y-2" style={{ borderBottom: `1px solid ${P.line}` }}>
+              <p style={{ color: P.muted }} className="text-sm">
+                Found <span style={{ color: P.text }}>{rows.length}</span> lines
+                {dupCount > 0 && <> · <span style={{ color: P.brass }}>{dupCount} look like they're already in the ledger</span> (unchecked — tick any that aren't actually duplicates)</>}.
+              </p>
+              {err && <p style={{ color: P.faint }} className="text-xs">{err}</p>}
+              {ending && (
+                <label className="flex items-start gap-2 text-xs cursor-pointer" style={{ color: P.muted }}>
+                  <input type="checkbox" checked={anchorToo} onChange={(e) => setAnchorToo(e.target.checked)} className="mt-0.5" />
+                  <span>
+                    Also anchor the balance to the statement's ending balance:{" "}
+                    <span style={{ fontFamily: MONO, color: P.brass }}>{fmt(ending.amount)}</span> on{" "}
+                    <span style={{ fontFamily: MONO }}>{ending.date}</span> — after this, Balance to date matches the bank exactly.
+                  </span>
+                </label>
+              )}
+            </div>
+            <div className="overflow-y-auto px-5 py-2" style={{ maxHeight: "45vh" }}>
+              <div className="divide-y" style={{ borderColor: P.line }}>
+                {rows.map((r, i) => {
+                  const type = r.direction === "credit" ? "income" : "expense";
+                  const cats = data.categories[type].map((c) => c.name);
+                  return (
+                    <div key={i} className="flex items-center gap-2 py-2" style={{ borderColor: P.line, opacity: r.checked ? 1 : 0.45 }}>
+                      <input type="checkbox" checked={r.checked} onChange={(e) => setRow(i, { checked: e.target.checked })} />
+                      <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs w-12 shrink-0">{r.date?.slice(5)}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm truncate">{r.description}</div>
+                        {r.dup && <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs">possible duplicate</div>}
+                      </div>
+                      <select
+                        value={cats.includes(r.category) ? r.category : cats[0]}
+                        onChange={(e) => setRow(i, { category: e.target.value })}
+                        style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text }}
+                        className="rounded px-1 py-0.5 text-xs w-28"
+                      >
+                        {cats.map((c) => <option key={c}>{c}</option>)}
+                      </select>
+                      <button
+                        onClick={() => setRow(i, { account: r.account === "business" ? "personal" : "business" })}
+                        title="Toggle GENIE AI / personal"
+                        style={{ fontFamily: MONO, color: P.muted, border: `1px solid ${P.line}` }}
+                        className="rounded px-1.5 py-0.5 text-xs w-9 text-center"
+                      >
+                        {r.account === "business" ? "GA" : "P"}
+                      </button>
+                      <div style={{ fontFamily: MONO, color: r.direction === "credit" ? P.credit : P.debit }} className="text-sm tabular-nums w-24 text-right">
+                        {r.direction === "credit" ? "+" : "−"}{fmt(r.amount)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="px-5 py-3 flex items-center gap-3" style={{ borderTop: `1px solid ${P.line}` }}>
+              <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex-1">
+                importing {selected.length} · net <span style={{ color: netSelected >= 0 ? P.credit : P.debit }}>{fmt(netSelected)}</span>
+              </div>
+              <Btn tone="ghost" onClick={() => { setStep("input"); setErr(""); }}>Back</Btn>
+              <Btn onClick={doImport} disabled={selected.length === 0 && !(anchorToo && ending)}>
+                <Check size={14} /> Import{anchorToo && ending ? " & anchor" : ""}
+              </Btn>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1207,7 +1482,7 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
   );
 }
 
-function Transactions({ data, monthTx, addTx, delTx, setTxAttachment, openPreview, month }) {
+function Transactions({ data, monthTx, addTx, delTx, setTxAttachment, openPreview, openImport, month }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
@@ -1245,6 +1520,9 @@ function Transactions({ data, monthTx, addTx, delTx, setTxAttachment, openPrevie
             className="text-xs uppercase tracking-wider rounded px-2 py-0.5 inline-flex items-center gap-1">
             <Repeat size={10} /> recurring
           </button>
+          <Btn tone="ghost" onClick={openImport} title="Import a bank statement — paste text or upload a file">
+            <FileText size={14} /> Import
+          </Btn>
           <Btn onClick={() => setAdding(!adding)}><Plus size={14} /> Add</Btn>
         </div>
       </div>
