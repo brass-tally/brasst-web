@@ -189,14 +189,55 @@ const RecToggle = ({ value, onChange }) => (
 );
 const RecMark = () => <Repeat size={11} style={{ color: P.brass, display: "inline", verticalAlign: "-1px" }} title="Recurring" />;
 
+/* subcategory dropdown — lists the category's subs and lets you add a new one inline */
+const subsFor = (data, type, category) =>
+  (data.categories[type]?.find((c) => c.name === category)?.subs) || [];
+
+function SubPicker({ data, type, category, value, onChange, addSub, compact }) {
+  const subs = subsFor(data, type, category);
+  const handle = (v) => {
+    if (v === "__add__") {
+      const name = window.prompt(`New subcategory under ${category}:`);
+      if (name && name.trim()) {
+        addSub(type, category, name.trim());
+        onChange(name.trim());
+      }
+      return;
+    }
+    onChange(v);
+  };
+  return (
+    <select
+      value={value && subs.includes(value) ? value : value || ""}
+      onChange={(e) => handle(e.target.value)}
+      style={{ background: P.bg, border: `1px solid ${P.line}`, color: value ? P.text : P.faint }}
+      className={compact ? "rounded px-1 py-0.5 text-xs w-24" : "rounded px-2 py-1.5 text-sm w-full outline-none"}
+      title="Subcategory"
+    >
+      <option value="">{compact ? "— sub —" : "— no subcategory —"}</option>
+      {subs.map((s) => <option key={s} value={s}>{s}</option>)}
+      {value && !subs.includes(value) && <option value={value}>{value}</option>}
+      <option value="__add__">+ add subcategory…</option>
+    </select>
+  );
+}
+
 /* ================= AI extraction prompts ================= */
+const subPromptInfo = (cats) => {
+  const lines = [...cats.expense, ...cats.income]
+    .filter((c) => (c.subs || []).length)
+    .map((c) => `${c.name}: ${c.subs.join(", ")}`);
+  return lines.length ? lines.join(" | ") : "none defined";
+};
+
 function extractionPrompt(cats) {
   return `You extract transaction data for a personal + business (GENIE AI) budget app.
 Expense categories: ${cats.expense.map((c) => c.name).join(", ")}.
 Income categories: ${cats.income.map((c) => c.name).join(", ")}.
+Subcategories per category (use only if clearly applicable, else null): ${subPromptInfo(cats)}.
 Today's date: ${todayStr()}.
 Respond ONLY with raw JSON (no markdown, no preamble):
-{"type":"expense"|"income","amount":number,"date":"YYYY-MM-DD","description":"vendor/short description","category":"one of the listed categories for that type","account":"business"|"personal","recurrence":"recurring"|"once","note":"one short line on anything you were unsure about, else empty string"}
+{"type":"expense"|"income","amount":number,"date":"YYYY-MM-DD","description":"vendor/short description","category":"one of the listed categories for that type","subcategory":"one of that category's subcategories or null","account":"business"|"personal","recurrence":"recurring"|"once","note":"one short line on anything you were unsure about, else empty string"}
 Software/SaaS/cloud/contractor items are business (GENIE AI category). If the date is missing, use today's date. Amount is the total paid.
 recurrence: "recurring" for subscriptions, SaaS, hosting, rent/mortgage, salaries, retainers, utilities — anything billed on a repeating cycle; "once" for one-off purchases.`;
 }
@@ -311,9 +352,10 @@ function statementPrompt(cats) {
 Extract EVERY transaction line — do not summarize, skip, or merge lines.
 Expense categories (for debits): ${cats.expense.map((c) => c.name).join(", ")}.
 Income categories (for credits): ${cats.income.map((c) => c.name).join(", ")}.
+Subcategories per category (use only if clearly applicable, else null): ${subPromptInfo(cats)}.
 Today's date: ${todayStr()}. If the statement omits the year, infer it from context.
 Respond ONLY with raw JSON (no markdown, no preamble):
-{"transactions":[{"date":"YYYY-MM-DD","amount":number (always positive),"direction":"debit"|"credit","description":"cleaned-up merchant/description","category":"best fit from the matching list","account":"business"|"personal","recurrence":"recurring"|"once"}],
+{"transactions":[{"date":"YYYY-MM-DD","amount":number (always positive),"direction":"debit"|"credit","description":"cleaned-up merchant/description","category":"best fit from the matching list","subcategory":"one of that category's subcategories or null","account":"business"|"personal","recurrence":"recurring"|"once"}],
 "endingBalance":number or null (the statement's closing/ending balance if shown),
 "endingBalanceDate":"YYYY-MM-DD" or null (the statement period end date),
 "note":"one short line about anything skipped or ambiguous, else empty string"}
@@ -428,6 +470,16 @@ function Ledger({ onSignOut }) {
       transactions: d.transactions.map((t) => (t.id === id ? { ...t, attachmentId, attachmentName } : t)),
     }));
     dbTry(() => db.updateTransaction(id, { attachmentId, attachmentName }));
+  };
+  const addSub = (type, catName, sub) => {
+    const cat = data.categories[type].find((c) => c.name === catName);
+    if (!cat || (cat.subs || []).includes(sub)) return;
+    const next = [...(cat.subs || []), sub];
+    setData((d) => ({
+      ...d,
+      categories: { ...d.categories, [type]: d.categories[type].map((c) => (c.name === catName ? { ...c, subs: next } : c)) },
+    }));
+    dbTry(() => db.updateSubcategories(type, catName, next));
   };
   const setPlanned = (type, name, planned) => {
     setData((d) => ({
@@ -597,7 +649,8 @@ function Ledger({ onSignOut }) {
         )}
 
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
-        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} month={month} />}
+        {/* subcategory-aware forms need addSub */}
+        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} addSub={addSub} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} openPreview={openPreview} />}
       </div>
@@ -614,7 +667,7 @@ function Ledger({ onSignOut }) {
               <div style={{ fontFamily: MONO }} className="text-xs uppercase tracking-widest flex-1">Capture</div>
               <button onClick={() => setChatOpen(false)} style={{ color: P.muted }} className="p-1"><X size={15} /></button>
             </div>
-            <Capture data={data} addTx={addTx} addAR={addAR} month={month} embedded />
+            <Capture data={data} addTx={addTx} addAR={addAR} addSub={addSub} month={month} embedded />
           </div>
         </div>
         <button
@@ -640,7 +693,7 @@ function Ledger({ onSignOut }) {
         />
       )}
       {importing && (
-        <ImportModal data={data} onImport={importStatement} onClose={() => setImporting(false)} />
+        <ImportModal data={data} addSub={addSub} onImport={importStatement} onClose={() => setImporting(false)} />
       )}
     </div>
   );
@@ -772,7 +825,7 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
 }
 
 /* ================= statement import & reconciliation ================= */
-function ImportModal({ data, onImport, onClose }) {
+function ImportModal({ data, addSub, onImport, onClose }) {
   const [step, setStep] = useState("input"); // input | review
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
@@ -815,6 +868,7 @@ function ImportModal({ data, onImport, onClose }) {
           direction: t.direction === "credit" ? "credit" : "debit",
           description: t.description || "—",
           category: t.category,
+          subcategory: t.subcategory || "",
           account: t.account === "personal" ? "personal" : "business",
           recurrence: t.recurrence === "recurring" ? "recurring" : "once",
         }))
@@ -879,6 +933,7 @@ function ImportModal({ data, onImport, onClose }) {
         amount: r.amount,
         type,
         category: list.includes(r.category) ? r.category : list[0],
+        subcategory: r.subcategory || undefined,
         description: r.description,
         account: r.account,
         recurrence: r.recurrence,
@@ -968,12 +1023,17 @@ function ImportModal({ data, onImport, onClose }) {
                       </div>
                       <select
                         value={cats.includes(r.category) ? r.category : cats[0]}
-                        onChange={(e) => setRow(i, { category: e.target.value })}
+                        onChange={(e) => setRow(i, { category: e.target.value, subcategory: "" })}
                         style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text }}
                         className="rounded px-1 py-0.5 text-xs w-28"
                       >
                         {cats.map((c) => <option key={c}>{c}</option>)}
                       </select>
+                      {subsFor(data, type, cats.includes(r.category) ? r.category : cats[0]).length > 0 && (
+                        <SubPicker compact data={data} type={type}
+                          category={cats.includes(r.category) ? r.category : cats[0]}
+                          value={r.subcategory} onChange={(v) => setRow(i, { subcategory: v })} addSub={addSub} />
+                      )}
                       <button
                         onClick={() => setRow(i, { account: r.account === "business" ? "personal" : "business" })}
                         title="Toggle GENIE AI / personal"
@@ -1074,8 +1134,8 @@ function Overview({ data, monthTx, sums, setPlanned, month }) {
 
   return (
     <div className="grid md:grid-cols-2 gap-6">
-      <BudgetTable title="Expenses" rows={expRows} extra={zeroExp} type="expense" setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "expense", category: cat })} />
-      <BudgetTable title="Income" rows={incRows} extra={[]} type="income" setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "income", category: cat })} />
+      <BudgetTable title="Expenses" rows={expRows} extra={zeroExp} type="expense" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "expense", category: cat })} />
+      <BudgetTable title="Income" rows={incRows} extra={[]} type="income" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "income", category: cat })} />
       {drill && <CategoryDrill drill={drill} monthTx={monthTx} month={month} onClose={() => setDrill(null)} />}
     </div>
   );
@@ -1159,7 +1219,7 @@ function CategoryDrill({ drill, monthTx, month, onClose }) {
                   <div className="flex-1 min-w-0">
                     <div className="text-sm truncate">{t.description}</div>
                     <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-                      {isRec(t) && <RecMark />} {t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}{t.attachmentId ? " · 📎 filed" : ""}
+                      {isRec(t) && <RecMark />} {t.subcategory ? t.subcategory + " · " : ""}{t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}{t.attachmentId ? " · 📎 filed" : ""}
                     </div>
                   </div>
                   <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">
@@ -1175,9 +1235,21 @@ function CategoryDrill({ drill, monthTx, month, onClose }) {
   );
 }
 
-function BudgetTable({ title, rows, extra, type, setPlanned, onDrill }) {
+function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill }) {
   const [showAll, setShowAll] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [expanded, setExpanded] = useState(null); // category name whose sub-breakdown is open
+
+  const subBreakdown = (catName) => {
+    const groups = {};
+    monthTx
+      .filter((t) => t.type === type && t.category === catName)
+      .forEach((t) => {
+        const key = t.subcategory || "unassigned";
+        groups[key] = (groups[key] || 0) + t.amount;
+      });
+    return Object.entries(groups).sort((a, b) => b[1] - a[1]);
+  };
   const list = showAll ? [...rows, ...extra] : rows;
   const tone = type === "expense" ? P.debit : P.credit;
   return (
@@ -1193,14 +1265,26 @@ function BudgetTable({ title, rows, extra, type, setPlanned, onDrill }) {
           return (
             <div key={r.name}>
               <div className="flex justify-between text-sm mb-1 gap-2">
-                <button
-                  onClick={() => r.actual > 0 && onDrill(r.name)}
-                  title={r.actual > 0 ? "View the entries behind this line" : undefined}
-                  style={{ color: P.text, cursor: r.actual > 0 ? "pointer" : "default", textDecorationColor: P.faint }}
-                  className={"truncate text-left " + (r.actual > 0 ? "underline decoration-dotted underline-offset-2" : "")}
-                >
-                  {r.name}
-                </button>
+                <span className="flex items-center gap-1 min-w-0">
+                  {((r.subs || []).length > 0 || subBreakdown(r.name).length > 1) && r.actual > 0 && (
+                    <button
+                      onClick={() => setExpanded(expanded === r.name ? null : r.name)}
+                      title="Show subcategory breakdown"
+                      style={{ color: expanded === r.name ? P.brass : P.faint, fontFamily: MONO }}
+                      className="shrink-0"
+                    >
+                      {expanded === r.name ? "▾" : "▸"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => r.actual > 0 && onDrill(r.name)}
+                    title={r.actual > 0 ? "View the entries behind this line" : undefined}
+                    style={{ color: P.text, cursor: r.actual > 0 ? "pointer" : "default", textDecorationColor: P.faint }}
+                    className={"truncate text-left " + (r.actual > 0 ? "underline decoration-dotted underline-offset-2" : "")}
+                  >
+                    {r.name}
+                  </button>
+                </span>
                 <span style={{ fontFamily: MONO }} className="tabular-nums flex items-center gap-1">
                   {editing === r.name ? (
                     <input
@@ -1223,6 +1307,22 @@ function BudgetTable({ title, rows, extra, type, setPlanned, onDrill }) {
               <div className="h-1.5 rounded-full overflow-hidden" style={{ background: P.bg }}>
                 <div style={{ width: `${pct}%`, background: over ? P.debit : tone, opacity: over ? 1 : 0.75 }} className="h-full" />
               </div>
+              {expanded === r.name && (
+                <div className="mt-1.5 pl-4 space-y-1" style={{ borderLeft: `2px solid ${P.line}` }}>
+                  {subBreakdown(r.name).map(([sub, v]) => {
+                    const subMax = subBreakdown(r.name)[0]?.[1] || 1;
+                    return (
+                      <div key={sub} className="flex items-center gap-2">
+                        <span style={{ fontFamily: MONO, color: sub === "unassigned" ? P.faint : P.muted }} className="text-xs w-32 truncate">{sub}</span>
+                        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: P.bg }}>
+                          <div style={{ width: `${(v / subMax) * 100}%`, background: tone, opacity: 0.5 }} className="h-full" />
+                        </div>
+                        <span style={{ fontFamily: MONO, color: P.muted }} className="text-xs tabular-nums w-16 text-right">{fmt0(v)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1238,7 +1338,7 @@ function BudgetTable({ title, rows, extra, type, setPlanned, onDrill }) {
 }
 
 /* ================= Capture (chat) ================= */
-function Capture({ data, addTx, addAR, month, embedded }) {
+function Capture({ data, addTx, addAR, addSub, month, embedded }) {
   const [msgs, setMsgs] = useState([
     {
       role: "assistant",
@@ -1315,6 +1415,7 @@ function Capture({ data, addTx, addAR, month, embedded }) {
         description: draft.description,
         account: draft.account === "personal" ? "personal" : "business",
         recurrence,
+        subcategory: draft.subcategory || undefined,
         attachmentId: attachmentId || undefined,
         attachmentName: attachmentId ? att.name : undefined,
       });
@@ -1358,7 +1459,7 @@ function Capture({ data, addTx, addAR, month, embedded }) {
                 </div>
               )}
               {m.text && <p style={{ color: m.role === "assistant" ? P.muted : P.text }}>{m.text}</p>}
-              {m.draft && <DraftCard draft={m.draft} att={m.att} data={data} onSave={saveDraft} />}
+              {m.draft && <DraftCard draft={m.draft} att={m.att} data={data} addSub={addSub} onSave={saveDraft} />}
             </div>
           </div>
         ))}
@@ -1388,7 +1489,7 @@ function Capture({ data, addTx, addAR, month, embedded }) {
   );
 }
 
-function DraftCard({ draft, att, data, onSave }) {
+function DraftCard({ draft, att, data, addSub, onSave }) {
   const [d, setD] = useState({ ...draft, date: draft.date || todayStr() });
   const [saved, setSaved] = useState(false);
   const cats = data.categories[d.type === "income" ? "income" : "expense"].map((c) => c.name);
@@ -1417,9 +1518,13 @@ function DraftCard({ draft, att, data, onSave }) {
       </div>
       <div>
         <Label>1 · Category</Label>
-        <Select value={d.category} onChange={(e) => set("category", e.target.value)}>
+        <Select value={d.category} onChange={(e) => { set("category", e.target.value); set("subcategory", ""); }}>
           {cats.map((c) => <option key={c}>{c}</option>)}
         </Select>
+        <div className="mt-1">
+          <SubPicker data={data} type={d.type === "income" ? "income" : "expense"} category={d.category}
+            value={d.subcategory || ""} onChange={(v) => set("subcategory", v)} addSub={addSub} />
+        </div>
       </div>
       <div>
         <Label>2 · Whose money?</Label>
@@ -1505,7 +1610,7 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
 }
 
 /* inline editor for an existing transaction row */
-function TxEditor({ tx, data, onSave, onCancel }) {
+function TxEditor({ tx, data, addSub, onSave, onCancel }) {
   const [f, setF] = useState({ ...tx, amount: String(tx.amount) });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const cats = data.categories[f.type].map((c) => c.name);
@@ -1520,6 +1625,7 @@ function TxEditor({ tx, data, onSave, onCancel }) {
       description: f.description,
       account: f.account,
       recurrence: f.recurrence === "recurring" ? "recurring" : "once",
+      subcategory: f.subcategory || null,
     });
   };
 
@@ -1529,15 +1635,20 @@ function TxEditor({ tx, data, onSave, onCancel }) {
       <div><Label>Amount</Label><Input type="number" value={f.amount} onChange={(e) => set("amount", e.target.value)} style={{ fontFamily: MONO }} /></div>
       <div>
         <Label>Type</Label>
-        <Select value={f.type} onChange={(e) => { const t = e.target.value; setF((p) => ({ ...p, type: t, category: data.categories[t][0].name })); }}>
+        <Select value={f.type} onChange={(e) => { const t = e.target.value; setF((p) => ({ ...p, type: t, category: data.categories[t][0].name, subcategory: "" })); }}>
           <option value="expense">Expense</option><option value="income">Income</option>
         </Select>
       </div>
       <div>
         <Label>Category</Label>
-        <Select value={cats.includes(f.category) ? f.category : cats[0]} onChange={(e) => set("category", e.target.value)}>
+        <Select value={cats.includes(f.category) ? f.category : cats[0]} onChange={(e) => { const v = e.target.value; setF((p) => ({ ...p, category: v, subcategory: "" })); }}>
           {cats.map((c) => <option key={c}>{c}</option>)}
         </Select>
+      </div>
+      <div>
+        <Label>Subcategory</Label>
+        <SubPicker data={data} type={f.type} category={cats.includes(f.category) ? f.category : cats[0]}
+          value={f.subcategory || ""} onChange={(v) => set("subcategory", v)} addSub={addSub} />
       </div>
       <div>
         <Label>Account</Label>
@@ -1555,12 +1666,12 @@ function TxEditor({ tx, data, onSave, onCancel }) {
   );
 }
 
-function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, month }) {
+function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, addSub, month }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const blank = { date: `${month}-15`, amount: "", type: "expense", category: "GENIE AI", description: "", account: "business", recurrence: "once" };
+  const blank = { date: `${month}-15`, amount: "", type: "expense", category: "GENIE AI", subcategory: "", description: "", account: "business", recurrence: "once" };
   const [form, setForm] = useState(blank);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -1572,7 +1683,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
 
   const submit = () => {
     if (!form.amount || !form.description) return;
-    addTx({ ...form, amount: parseFloat(form.amount) });
+    addTx({ ...form, subcategory: form.subcategory || undefined, amount: parseFloat(form.amount) });
     setForm(blank);
     setAdding(false);
   };
@@ -1613,15 +1724,20 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           <div><Label>Amount</Label><Input type="number" placeholder="0.00" value={form.amount} onChange={(e) => set("amount", e.target.value)} /></div>
           <div>
             <Label>Type</Label>
-            <Select value={form.type} onChange={(e) => { const t = e.target.value; setForm((p) => ({ ...p, type: t, category: data.categories[t][0].name })); }}>
+            <Select value={form.type} onChange={(e) => { const t = e.target.value; setForm((p) => ({ ...p, type: t, category: data.categories[t][0].name, subcategory: "" })); }}>
               <option value="expense">Expense</option><option value="income">Income</option>
             </Select>
           </div>
           <div>
             <Label>Category</Label>
-            <Select value={form.category} onChange={(e) => set("category", e.target.value)}>
+            <Select value={form.category} onChange={(e) => { const v = e.target.value; setForm((p) => ({ ...p, category: v, subcategory: "" })); }}>
               {data.categories[form.type].map((c) => <option key={c.name}>{c.name}</option>)}
             </Select>
+          </div>
+          <div>
+            <Label>Subcategory</Label>
+            <SubPicker data={data} type={form.type} category={form.category}
+              value={form.subcategory} onChange={(v) => set("subcategory", v)} addSub={addSub} />
           </div>
           <div>
             <Label>Account</Label>
@@ -1648,6 +1764,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 key={t.id}
                 tx={t}
                 data={data}
+                addSub={addSub}
                 onSave={(patch) => { updateTx(t.id, patch); setEditingId(null); }}
                 onCancel={() => setEditingId(null)}
               />
@@ -1658,7 +1775,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                   <div className="text-sm truncate">{t.description}</div>
                   <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1">
                     {isRec(t) && <RecMark />}
-                    {t.category} · {t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}
+                    {t.category}{t.subcategory ? " / " + t.subcategory : ""} · {t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}
                   </div>
                 </button>
                 <TxAttachment tx={t} setTxAttachment={setTxAttachment} openPreview={openPreview} />
@@ -1730,10 +1847,10 @@ function ProfitLoss({ data, month }) {
       ["Open receivables (not included)", openAR.toFixed(2)],
       ["Open payables (not included)", openAP.toFixed(2)],
       [],
-      ["Date", "Description", "Category", "Account", "Type", "Frequency", "Amount"],
+      ["Date", "Description", "Category", "Subcategory", "Account", "Type", "Frequency", "Amount"],
       ...[...monthTx]
         .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
-        .map((t) => [t.date, t.description, t.category, t.account === "personal" ? "Personal" : "GENIE AI", t.type, isRec(t) ? "Recurring" : "One-time", (t.type === "income" ? t.amount : -t.amount).toFixed(2)]),
+        .map((t) => [t.date, t.description, t.category, t.subcategory || "", t.account === "personal" ? "Personal" : "GENIE AI", t.type, isRec(t) ? "Recurring" : "One-time", (t.type === "income" ? t.amount : -t.amount).toFixed(2)]),
     ]);
   };
 

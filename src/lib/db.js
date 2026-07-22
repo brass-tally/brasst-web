@@ -15,6 +15,7 @@ const rowToTx = (r) => ({
   description: r.description,
   account: r.account,
   recurrence: r.recurrence,
+  subcategory: r.subcategory || undefined,
   attachmentId: r.attachment_path || undefined,
   attachmentName: r.attachment_name || undefined,
 });
@@ -28,6 +29,7 @@ const txToRow = (t) => ({
   description: t.description || "",
   account: t.account || "business",
   recurrence: t.recurrence === "recurring" ? "recurring" : "once",
+  subcategory: t.subcategory || null,
   attachment_path: t.attachmentId || null,
   attachment_name: t.attachmentName || null,
 });
@@ -68,11 +70,12 @@ const SEED_SETTINGS = { starting_balance: 6622.36, anchor_date: "2026-02-28", cu
 
 const SEED_CATEGORIES = [
   ...[
-    ["GENIE AI", 1800, "business"], ["Home", 1200, "personal"], ["Food", 100, "personal"],
+    ["GENIE AI", 1800, "business", ["Software & SaaS", "Hosting & Cloud", "Salaries", "Marketing", "Equipment"]],
+    ["Home", 1200, "personal", ["Mortgage", "Utilities", "Maintenance"]], ["Food", 100, "personal"],
     ["Transportation", 50, "personal"], ["Pets", 30, "personal"], ["Travel", 0, "personal"],
     ["Health/medical", 0, "personal"], ["Utilities", 0, "personal"], ["Personal", 0, "personal"],
     ["Gifts", 0, "personal"], ["Debt", 0, "personal"], ["Other", 0, "personal"],
-  ].map(([name, planned, account], i) => ({ type: "expense", name, planned, account, sort: i })),
+  ].map(([name, planned, account, subs], i) => ({ type: "expense", name, planned, account, subcategories: subs || [], sort: i })),
   ...[
     ["Paycheck", 4614, "personal"], ["Client revenue", 0, "business"], ["Bonus", 0, "personal"],
     ["Interest", 0, "personal"], ["Other", 1000, "personal"],
@@ -156,8 +159,8 @@ export async function loadAll() {
       theme: settings.theme,
     },
     categories: {
-      expense: cats.data.filter((c) => c.type === "expense").map((c) => ({ name: c.name, planned: Number(c.planned), account: c.account })),
-      income: cats.data.filter((c) => c.type === "income").map((c) => ({ name: c.name, planned: Number(c.planned), account: c.account })),
+      expense: cats.data.filter((c) => c.type === "expense").map((c) => ({ name: c.name, planned: Number(c.planned), account: c.account, subs: c.subcategories || [] })),
+      income: cats.data.filter((c) => c.type === "income").map((c) => ({ name: c.name, planned: Number(c.planned), account: c.account, subs: c.subcategories || [] })),
     },
     transactions: txs.data.map(rowToTx),
     receivables: obs.data.filter((o) => o.kind === "receivable").map(rowToOb),
@@ -182,7 +185,7 @@ export async function insertTransactions(txs) {
 export async function updateTransaction(id, patch) {
   const map = {
     date: "date", amount: "amount", type: "type", category: "category",
-    description: "description", account: "account", recurrence: "recurrence",
+    description: "description", account: "account", recurrence: "recurrence", subcategory: "subcategory",
     attachmentId: "attachment_path", attachmentName: "attachment_name",
   };
   const row = {};
@@ -200,6 +203,11 @@ export async function deleteTransaction(id) {
 
 export async function setPlanned(type, name, planned) {
   const { error } = await supabase.from("categories").update({ planned }).eq("type", type).eq("name", name);
+  if (error) throw error;
+}
+
+export async function updateSubcategories(type, name, subs) {
+  const { error } = await supabase.from("categories").update({ subcategories: subs }).eq("type", type).eq("name", name);
   if (error) throw error;
 }
 
