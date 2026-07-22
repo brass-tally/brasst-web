@@ -281,22 +281,22 @@ const subPromptInfo = (cats) => {
   return lines.length ? lines.join(" | ") : "none defined";
 };
 
-function extractionPrompt(cats) {
-  return `You extract transaction data for a personal + business (GENIE AI) budget app.
+function extractionPrompt(cats, ledgerName) {
+  return `You extract transaction data for a budget app. The ledger is "${ledgerName}".
 Expense categories: ${cats.expense.map((c) => c.name).join(", ")}.
 Income categories: ${cats.income.map((c) => c.name).join(", ")}.
 Subcategories per category (use only if clearly applicable, else null): ${subPromptInfo(cats)}.
 Today's date: ${todayStr()}.
 Respond ONLY with raw JSON (no markdown, no preamble):
 {"type":"expense"|"income","amount":number,"date":"YYYY-MM-DD","description":"vendor/short description","category":"one of the listed categories for that type","subcategory":"one of that category's subcategories or null","account":"business"|"personal","recurrence":"recurring"|"once","note":"one short line on anything you were unsure about, else empty string"}
-Software/SaaS/cloud/contractor items are business (GENIE AI category). If the date is missing, use today's date. Amount is the total paid.
+Software/SaaS/cloud/contractor items are business expenses — pick the closest business category (software, hosting, salaries, etc.). If the date is missing, use today's date. Amount is the total paid.
 recurrence: "recurring" for subscriptions, SaaS, hosting, rent/mortgage, salaries, retainers, utilities — anything billed on a repeating cycle; "once" for one-off purchases.`;
 }
 
 function arExtractionPrompt(kind) {
   const who =
     kind === "receivables"
-      ? `This document is an invoice the user's business (GENIE AI) ISSUED to a client — money owed TO the user. "party" is the client being billed (the bill-to / customer name), NOT GENIE AI.`
+      ? `This document is an invoice the user's business ISSUED to a client — money owed TO the user. "party" is the client being billed (the bill-to / customer name), NOT the user's own company.`
       : `This document is an invoice or bill the user RECEIVED — money the user owes. "party" is the vendor/company that issued it.`;
   return `You extract accounts-${kind === "receivables" ? "receivable" : "payable"} data from an invoice for a budget app.
 ${who}
@@ -374,7 +374,7 @@ function Login() {
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif" }} className="flex items-center justify-center p-4">
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-6 w-full max-w-sm">
-        <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">GENIE AI · Personal</div>
+        <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">Business & personal books</div>
         <h1 style={{ fontFamily: SERIF }} className="text-2xl mb-4">The Ledger</h1>
         {sent ? (
           <p style={{ color: P.muted }} className="text-sm">
@@ -398,8 +398,8 @@ function Login() {
   );
 }
 
-function statementPrompt(cats) {
-  return `You parse bank and credit-card statements for a personal + business (GENIE AI) budget app.
+function statementPrompt(cats, ledgerName) {
+  return `You parse bank and credit-card statements for a budget app. The ledger is "${ledgerName}".
 Extract EVERY transaction line — do not summarize, skip, or merge lines.
 Expense categories (for debits): ${cats.expense.map((c) => c.name).join(", ")}.
 Income categories (for credits): ${cats.income.map((c) => c.name).join(", ")}.
@@ -411,7 +411,7 @@ Respond ONLY with raw JSON (no markdown, no preamble):
 "endingBalanceDate":"YYYY-MM-DD" or null (the statement period end date),
 "note":"one short line about anything skipped or ambiguous, else empty string"}
 Rules: debit = money leaving the account (purchases, fees, transfers out); credit = money in (deposits, refunds, payroll).
-Software/SaaS/cloud/hosting/contractor charges → account "business", category "GENIE AI". Salaries/payroll deposits → "Paycheck".
+Software/SaaS/cloud/hosting/contractor charges → account "business" with the closest business category. Payroll deposits → the paycheck/salary income category if one exists.
 recurrence: "recurring" for subscriptions, rent/mortgage, utilities, payroll; otherwise "once".
 Ignore running-balance columns, section headers, and totals rows — they are not transactions.`;
 }
@@ -421,35 +421,74 @@ function Ledger({ onSignOut }) {
   const [data, setData] = useState(null);
   const [loadErr, setLoadErr] = useState(false);
   const [tab, setTab] = useState("overview");
-  const [month, setMonth] = useState("2026-03");
+  const [month, setMonth] = useState(thisMonth());
   const [theme, setThemeState] = useState("dark");
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [chatOpen, setChatOpen] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [ledgers, setLedgers] = useState(null);          // null = loading list
+  const [currentLedger, setCurrentLedger] = useState(null);
+  const [fatal, setFatal] = useState(null);              // "migration" | null
+  const [newLedgerOpen, setNewLedgerOpen] = useState(false);
 
-  /* ---- load from Supabase (seeds the spreadsheet data on first sign-in) ---- */
+  /* ---- 1) list this user's ledgers ---- */
   useEffect(() => {
     (async () => {
       try {
-        const loaded = await db.loadAll();
+        const list = await db.listLedgers();
+        setLedgers(list);
+        if (list.length) {
+          const last = window.localStorage.getItem("ledger:last");
+          setCurrentLedger(list.find((l) => l.id === last) || list[0]);
+        }
+        // empty list -> onboarding renders below
+      } catch (e) {
+        console.error(e);
+        setFatal("migration");
+        setLedgers([]);
+      }
+    })();
+  }, []);
+
+  /* ---- 2) load the selected ledger's data ---- */
+  useEffect(() => {
+    if (!currentLedger) return;
+    setData(null);
+    window.localStorage.setItem("ledger:last", currentLedger.id);
+    (async () => {
+      try {
+        const loaded = await db.loadAll(currentLedger);
         const t = loaded.settings.theme === "light" ? "light" : "dark";
         Object.assign(P, PALETTES[t]);
         setThemeState(t);
-        // always open on the current calendar month; history stays one tap away via ‹
         setMonth(thisMonth());
+        setTab("overview");
         setData(loaded);
       } catch (e) {
         console.error(e);
         setLoadErr(true);
         setData({
+          ledger: currentLedger,
           settings: { startingBalance: 0, anchorDate: "1970-01-01", currency: "CAD", theme: "dark" },
           categories: { expense: [], income: [] },
           transactions: [], receivables: [], payables: [], anchorHistory: [], credits: [],
         });
       }
     })();
-  }, []);
+  }, [currentLedger]);
+
+  const createLedgerAndSwitch = async ({ name, kind, startingBalance, anchorDate }) => {
+    try {
+      const l = await db.createLedger({ name, kind, startingBalance, anchorDate });
+      setLedgers((ls) => [...(ls || []), l]);
+      setNewLedgerOpen(false);
+      setCurrentLedger(l);
+    } catch (e) {
+      console.error(e);
+      setLoadErr(true);
+    }
+  };
 
   // local state updates immediately; the matching database write runs behind it
   const dbTry = async (fn) => {
@@ -487,6 +526,30 @@ function Ledger({ onSignOut }) {
       ap: data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0),
     };
   }, [data]);
+
+  if (fatal === "migration")
+    return (
+      <div style={{ background: P.bg, color: P.text, minHeight: "100vh" }} className="flex items-center justify-center p-6">
+        <div style={{ maxWidth: 460 }}>
+          <h1 style={{ fontFamily: SERIF }} className="text-xl mb-2">One migration to run</h1>
+          <p style={{ color: P.muted }} className="text-sm">
+            This version stores everything in ledgers, and the database doesn't have the ledgers table yet.
+            Run <span style={{ fontFamily: MONO, color: P.brass }}>supabase/migration-multi-ledger.sql</span> in the
+            Supabase SQL Editor, then reload. Your existing data is moved into a "GENIE AI" ledger automatically.
+          </p>
+        </div>
+      </div>
+    );
+
+  if (ledgers === null)
+    return (
+      <div style={{ background: P.bg, color: P.muted, minHeight: "100vh" }} className="flex items-center justify-center">
+        <Loader2 className="animate-spin mr-2" size={18} /> Finding your ledgers…
+      </div>
+    );
+
+  if (ledgers.length === 0)
+    return <NewLedgerModal onboarding onCreate={createLedgerAndSwitch} onClose={() => {}} onSignOut={onSignOut} />;
 
   if (!data)
     return (
@@ -554,7 +617,10 @@ function Ledger({ onSignOut }) {
       date: todayStr(),
       amount: item.amount,
       type: kind === "receivables" ? "income" : "expense",
-      category: item.category || (kind === "receivables" ? "Client revenue" : "GENIE AI"),
+      category: item.category
+        || (kind === "receivables"
+          ? (data.categories.income.find((c) => c.name === "Client revenue")?.name || data.categories.income[0]?.name || "Other")
+          : (data.categories.expense[0]?.name || "Other")),
       subcategory: item.subcategory,
       description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party} — ${item.description}`,
       account: item.account || "business",
@@ -609,11 +675,9 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.deleteObligation(id));
   };
   const resetAll = async () => {
-    if (!window.confirm("Reset the ledger to the original spreadsheet data? Everything you've added will be removed.")) return;
+    if (!window.confirm(`Wipe "${data.ledger.name}" and start it fresh? Every entry, receivable, and credit pool in THIS ledger will be removed. Other ledgers are untouched.`)) return;
     setData(null);
-    try {
-      await db.resetAll();
-    } catch (e) { console.error(e); }
+    try { await db.resetLedger(data.ledger.kind); } catch (e) { console.error(e); }
     window.location.reload();
   };
 
@@ -663,6 +727,7 @@ function Ledger({ onSignOut }) {
     ["arap", "AR / AP"],
     ["credits", "Credits"],
     ["calendar", "Calendar"],
+    ["integrations", "Integrations"],
   ];
 
   return (
@@ -672,11 +737,28 @@ function Ledger({ onSignOut }) {
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">
-              GENIE AI · Personal
+              The Ledger · {data.ledger.kind === "personal" ? "personal" : "business"}
             </div>
-            <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight">
-              The Ledger
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight">{data.ledger.name}</h1>
+              {ledgers.length >= 1 && (
+                <select
+                  value={data.ledger.id}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "__new__") { setNewLedgerOpen(true); return; }
+                    const l = ledgers.find((x) => x.id === v);
+                    if (l && l.id !== data.ledger.id) setCurrentLedger(l);
+                  }}
+                  title="Switch ledger"
+                  style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
+                  className="rounded px-2 py-1 text-xs outline-none"
+                >
+                  {ledgers.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  <option value="__new__">+ new ledger…</option>
+                </select>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -739,6 +821,11 @@ function Ledger({ onSignOut }) {
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
+        {tab === "integrations" && <IntegrationsTab data={data} updateLedgerMeta={(patch) => {
+          setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
+          setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
+          dbTry(() => db.updateLedger(data.ledger.id, patch));
+        }} />}
       </div>
 
       {/* ===== floating capture chat (stays mounted so the conversation survives closing) ===== */}
@@ -767,6 +854,7 @@ function Ledger({ onSignOut }) {
       </div>
 
       <PreviewModal preview={preview} onClose={closePreview} />
+      {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
       {reconciling && (
         <ReconcileModal
           currentValue={balance.beforeAnchor ? null : balance.value}
@@ -977,7 +1065,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
   const handlePaste = () => {
     const text = pasted.trim();
     if (!text) return;
-    runParse([{ type: "text", text: `${statementPrompt(data.categories)}\n\nSTATEMENT TEXT:\n${text.slice(0, 60000)}` }]);
+    runParse([{ type: "text", text: `${statementPrompt(data.categories, data.ledger.name)}\n\nSTATEMENT TEXT:\n${text.slice(0, 60000)}` }]);
   };
 
   const handleFile = async (file) => {
@@ -992,13 +1080,13 @@ function ImportModal({ data, addSub, onImport, onClose }) {
     try {
       if (isText) {
         const text = await file.text();
-        runParse([{ type: "text", text: `${statementPrompt(data.categories)}\n\nSTATEMENT TEXT:\n${text.slice(0, 60000)}` }]);
+        runParse([{ type: "text", text: `${statementPrompt(data.categories, data.ledger.name)}\n\nSTATEMENT TEXT:\n${text.slice(0, 60000)}` }]);
       } else {
         const b64 = await fileToB64(file);
         const block = isPdf
           ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
           : { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: b64 } };
-        runParse([block, { type: "text", text: statementPrompt(data.categories) }]);
+        runParse([block, { type: "text", text: statementPrompt(data.categories, data.ledger.name) }]);
       }
     } catch {
       setErr("Couldn't read that file from your device — try again or paste the text.");
@@ -1122,11 +1210,11 @@ function ImportModal({ data, addSub, onImport, onClose }) {
                       )}
                       <button
                         onClick={() => setRow(i, { account: r.account === "business" ? "personal" : "business" })}
-                        title="Toggle GENIE AI / personal"
+                        title="Toggle business / personal"
                         style={{ fontFamily: MONO, color: P.muted, border: `1px solid ${P.line}` }}
                         className="rounded px-1.5 py-0.5 text-xs w-9 text-center"
                       >
-                        {r.account === "business" ? "GA" : "P"}
+                        {r.account === "business" ? "B" : "P"}
                       </button>
                       <div style={{ fontFamily: MONO, color: r.direction === "credit" ? P.credit : P.debit }} className="text-sm tabular-nums w-24 text-right">
                         {r.direction === "credit" ? "+" : "−"}{fmt(r.amount)}
@@ -1313,7 +1401,7 @@ function CategoryDrill({ drill, monthTx, month, onClose }) {
                   <div className="flex-1 min-w-0">
                     <div className="text-sm truncate">{t.description}</div>
                     <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-                      {isRec(t) && <RecMark />} {t.subcategory ? t.subcategory + " · " : ""}{t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}{t.attachmentId ? " · 📎 filed" : ""}
+                      {isRec(t) && <RecMark />} {t.subcategory ? t.subcategory + " · " : ""}{t.account === "business" ? "business" : "personal"}{isRec(t) ? " · recurring" : ""}{t.attachmentId ? " · 📎 filed" : ""}
                     </div>
                   </div>
                   <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">
@@ -1472,7 +1560,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
       const block = isPdf
         ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
         : { type: "image", source: { type: "base64", media_type: att.type, data: b64 } };
-      const draft = await askClaude([block, { type: "text", text: extractionPrompt(data.categories) }]);
+      const draft = await askClaude([block, { type: "text", text: extractionPrompt(data.categories, data.ledger.name) }]);
       push({ role: "assistant", text: draft.note || "Here's what I read — confirm or adjust:", draft, att });
     } catch {
       push({ role: "assistant", text: "I couldn't read that one. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”)." });
@@ -1487,7 +1575,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
     push({ role: "user", text });
     setBusy(true);
     try {
-      const draft = await askClaude([{ type: "text", text: `${extractionPrompt(data.categories)}\n\nUser message: "${text}"` }]);
+      const draft = await askClaude([{ type: "text", text: `${extractionPrompt(data.categories, data.ledger.name)}\n\nUser message: "${text}"` }]);
       push({ role: "assistant", text: draft.note || "Got it — confirm or adjust:", draft });
     } catch {
       push({ role: "assistant", text: "I couldn't parse that. Try including an amount, e.g. “paid Canva $40 yesterday”." });
@@ -1631,7 +1719,7 @@ function DraftCard({ draft, att, data, addSub, onSave }) {
                 color: d.account === a ? P.text : P.muted,
               }}
               className="flex-1 rounded px-2 py-1 text-xs capitalize">
-              {a === "business" ? "GENIE AI" : "Personal"}
+              {a === "business" ? "Business" : "Personal"}
             </button>
           ))}
         </div>
@@ -1749,7 +1837,7 @@ function TxEditor({ tx, data, addSub, addCredit, onSave, onCancel }) {
       <div>
         <Label>Account</Label>
         <Select value={f.account} onChange={(e) => set("account", e.target.value)}>
-          <option value="business">GENIE AI</option><option value="personal">Personal</option>
+          <option value="business">Business</option><option value="personal">Personal</option>
         </Select>
       </div>
       <div><Label>Frequency</Label><RecToggle value={f.recurrence === "recurring" ? "recurring" : "once"} onChange={(v) => set("recurrence", v)} /></div>
@@ -1772,7 +1860,12 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const blank = { date: `${month}-15`, amount: "", type: "expense", category: "GENIE AI", subcategory: "", description: "", account: "business", recurrence: "once", payMethod: "cash", creditId: null };
+  const blank = {
+    date: `${month}-15`, amount: "", type: "expense",
+    category: data.categories.expense[0]?.name || "Other", subcategory: "",
+    description: "", account: data.ledger.kind === "personal" ? "personal" : "business",
+    recurrence: "once", payMethod: "cash", creditId: null,
+  };
   const [form, setForm] = useState(blank);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -1843,7 +1936,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           <div>
             <Label>Account</Label>
             <Select value={form.account} onChange={(e) => set("account", e.target.value)}>
-              <option value="business">GENIE AI</option><option value="personal">Personal</option>
+              <option value="business">Business</option><option value="personal">Personal</option>
             </Select>
           </div>
           <div className="sm:col-span-2">
@@ -1882,7 +1975,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                   <div className="text-sm truncate">{t.description}</div>
                   <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1">
                     {isRec(t) && <RecMark />}
-                    {t.category}{t.subcategory ? " / " + t.subcategory : ""} · {t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}
+                    {t.category}{t.subcategory ? " / " + t.subcategory : ""} · {t.account === "business" ? "business" : "personal"}{isRec(t) ? " · recurring" : ""}
                   </div>
                 </button>
                 {isCredits(t) && (
@@ -1942,7 +2035,7 @@ function ProfitLoss({ data, month }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
 
-  const scopeLabel = scope === "business" ? "GENIE AI" : scope === "personal" ? "Personal" : "Combined";
+  const scopeLabel = scope === "business" ? "Business" : scope === "personal" ? "Personal" : "Combined";
   const exportCSV = () => {
     downloadCSV(`PL_${scopeLabel.replace(/\s/g, "")}_${month}.csv`, [
       [`Profit & Loss — ${monthLabel(month)}`, scopeLabel],
@@ -1964,14 +2057,14 @@ function ProfitLoss({ data, month }) {
       ["Date", "Description", "Category", "Subcategory", "Account", "Type", "Frequency", "Amount"],
       ...[...monthTx]
         .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
-        .map((t) => [t.date, t.description, t.category, t.subcategory || "", t.account === "personal" ? "Personal" : "GENIE AI", t.type, isRec(t) ? "Recurring" : "One-time", (t.type === "income" ? t.amount : -t.amount).toFixed(2)]),
+        .map((t) => [t.date, t.description, t.category, t.subcategory || "", t.account === "personal" ? "Personal" : "Business", t.type, isRec(t) ? "Recurring" : "One-time", (t.type === "income" ? t.amount : -t.amount).toFixed(2)]),
     ]);
   };
 
   return (
     <div className="space-y-6">
       <div className="flex gap-2 items-center">
-        {[["business", "GENIE AI"], ["personal", "Personal"], ["all", "Combined"]].map(([k, label]) => (
+        {[["business", "Business"], ["personal", "Personal"], ["all", "Combined"]].map(([k, label]) => (
           <button key={k} onClick={() => setScope(k)}
             style={{
               fontFamily: MONO,
@@ -2075,7 +2168,7 @@ function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openP
 
   const exportCSV = () => {
     const row = (kind, i) => [kind, i.party, i.description || "", i.amount.toFixed(2), i.dueDate || "", i.status, i.settledOn || "",
-      i.account === "personal" ? "Personal" : "GENIE AI", isRec(i) ? `Recurring (${freqLabel(i.frequency || "monthly")})` : "One-time",
+      i.account === "personal" ? "Personal" : "Business", isRec(i) ? `Recurring (${freqLabel(i.frequency || "monthly")})` : "One-time",
       i.category || "", i.subcategory || "", isCredits(i) ? creditName(data, i.creditId) : "Cash"];
     downloadCSV(`AR_AP_${todayStr()}.csv`, [
       [`Receivables & Payables`, `exported ${todayStr()}`],
@@ -2166,8 +2259,12 @@ function ARFields({ kind, f, set, data, addSub, addCredit }) {
 function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openPreview, tone, action }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const defaultCat = kind === "receivables" ? "Client revenue" : "GENIE AI";
-  const blank = { party: "", description: "", amount: "", dueDate: todayStr(), account: "business", recurrence: "once", frequency: "monthly", category: defaultCat, subcategory: "", payMethod: "cash", creditId: null };
+  const incomeCats = data.categories.income.map((c) => c.name);
+  const expenseCats = data.categories.expense.map((c) => c.name);
+  const defaultCat = kind === "receivables"
+    ? (incomeCats.includes("Client revenue") ? "Client revenue" : incomeCats[0] || "Other")
+    : (expenseCats[0] || "Other");
+  const blank = { party: "", description: "", amount: "", dueDate: todayStr(), account: data.ledger.kind === "personal" ? "personal" : "business", recurrence: "once", frequency: "monthly", category: defaultCat, subcategory: "", payMethod: "cash", creditId: null };
   const [form, setForm] = useState(blank);
   const [editForm, setEditForm] = useState(null);
   const [att, setAtt] = useState(null);
@@ -2689,6 +2786,360 @@ function CashCalendar({ data }) {
       {!selectedDay && (
         <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs text-center">tap a day to see what's due · brass underline = credits involved</p>
       )}
+    </div>
+  );
+}
+
+
+/* ================= new ledger (onboarding + switcher) ================= */
+function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState("business");
+  const [bal, setBal] = useState("");
+  const [asOf, setAsOf] = useState(todayStr());
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    await onCreate({ name: name.trim(), kind, startingBalance: parseFloat(bal) || 0, anchorDate: asOf });
+    setBusy(false);
+  };
+
+  const body = (
+    <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="flex justify-between items-start mb-1">
+        <h3 style={{ fontFamily: SERIF }} className="text-xl">{onboarding ? "Set up your first ledger" : "New ledger"}</h3>
+        {!onboarding && <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>}
+      </div>
+      <p style={{ color: P.muted }} className="text-sm mb-4">
+        A ledger is one set of books — a company, or your personal finances. You can add more anytime and switch from the header.
+      </p>
+      <div className="space-y-3">
+        <div>
+          <Label>Name</Label>
+          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "business" ? "e.g. GENIE AI" : "e.g. Bilal — personal"} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        </div>
+        <div>
+          <Label>Type</Label>
+          <div className="flex gap-1">
+            {[["business", "Business"], ["personal", "Personal"]].map(([k, label]) => (
+              <button key={k} onClick={() => setKind(k)}
+                style={{ background: kind === k ? P.surface2 : "transparent", border: `1px solid ${kind === k ? P.brass : P.line}`, color: kind === k ? P.text : P.muted }}
+                className="flex-1 rounded px-2 py-1.5 text-sm">
+                {label}
+              </button>
+            ))}
+          </div>
+          <p style={{ color: P.faint }} className="text-xs mt-1">
+            {kind === "business" ? "Starts with business categories (revenue, salaries, software, hosting…) and unlocks the CRA T2 draft." : "Starts with personal categories (home, food, transport…)."}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div><Label>Current balance</Label><Input type="number" value={bal} onChange={(e) => setBal(e.target.value)} placeholder="0.00" /></div>
+          <div><Label>As of</Label><Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} /></div>
+        </div>
+        <Btn className="w-full justify-center" disabled={busy || !name.trim()} onClick={submit}>
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Create ledger
+        </Btn>
+        {onboarding && (
+          <button onClick={onSignOut} style={{ color: P.faint, fontFamily: MONO }} className="w-full text-center text-xs underline decoration-dotted">sign out</button>
+        )}
+      </div>
+    </div>
+  );
+
+  if (onboarding)
+    return (
+      <div style={{ background: P.bg, minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif", color: P.text }} className="flex items-center justify-center p-4">
+        {body}
+      </div>
+    );
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      {body}
+    </div>
+  );
+}
+
+/* ================= Integrations: bank feed + CRA T2 ================= */
+const GIFI_RULES = [
+  [/salar|wage|contractor|payroll/i, "9060", "Salaries and wages"],
+  [/host|cloud|server|data/i, "8614", "Data processing"],
+  [/software|saas|subscri|office/i, "8810", "Office expenses"],
+  [/market|advert|promo/i, "8520", "Advertising and promotion"],
+  [/professional|account|legal/i, "8860", "Professional fees"],
+  [/travel/i, "9200", "Travel expenses"],
+  [/rent/i, "8910", "Rental"],
+  [/insur/i, "8690", "Insurance"],
+  [/bank|interest|fee/i, "8710", "Interest and bank charges"],
+  [/equip|repair/i, "8960", "Repairs and maintenance"],
+];
+const gifiFor = (category, subcategory) => {
+  const key = `${subcategory || ""} ${category || ""}`;
+  for (const [re, code, name] of GIFI_RULES) if (re.test(key)) return { code, name };
+  return { code: "9270", name: "Other expenses" };
+};
+
+function fiscalWindow(fye, endYear) {
+  // fye "MM-DD"; returns [startDate, endDate] for the fiscal year ending in endYear
+  const end = `${endYear}-${fye}`;
+  const s = new Date(end + "T00:00:00");
+  s.setFullYear(s.getFullYear() - 1);
+  s.setDate(s.getDate() + 1);
+  return [s.toISOString().slice(0, 10), end];
+}
+const addMonths = (dateStr, m) => {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setMonth(d.getMonth() + m);
+  return d.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+};
+
+function IntegrationsTab({ data, updateLedgerMeta }) {
+  const isBiz = data.ledger.kind === "business";
+  const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
+  const yearsAvail = [...new Set(bizTx.map((t) => Number((t.date || "").slice(0, 4))).filter(Boolean))].sort((a, b) => b - a);
+  const [fy, setFy] = useState(yearsAvail[0] || new Date().getFullYear());
+  const [draft, setDraft] = useState(false);
+  const [path, setPath] = useState("B");
+  const [copied, setCopied] = useState(false);
+  const [accEmail, setAccEmail] = useState("");
+  const [accNote, setAccNote] = useState(`Hi — below is our GIFI-coded T2 draft for ${data.ledger.name}. Balance sheet items still to come from your side. Can you review and let me know what else you need?`);
+  const [emailCopied, setEmailCopied] = useState(false);
+
+  const fye = data.ledger.fye || "12-31";
+  const [fyStart, fyEnd] = fiscalWindow(fye, fy);
+  const fyTx = bizTx.filter((t) => t.date >= fyStart && t.date <= fyEnd);
+  const revenue = fyTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const byGifi = {};
+  fyTx.filter((t) => t.type === "expense").forEach((t) => {
+    const g = gifiFor(t.category, t.subcategory);
+    const k = g.code + "|" + g.name;
+    byGifi[k] = (byGifi[k] || 0) + t.amount;
+  });
+  const totalExp = Object.values(byGifi).reduce((s, v) => s + v, 0);
+  const net = revenue - totalExp;
+  const creditsCovered = fyTx.filter((t) => t.type === "expense" && isCredits(t)).reduce((s, t) => s + t.amount, 0);
+
+  const gifiRows = [
+    { code: "8000", name: "Trade sales of goods and services", amount: revenue },
+    { code: "8299", name: "Total revenue", amount: revenue, strong: true },
+    ...Object.entries(byGifi).sort((a, b) => b[1] - a[1]).map(([k, v]) => {
+      const [code, name] = k.split("|");
+      return { code, name, amount: -v };
+    }),
+    { code: "9368", name: "Total expenses", amount: -totalExp, strong: true },
+    { code: "9999", name: "Net income / (loss) before taxes", amount: net, strong: true, final: true },
+  ];
+
+  const draftText = () =>
+    `T2 DRAFT · ${data.ledger.name} · FY ${fyStart} to ${fyEnd}\n` +
+    gifiRows.map((r) => `${r.code}  ${r.name}: ${r.amount.toFixed(2)}`).join("\n") +
+    (creditsCovered > 0 ? `\nNote: ${creditsCovered.toFixed(2)} of expenses covered by vendor credits (non-cash) — flag for SR&ED/ITC review.` : "");
+
+  const copyDraft = () => {
+    navigator.clipboard?.writeText(draftText().replace(/\\n/g, "\n")).catch(() => {});
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
+  };
+  const exportGifiCSV = () => {
+    downloadCSV(`T2_GIFI_${data.ledger.name.replace(/\s/g, "")}_FY${fy}.csv`, [
+      [`T2 draft (GIFI) — ${data.ledger.name}`, `${fyStart} to ${fyEnd}`],
+      [],
+      ["GIFI code", "Line", "Amount"],
+      ...gifiRows.map((r) => [r.code, r.name, r.amount.toFixed(2)]),
+      [],
+      ["Covered by vendor credits (non-cash)", "", creditsCovered.toFixed(2)],
+    ]);
+  };
+  const mailtoHref = () => {
+    const subject = encodeURIComponent(`${data.ledger.name} — T2 draft (GIFI) for review`);
+    const body = encodeURIComponent(accNote + "\n\n" + draftText().replace(/\\n/g, "\n"));
+    return `mailto:${accEmail}?subject=${subject}&body=${body}`;
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* ---------- bank feed ---------- */}
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Bank feed</h2>
+            <p style={{ color: P.muted }} className="text-sm">Automatic transaction sync via Plaid</p>
+          </div>
+          <span style={{ fontFamily: MONO, color: P.faint, border: `1px solid ${P.line}` }} className="text-xs rounded-full px-2 py-0.5">not connected</span>
+        </div>
+        <p style={{ color: P.muted }} className="text-sm mt-3">
+          Canadian banks don't expose direct APIs — feeds run through an aggregator. Once keys are in place, new
+          purchases and deposits land in the same review queue as statement import: duplicates auto-detected,
+          categories pre-assigned, nothing saved until confirmed. Until then, the statement import in Transactions
+          covers the same ground manually.
+        </p>
+        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3 space-y-1.5">
+          {[
+            ["1", "Create a Plaid account (plaid.com) — the free tier covers a small number of linked banks"],
+            ["2", "Add PLAID_CLIENT_ID and PLAID_SECRET as Supabase Edge Function secrets (same place as the Anthropic key)"],
+            ["3", "Ask your developer (or Claude) to deploy the sync function — the app is structured so this slots in without reworking anything"],
+          ].map(([n, t]) => (
+            <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
+              <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ---------- CRA T2 ---------- */}
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">CRA — Corporate tax (T2)</h2>
+            <p style={{ color: P.muted }} className="text-sm">GIFI-coded draft from {isBiz ? "this ledger" : "this ledger's business entries"}, ready for certified software or your accountant</p>
+          </div>
+        </div>
+
+        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3">
+          <p style={{ color: P.muted }} className="text-xs">
+            Straight talk: the CRA has no public API for T2 filing — returns go through CRA-certified software or an
+            accountant's EFILE. This does the 90% before that: your year mapped onto GIFI line codes, so filing becomes
+            data entry instead of bookkeeping archaeology.
+          </p>
+        </div>
+
+        <div className="grid sm:grid-cols-4 gap-3 mt-4 items-end">
+          <div>
+            <Label>Fiscal year ending</Label>
+            <Select value={fy} onChange={(e) => { setFy(Number(e.target.value)); setDraft(false); }}>
+              {(yearsAvail.length ? yearsAvail : [new Date().getFullYear()]).map((y) => <option key={y} value={y}>{y}</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label>Year-end (FYE)</Label>
+            <Select value={fye} onChange={(e) => updateLedgerMeta({ fye: e.target.value })}>
+              {["12-31", "01-31", "02-28", "03-31", "04-30", "05-31", "06-30", "07-31", "08-31", "09-30", "10-31", "11-30"].map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </Select>
+          </div>
+          <div className="sm:col-span-2">
+            <Btn onClick={() => setDraft(true)}><FileText size={14} /> Generate T2 draft</Btn>
+          </div>
+        </div>
+
+        {draft && (
+          <div className="mt-4 space-y-4">
+            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+              <Label>Deadlines for FYE {fyEnd}</Label>
+              <div className="grid sm:grid-cols-3 gap-3 mt-1">
+                {[
+                  [addMonths(fyEnd, 3), "Balance owing due", "3 months after year-end (CCPC claiming the small business deduction)"],
+                  [addMonths(fyEnd, 6), "T2 return due", "6 months after year-end — file even if no tax is owing"],
+                  [addMonths(fyEnd, 18), "SR&ED claim cutoff", "T661 within 18 months of year-end — hard deadline, no extensions"],
+                ].map(([date, title, sub]) => (
+                  <div key={title}>
+                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-sm">{date}</div>
+                    <div className="text-sm" style={{ color: P.text }}>{title}</div>
+                    <div className="text-xs" style={{ color: P.faint }}>{sub}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+              <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
+                <Label>Schedule 125 — income statement (GIFI) · {fyStart} → {fyEnd}</Label>
+                <div className="flex gap-2">
+                  <Btn tone="ghost" onClick={copyDraft}>{copied ? <Check size={13} /> : null} {copied ? "Copied" : "Copy"}</Btn>
+                  <Btn tone="ghost" onClick={exportGifiCSV}><Download size={13} /> CSV</Btn>
+                </div>
+              </div>
+              {fyTx.length === 0 ? (
+                <p style={{ color: P.faint }} className="text-sm py-3">No business activity recorded in this fiscal year.</p>
+              ) : (
+                <div className="divide-y" style={{ borderColor: P.line }}>
+                  {gifiRows.map((r) => (
+                    <div key={r.code + r.name} className="flex items-center gap-3 py-1.5" style={{ borderColor: P.line }}>
+                      <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs w-12 shrink-0">{r.code}</span>
+                      <span className={"flex-1 text-sm truncate " + (r.strong ? "font-medium" : "")} style={{ color: r.strong ? P.text : P.muted }}>{r.name}</span>
+                      <span style={{ fontFamily: MONO, color: r.final ? (r.amount >= 0 ? P.credit : P.debit) : r.amount >= 0 ? P.credit : P.text, borderTop: r.final ? `1px double ${P.brass}` : "none" }} className="text-sm tabular-nums">{fmt(r.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {creditsCovered > 0 && (
+                <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-2">
+                  note for your accountant: {fmt(creditsCovered)} of expenses were covered by vendor credits (non-cash) — flag for SR&ED/ITC review
+                </p>
+              )}
+              <p style={{ color: P.faint }} className="text-xs mt-2">
+                GIFI codes are inferred from your categories/subcategories — have your accountant confirm the mapping.
+                Schedule 100 (balance sheet) needs assets/liabilities the ledger doesn't track.
+              </p>
+            </div>
+
+            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+              <Label>How to file this</Label>
+              <div className="flex gap-1 mt-1 mb-3 flex-wrap">
+                {[["A", "File it myself"], ["B", "Through my accountant"], ["C", "After it's filed"]].map(([k, label]) => (
+                  <button key={k} onClick={() => setPath(k)}
+                    style={{ fontFamily: MONO, background: path === k ? P.surface2 : "transparent", border: `1px solid ${path === k ? P.brass : P.line}`, color: path === k ? P.text : P.muted }}
+                    className="rounded px-3 py-1 text-xs">
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {(path === "A" ? [
+                ["Pick CRA-certified T2 software", "UFile T2 (~$200/return), TaxTron T2, or WebTax4B — the certified list is on canada.ca. This CSV pastes into their GIFI screens line-for-line."],
+                ["Enter identification + GIFI lines", "BN (9 digits + RC0001), tax year dates, then Schedule 125 from this draft. Schedule 100 needs your bank balance, receivables (AR tab), payables, and share capital."],
+                ["Get your Web Access Code", "The software fetches it with your BN, or call CRA business enquiries (1-800-959-5525)."],
+                ["Transmit + save the confirmation", "File, save the confirmation number, and attach it to a $0 entry in the ledger so the paper trail lives with the books."],
+              ] : path === "B" ? [
+                ["Send the package below", "GIFI draft + P&L export + AR/AP export — a complete handoff. Every entry already has its invoice filed in the app."],
+                ["Flag the SR&ED angle", "Dev salaries and compute costs are claim material, and credit-covered expenses need specific T661 treatment."],
+                ["Authorize them in Represent a Client", "Approve their RepID in CRA My Business Account — they EFILE, you never touch a form."],
+                ["Review + sign the T183CORP", "The one thing you personally sign before they transmit."],
+              ] : [
+                ["Track the return", "CRA My Business Account shows assessment status, balance owing, and instalments."],
+                ["Watch for the Notice of Assessment", "Usually 2–6 weeks e-filed — attach it to a $0 entry in the ledger."],
+                ["Instalments if owing > $3,000", "Add next year's quarterly instalments as recurring payables so the Calendar warns you."],
+                ["Anchor after paying", "When the tax payment clears the bank, log it and re-anchor the balance."],
+              ]).map(([t, b], i) => (
+                <div key={i} className="flex gap-2 mb-2">
+                  <span style={{ fontFamily: MONO, color: P.brass }} className="text-sm shrink-0">{i + 1}.</span>
+                  <div><div className="text-sm" style={{ color: P.text }}>{t}</div><div className="text-xs" style={{ color: P.muted }}>{b}</div></div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+              <Label>Send to your accountant</Label>
+              <div className="space-y-2 mt-1">
+                <div><Label>Accountant's email</Label><Input type="email" value={accEmail} onChange={(e) => setAccEmail(e.target.value)} placeholder="taxes@yourcpa.ca" /></div>
+                <div>
+                  <Label>Message</Label>
+                  <textarea value={accNote} onChange={(e) => setAccNote(e.target.value)} rows={3}
+                    style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.text }}
+                    className="rounded px-2 py-1.5 text-sm w-full outline-none" />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <a href={accEmail.includes("@") ? mailtoHref() : undefined}
+                    style={{ background: accEmail.includes("@") ? P.brass : P.surface2, color: "#10120C", opacity: accEmail.includes("@") ? 1 : 0.4, pointerEvents: accEmail.includes("@") ? "auto" : "none" }}
+                    className="rounded px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5">
+                    <Mail size={14} /> Open in your email app
+                  </a>
+                  <Btn tone="ghost" onClick={() => {
+                    navigator.clipboard?.writeText(`To: ${accEmail}\nSubject: ${data.ledger.name} — T2 draft (GIFI) for review\n\n${accNote}\n\n${draftText().replace(/\\n/g, "\n")}`).catch(() => {});
+                    setEmailCopied(true); setTimeout(() => setEmailCopied(false), 2000);
+                  }}>
+                    {emailCopied ? <Check size={13} /> : null} {emailCopied ? "Copied" : "Copy as email text"}
+                  </Btn>
+                </div>
+                <p style={{ color: P.faint }} className="text-xs">
+                  Opens pre-filled with the GIFI draft in the body. Attach the CSV (button above) plus your P&L and AR/AP exports before sending.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
