@@ -325,9 +325,8 @@ function Ledger({ onSignOut }) {
         const t = loaded.settings.theme === "light" ? "light" : "dark";
         Object.assign(P, PALETTES[t]);
         setThemeState(t);
-        // open on the most recent month that has activity (falls back to the current month)
-        const latest = loaded.transactions.reduce((m, t2) => (t2.date && t2.date > m ? t2.date : m), "");
-        setMonth(latest ? latest.slice(0, 7) : thisMonth());
+        // always open on the current calendar month; history stays one tap away via ‹
+        setMonth(thisMonth());
         setData(loaded);
       } catch (e) {
         console.error(e);
