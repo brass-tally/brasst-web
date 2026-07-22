@@ -89,6 +89,7 @@ const rowToTx = (r) => ({
   description: r.description, account: r.account, recurrence: r.recurrence,
   subcategory: r.subcategory || undefined,
   payMethod: r.pay_method || "cash", creditId: r.credit_id || undefined,
+  transferId: r.transfer_id || undefined, plExclude: !!r.pl_exclude,
   attachmentId: r.attachment_path || undefined, attachmentName: r.attachment_name || undefined,
 });
 
@@ -98,6 +99,7 @@ const txToRow = (t) => ({
   recurrence: t.recurrence === "recurring" ? "recurring" : "once",
   subcategory: t.subcategory || null,
   pay_method: t.payMethod === "credits" ? "credits" : "cash", credit_id: t.creditId || null,
+  transfer_id: t.transferId || null, pl_exclude: !!t.plExclude,
   attachment_path: t.attachmentId || null, attachment_name: t.attachmentName || null,
 });
 
@@ -202,6 +204,27 @@ export async function updateTransaction(id, patch) {
   const row = {};
   for (const [k, col] of Object.entries(map)) if (k in patch) row[col] = patch[k] ?? null;
   const { error } = await supabase.from("transactions").update(row).eq("id", id);
+  if (error) throw error;
+}
+
+// lightweight peek at another ledger's category names (for routing the incoming side of a payment)
+export async function fetchCategoryNames(ledgerId, type) {
+  const { data, error } = await supabase.from("categories").select("name").eq("ledger_id", ledgerId).eq("type", type).order("sort");
+  if (error) throw error;
+  return (data || []).map((c) => c.name);
+}
+
+// inter-ledger transfer: two linked rows, written atomically enough for our purposes
+export async function insertTransfer({ fromId, toId, out, inn }) {
+  const outRow = { ...txToRow(out), ledger_id: fromId };
+  const inRow = { ...txToRow(inn), ledger_id: toId };
+  const { error } = await supabase.from("transactions").insert([outRow, inRow]);
+  if (error) throw error;
+}
+
+// removes BOTH sides of a transfer (RLS scopes it to this user's rows)
+export async function deleteTransfer(transferId) {
+  const { error } = await supabase.from("transactions").delete().eq("transfer_id", transferId);
   if (error) throw error;
 }
 

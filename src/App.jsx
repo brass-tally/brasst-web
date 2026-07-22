@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil,
+  Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -431,6 +431,7 @@ function Ledger({ onSignOut }) {
   const [currentLedger, setCurrentLedger] = useState(null);
   const [fatal, setFatal] = useState(null);              // "migration" | null
   const [newLedgerOpen, setNewLedgerOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   /* ---- 1) list this user's ledgers ---- */
   useEffect(() => {
@@ -569,9 +570,47 @@ function Ledger({ onSignOut }) {
   };
   const delTx = (id) => {
     const t = data.transactions.find((x) => x.id === id);
+    if (t?.transferId) {
+      if (!window.confirm("This entry is one side of an inter-ledger transfer. Removing it deletes BOTH sides (here and in the other ledger). Continue?")) return;
+      setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.transferId !== t.transferId) }));
+      dbTry(() => db.deleteTransfer(t.transferId));
+      return;
+    }
     if (t?.attachmentId) deleteAttachment(t.attachmentId);
     setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.id !== id) }));
     dbTry(() => db.deleteTransaction(id));
+  };
+
+  const makeTransfer = async ({ toLedger, amount, date, description, mode, srcCategory, srcSub }) => {
+    const transferId = crypto.randomUUID();
+    const excl = mode === "transfer";
+    const out = {
+      id: crypto.randomUUID(), date, amount, type: "expense",
+      category: excl ? "Transfer out" : srcCategory,
+      subcategory: excl ? undefined : (srcSub || undefined),
+      description: description || `To ${toLedger.name}`,
+      account: data.ledger.kind === "personal" ? "personal" : "business",
+      recurrence: "once", payMethod: "cash", transferId, plExclude: excl,
+    };
+    let destCat = "Transfer in";
+    if (!excl) {
+      try {
+        const names = await db.fetchCategoryNames(toLedger.id, "income");
+        destCat = names.includes("Paycheck") ? "Paycheck"
+          : names.includes("Client revenue") ? "Client revenue"
+          : (names[0] || "Other");
+      } catch { destCat = "Other"; }
+    }
+    const inn = {
+      id: crypto.randomUUID(), date, amount, type: "income", category: destCat,
+      description: description || `From ${data.ledger.name}`,
+      account: toLedger.kind === "personal" ? "personal" : "business",
+      recurrence: "once", payMethod: "cash", transferId, plExclude: excl,
+    };
+    setData((d) => ({ ...d, transactions: [out, ...d.transactions] }));
+    if (date) setMonth(date.slice(0, 7));
+    setTransferOpen(false);
+    dbTry(() => db.insertTransfer({ fromId: data.ledger.id, toId: toLedger.id, out, inn }));
   };
   const updateTx = (id, patch) => {
     setData((d) => ({
@@ -816,7 +855,7 @@ function Ledger({ onSignOut }) {
 
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
         {/* subcategory-aware forms need addSub */}
-        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} addSub={addSub} addCredit={addCredit} month={month} />}
+        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
@@ -840,7 +879,7 @@ function Ledger({ onSignOut }) {
               <div style={{ fontFamily: MONO }} className="text-xs uppercase tracking-widest flex-1">Capture</div>
               <button onClick={() => setChatOpen(false)} style={{ color: P.muted }} className="p-1"><X size={15} /></button>
             </div>
-            <Capture data={data} addTx={addTx} addAR={addAR} addSub={addSub} month={month} embedded />
+            <Capture key={data.ledger.id} data={data} addTx={addTx} addAR={addAR} addSub={addSub} month={month} embedded />
           </div>
         </div>
         <button
@@ -855,6 +894,16 @@ function Ledger({ onSignOut }) {
 
       <PreviewModal preview={preview} onClose={closePreview} />
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
+      {transferOpen && (
+        <TransferModal
+          data={data}
+          others={ledgers.filter((l) => l.id !== data.ledger.id)}
+          addSub={addSub}
+          onNewLedger={() => { setTransferOpen(false); setNewLedgerOpen(true); }}
+          onSubmit={makeTransfer}
+          onClose={() => setTransferOpen(false)}
+        />
+      )}
       {reconciling && (
         <ReconcileModal
           currentValue={balance.beforeAnchor ? null : balance.value}
@@ -1855,7 +1904,7 @@ function TxEditor({ tx, data, addSub, addCredit, onSave, onCancel }) {
   );
 }
 
-function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, addSub, addCredit, month }) {
+function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, openTransfer, addSub, addCredit, month }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
@@ -1899,6 +1948,9 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
             className="text-xs uppercase tracking-wider rounded px-2 py-0.5 inline-flex items-center gap-1">
             <Repeat size={10} /> recurring
           </button>
+          <Btn tone="ghost" onClick={openTransfer} title="Move money between your ledgers">
+            <ArrowLeftRight size={14} /> Transfer
+          </Btn>
           <Btn tone="ghost" onClick={openImport} title="Import a bank statement — paste text or upload a file">
             <FileText size={14} /> Import
           </Btn>
@@ -1974,8 +2026,9 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 <button onClick={() => setEditingId(t.id)} className="flex-1 min-w-0 text-left" title="Edit this entry">
                   <div className="text-sm truncate">{t.description}</div>
                   <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1">
+                    {t.transferId && <ArrowLeftRight size={11} style={{ color: P.brass, display: "inline" }} />}
                     {isRec(t) && <RecMark />}
-                    {t.category}{t.subcategory ? " / " + t.subcategory : ""} · {t.account === "business" ? "business" : "personal"}{isRec(t) ? " · recurring" : ""}
+                    {t.category}{t.subcategory ? " / " + t.subcategory : ""} · {t.account === "business" ? "business" : "personal"}{isRec(t) ? " · recurring" : ""}{t.plExclude ? " · transfer (not in P&L)" : ""}
                   </div>
                 </button>
                 {isCredits(t) && (
@@ -2007,7 +2060,7 @@ function ProfitLoss({ data, month }) {
   const [scope, setScope] = useState("business");
   const inScope = (t) => scope === "all" || t.account === scope;
 
-  const monthTx = data.transactions.filter((t) => t.date?.startsWith(month) && inScope(t));
+  const monthTx = data.transactions.filter((t) => t.date?.startsWith(month) && inScope(t) && !t.plExclude);
   const revenue = monthTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const costs = monthTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
   const recCosts = monthTx.filter((t) => t.type === "expense" && isRec(t)).reduce((s, t) => s + t.amount, 0);
@@ -2024,7 +2077,7 @@ function ProfitLoss({ data, month }) {
   const months = [];
   for (let i = 5; i >= 0; i--) months.push(shiftMonth(month, -i));
   const trend = months.map((m) => {
-    const tx = data.transactions.filter((t) => t.date?.startsWith(m) && inScope(t));
+    const tx = data.transactions.filter((t) => t.date?.startsWith(m) && inScope(t) && !t.plExclude);
     const inc = tx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
     const exp = tx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     return { m, inc, exp, net: inc - exp };
@@ -2909,7 +2962,7 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
 
   const fye = data.ledger.fye || "12-31";
   const [fyStart, fyEnd] = fiscalWindow(fye, fy);
-  const fyTx = bizTx.filter((t) => t.date >= fyStart && t.date <= fyEnd);
+  const fyTx = bizTx.filter((t) => t.date >= fyStart && t.date <= fyEnd && !t.plExclude);
   const revenue = fyTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const byGifi = {};
   fyTx.filter((t) => t.type === "expense").forEach((t) => {
@@ -3140,6 +3193,119 @@ function IntegrationsTab({ data, updateLedgerMeta }) {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+
+/* ================= inter-ledger transfer ================= */
+function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose }) {
+  const [toId, setToId] = useState(others[0]?.id || "");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(todayStr());
+  const [desc, setDesc] = useState("");
+  const [mode, setMode] = useState("transfer"); // transfer | payment
+  const [srcCategory, setSrcCategory] = useState(data.categories.expense[0]?.name || "Other");
+  const [srcSub, setSrcSub] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const toLedger = others.find((l) => l.id === toId);
+  const valid = toLedger && parseFloat(amount) > 0 && date;
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    await onSubmit({
+      toLedger, amount: Math.abs(parseFloat(amount)), date, description: desc.trim(),
+      mode, srcCategory, srcSub,
+    });
+    setBusy(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-start mb-1">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Move money between ledgers</h3>
+          <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+        </div>
+
+        {others.length === 0 ? (
+          <div className="py-2">
+            <p style={{ color: P.muted }} className="text-sm mb-3">You only have one ledger — create a second one (e.g. your personal books) and transfers unlock.</p>
+            <Btn className="w-full justify-center" onClick={onNewLedger}><Plus size={14} /> Create another ledger</Btn>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <Label>From</Label>
+                <div style={{ background: P.bg, border: `1px solid ${P.line}`, fontFamily: MONO }} className="rounded px-2 py-1.5 text-sm">{data.ledger.name}</div>
+              </div>
+              <ArrowLeftRight size={16} style={{ color: P.brass }} className="mt-4 shrink-0" />
+              <div className="flex-1">
+                <Label>To</Label>
+                <Select value={toId} onChange={(e) => setToId(e.target.value)}>
+                  {others.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Amount</Label><Input type="number" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" style={{ fontFamily: MONO }} /></div>
+              <div><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+            </div>
+            <div><Label>Description</Label><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={mode === "payment" ? "July salary" : "Owner draw"} /></div>
+
+            <div>
+              <Label>What kind of movement?</Label>
+              <div className="space-y-1.5">
+                {[
+                  ["transfer", "Transfer / owner draw", "Moves cash between balances. Excluded from both P&L — like chequing → savings."],
+                  ["payment", "Payment (salary, invoice)", `A real expense for ${data.ledger.name} and real income for the other ledger — shows in both P&L (and the T2 draft).`],
+                ].map(([k, title, sub]) => (
+                  <button key={k} onClick={() => setMode(k)}
+                    style={{ background: mode === k ? P.surface2 : P.bg, border: `1px solid ${mode === k ? P.brass : P.line}` }}
+                    className="w-full rounded-lg p-2.5 text-left">
+                    <div className="text-sm" style={{ color: P.text }}>{title}</div>
+                    <div className="text-xs" style={{ color: P.faint }}>{sub}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {mode === "payment" && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Expense category ({data.ledger.name})</Label>
+                  <Select value={srcCategory} onChange={(e) => { setSrcCategory(e.target.value); setSrcSub(""); }}>
+                    {data.categories.expense.map((c) => <option key={c.name}>{c.name}</option>)}
+                  </Select>
+                </div>
+                <div>
+                  <Label>Subcategory</Label>
+                  <SubPicker data={data} type="expense" category={srcCategory} value={srcSub} onChange={setSrcSub} addSub={addSub} />
+                </div>
+              </div>
+            )}
+
+            <Btn className="w-full justify-center" disabled={!valid || busy} onClick={submit}>
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowLeftRight size={14} />}
+              {" "}Move {amount ? fmt(Math.abs(parseFloat(amount)) || 0) : "money"} to {toLedger?.name || "…"}
+            </Btn>
+            <p style={{ color: P.faint }} className="text-xs">
+              Both sides are written together and stay linked — deleting one removes the other, so the books can't drift.
+              {mode === "payment" && " The receiving side lands in that ledger's Paycheck/revenue category — adjust it there if needed."}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
