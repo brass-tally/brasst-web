@@ -117,7 +117,7 @@ function downloadCSV(filename, rows) {
   const csv = rows
     .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
     .join("\r\n");
-  const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
+  const url = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
@@ -241,8 +241,35 @@ const creditRemaining = (data, creditId) => {
   if (!pool) return 0;
   const spent = data.transactions.filter((t) => t.creditId === creditId && t.type === "expense").reduce((s, t) => s + t.amount, 0);
   const earned = data.transactions.filter((t) => t.creditId === creditId && t.type === "income").reduce((s, t) => s + t.amount, 0);
-  return pool.initial + earned - spent;
+  return pool.initial - (pool.usedAdjustment || 0) + earned - spent;
 };
+const creditsTotalRemaining = (data) => (data.credits || []).reduce((s, c) => s + creditRemaining(data, c.id), 0);
+
+/* one "Paid via" selector everywhere: cash, each pool (with remaining), or create a pool inline */
+function PayViaSelect({ data, payMethod, creditId, onChange, addCredit }) {
+  const handle = (v) => {
+    if (v === "cash") return onChange("cash", null);
+    if (v === "__addpool__") {
+      const name = window.prompt("Credit pool name (e.g. MongoDB credits):");
+      if (!name || !name.trim()) return;
+      const amt = parseFloat(window.prompt(`How many credits did ${name.trim()} grant? (number)`) || "");
+      if (Number.isNaN(amt)) return;
+      const id = addCredit(name.trim(), Math.abs(amt));
+      onChange("credits", id);
+      return;
+    }
+    onChange("credits", v);
+  };
+  return (
+    <Select value={payMethod === "credits" ? creditId || "" : "cash"} onChange={(e) => handle(e.target.value)}>
+      <option value="cash">Cash / bank</option>
+      {(data.credits || []).map((c) => (
+        <option key={c.id} value={c.id}>{c.name} ({fmt0(creditRemaining(data, c.id))} left)</option>
+      ))}
+      <option value="__addpool__">+ add a credit pool…</option>
+    </Select>
+  );
+}
 const creditName = (data, creditId) => (data.credits || []).find((c) => c.id === creditId)?.name || "credits";
 const isCredits = (x) => x?.payMethod === "credits";
 
@@ -561,9 +588,14 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.updateObligation(id, patch));
   };
   const addCredit = (name, initial) => {
-    const rec = { id: crypto.randomUUID(), name, initial };
+    const rec = { id: crypto.randomUUID(), name, initial, usedAdjustment: 0 };
     setData((d) => ({ ...d, credits: [...(d.credits || []), rec] }));
     dbTry(() => db.insertCredit(rec));
+    return rec.id;
+  };
+  const updateCredit = (id, patch) => {
+    setData((d) => ({ ...d, credits: (d.credits || []).map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
+    dbTry(() => db.updateCredit(id, patch));
   };
   const delCredit = (id) => {
     setData((d) => ({ ...d, credits: (d.credits || []).filter((c) => c.id !== id) }));
@@ -669,7 +701,7 @@ function Ledger({ onSignOut }) {
         </header>
 
         {/* ===== signature ledger line ===== */}
-        <LedgerLine sums={sums} balance={balance} openBooks={openBooks} onReconcile={() => setReconciling(true)} />
+        <LedgerLine sums={sums} balance={balance} openBooks={openBooks} creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null} onCredits={() => setTab("arap")} onReconcile={() => setReconciling(true)} />
 
         {/* ===== tabs ===== */}
         <nav className="flex gap-1 mt-6 mb-6 overflow-x-auto" style={{ borderBottom: `1px solid ${P.line}` }}>
@@ -701,9 +733,9 @@ function Ledger({ onSignOut }) {
 
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
         {/* subcategory-aware forms need addSub */}
-        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} addSub={addSub} month={month} />}
+        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} addSub={addSub} addCredit={addCredit} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
-        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} delCredit={delCredit} openPreview={openPreview} />}
+        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} openPreview={openPreview} />}
         {tab === "calendar" && <CashCalendar data={data} />}
       </div>
 
@@ -1119,7 +1151,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
 }
 
 /* ================= signature: the ledger line ================= */
-function LedgerLine({ sums, balance, openBooks, onReconcile }) {
+function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconcile }) {
   const max = Math.max(sums.inc, sums.exp, 1);
   return (
     <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
@@ -1133,6 +1165,14 @@ function LedgerLine({ sums, balance, openBooks, onReconcile }) {
             {balance.beforeAnchor ? "—" : fmt(balance.value)}
           </div>
         </button>
+        {creditsLeft !== null && (
+          <button onClick={onCredits} className="text-left" title="Non-cash credits remaining across all pools — tap to manage">
+            <Label>Credits left</Label>
+            <div style={{ fontFamily: MONO, color: creditsLeft > 0 ? P.credit : P.debit }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4">
+              {fmt(creditsLeft)}
+            </div>
+          </button>
+        )}
       </div>
       <div className="space-y-1.5">
         <div className="flex items-center gap-2">
@@ -1662,7 +1702,7 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
 }
 
 /* inline editor for an existing transaction row */
-function TxEditor({ tx, data, addSub, onSave, onCancel }) {
+function TxEditor({ tx, data, addSub, addCredit, onSave, onCancel }) {
   const [f, setF] = useState({ ...tx, amount: String(tx.amount) });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const cats = data.categories[f.type].map((c) => c.name);
@@ -1713,11 +1753,8 @@ function TxEditor({ tx, data, addSub, onSave, onCancel }) {
       <div><Label>Frequency</Label><RecToggle value={f.recurrence === "recurring" ? "recurring" : "once"} onChange={(v) => set("recurrence", v)} /></div>
       <div>
         <Label>Paid via</Label>
-        <Select value={f.payMethod === "credits" ? f.creditId || "" : "cash"}
-          onChange={(e) => { const v = e.target.value; if (v === "cash") { setF((p) => ({ ...p, payMethod: "cash", creditId: null })); } else { setF((p) => ({ ...p, payMethod: "credits", creditId: v })); } }}>
-          <option value="cash">Cash / bank</option>
-          {(data.credits || []).map((c) => <option key={c.id} value={c.id}>{c.name} credits</option>)}
-        </Select>
+        <PayViaSelect data={data} payMethod={f.payMethod} creditId={f.creditId} addCredit={addCredit}
+          onChange={(pm, cid) => setF((p) => ({ ...p, payMethod: pm, creditId: cid }))} />
       </div>
       <div className="sm:col-span-3"><Label>Description</Label><Input value={f.description} onChange={(e) => set("description", e.target.value)} /></div>
       <div className="sm:col-span-2 flex gap-2">
@@ -1728,7 +1765,7 @@ function TxEditor({ tx, data, addSub, onSave, onCancel }) {
   );
 }
 
-function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, addSub, month }) {
+function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, addSub, addCredit, month }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
@@ -1809,11 +1846,8 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           </div>
           <div className="sm:col-span-2">
             <Label>Paid via</Label>
-            <Select value={form.payMethod === "credits" ? form.creditId || "" : "cash"}
-              onChange={(e) => { const v = e.target.value; if (v === "cash") { setForm((p) => ({ ...p, payMethod: "cash", creditId: null })); } else { setForm((p) => ({ ...p, payMethod: "credits", creditId: v })); } }}>
-              <option value="cash">Cash / bank</option>
-              {(data.credits || []).map((c) => <option key={c.id} value={c.id}>{c.name} credits ({fmt0(creditRemaining(data, c.id))} left)</option>)}
-            </Select>
+            <PayViaSelect data={data} payMethod={form.payMethod} creditId={form.creditId} addCredit={addCredit}
+              onChange={(pm, cid) => setForm((p) => ({ ...p, payMethod: pm, creditId: cid }))} />
           </div>
           <div className="sm:col-span-2"><Label>Description</Label><Input placeholder="What was it?" value={form.description} onChange={(e) => set("description", e.target.value)} /></div>
           <div className="sm:col-span-2"><Label>Frequency</Label><RecToggle value={form.recurrence} onChange={(v) => set("recurrence", v)} /></div>
@@ -1835,6 +1869,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 tx={t}
                 data={data}
                 addSub={addSub}
+                addCredit={addCredit}
                 onSave={(patch) => { updateTx(t.id, patch); setEditingId(null); }}
                 onCancel={() => setEditingId(null)}
               />
@@ -2031,7 +2066,7 @@ const PLRow = ({ label, value, color }) => (
 );
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, delCredit, openPreview }) {
+function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, updateCredit, delCredit, openPreview }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -2043,8 +2078,8 @@ function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, delCr
     downloadCSV(`AR_AP_${todayStr()}.csv`, [
       [`Receivables & Payables`, `exported ${todayStr()}`],
       [],
-      ["Open \u2014 owed to you", openAR.toFixed(2)],
-      ["Open \u2014 you owe", openAP.toFixed(2)],
+      ["Open — owed to you", openAR.toFixed(2)],
+      ["Open — you owe", openAP.toFixed(2)],
       ["Net position", net.toFixed(2)],
       [],
       ["Kind", "Party", "For", "Amount", "Due", "Status", "Settled on", "Account", "Frequency", "Category", "Subcategory", "Paid via"],
@@ -2070,16 +2105,16 @@ function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, delCr
         </div>
       </div>
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="Receivables \u2014 they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} openPreview={openPreview} tone={P.credit} action="Mark received" />
-        <ARList kind="payables" title="Payables \u2014 you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} openPreview={openPreview} tone={P.debit} action="Mark paid" />
+        <ARList kind="receivables" title="Receivables — they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
+        <ARList kind="payables" title="Payables — you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
       </div>
-      <CreditsCard data={data} addCredit={addCredit} delCredit={delCredit} />
+      <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />
     </div>
   );
 }
 
 /* ---------- shared field block for AR/AP add + edit forms ---------- */
-function ARFields({ kind, f, set, data, addSub }) {
+function ARFields({ kind, f, set, data, addSub, addCredit }) {
   const type = kind === "receivables" ? "income" : "expense";
   const cats = data.categories[type].map((c) => c.name);
   const catVal = f.category && cats.includes(f.category) ? f.category : (kind === "receivables" ? "Client revenue" : "GENIE AI");
@@ -2090,7 +2125,7 @@ function ARFields({ kind, f, set, data, addSub }) {
         <div><Label>Amount</Label><Input type="number" value={f.amount} onChange={(e) => set("amount", e.target.value)} placeholder="0.00" /></div>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <div><Label>For</Label><Input value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Invoice #, work\u2026" /></div>
+        <div><Label>For</Label><Input value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Invoice #, work…" /></div>
         <div><Label>Due</Label><Input type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} /></div>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -2117,28 +2152,17 @@ function ARFields({ kind, f, set, data, addSub }) {
       )}
       <div>
         <Label>{kind === "receivables" ? "Received as" : "Paid via"}</Label>
-        <Select
-          value={f.payMethod === "credits" ? f.creditId || "" : "cash"}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "cash") { set("payMethod", "cash"); set("creditId", null); }
-            else { set("payMethod", "credits"); set("creditId", v); }
-          }}
-        >
-          <option value="cash">Cash / bank</option>
-          {(data.credits || []).map((c) => (
-            <option key={c.id} value={c.id}>{c.name} credits ({fmt0(creditRemaining(data, c.id))} left)</option>
-          ))}
-        </Select>
+        <PayViaSelect data={data} payMethod={f.payMethod} creditId={f.creditId} addCredit={addCredit}
+          onChange={(pm, cid) => { set("payMethod", pm); set("creditId", cid); }} />
         {f.payMethod === "credits" && (
-          <p style={{ color: P.faint }} className="text-xs mt-1">Settling this moves credits, not cash \u2014 your balance won't change.</p>
+          <p style={{ color: P.faint }} className="text-xs mt-1">Settling this moves credits, not cash — your balance won't change.</p>
         )}
       </div>
     </>
   );
 }
 
-function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, addSub, openPreview, tone, action }) {
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openPreview, tone, action }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const defaultCat = kind === "receivables" ? "Client revenue" : "GENIE AI";
@@ -2158,7 +2182,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
     if (!file) return;
     setReadErr("");
     if (file.size > MAX_FILE_BYTES) {
-      setReadErr(`That file is ${(file.size / 1048576).toFixed(1)} MB \u2014 max 8 MB. Try a smaller export or a screenshot.`);
+      setReadErr(`That file is ${(file.size / 1048576).toFixed(1)} MB — max 8 MB. Try a smaller export or a screenshot.`);
       return;
     }
     const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
@@ -2181,7 +2205,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
       if (d.note) setReadErr(d.note);
       setAdding(true);
     } catch {
-      setReadErr("Couldn't read that invoice \u2014 check the fields yourself or try a clearer file.");
+      setReadErr("Couldn't read that invoice — check the fields yourself or try a clearer file.");
       setAdding(true);
     }
     setReading(false);
@@ -2235,7 +2259,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
           onChange={(e) => { onInvoice(e.target.files[0]); e.target.value = ""; }} />
         <Btn tone="ghost" onClick={() => fileRef.current.click()} disabled={reading}
-          title={`Upload an invoice \u2014 I'll read it and pre-fill this ${kind === "receivables" ? "receivable" : "payable"}`}>
+          title={`Upload an invoice — I'll read it and pre-fill this ${kind === "receivables" ? "receivable" : "payable"}`}>
           {reading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
         </Btn>
         <Btn tone="ghost" onClick={() => (adding ? cancelAdd() : setAdding(true))} title="Add manually">
@@ -2245,7 +2269,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
 
       {reading && (
         <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3 flex items-center gap-2">
-          <Loader2 size={12} className="animate-spin" /> reading the invoice\u2026
+          <Loader2 size={12} className="animate-spin" /> reading the invoice…
         </div>
       )}
 
@@ -2256,7 +2280,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
               <Paperclip size={11} /> {att.name} will be filed with this entry
             </div>
           )}
-          <ARFields kind={kind} f={form} set={set} data={data} addSub={addSub} />
+          <ARFields kind={kind} f={form} set={set} data={data} addSub={addSub} addCredit={addCredit} />
           {readErr && <p style={{ color: P.brass }} className="text-xs">{readErr}</p>}
           <Btn className="w-full justify-center" onClick={submit}><Check size={14} /> Add</Btn>
         </div>
@@ -2271,7 +2295,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
             if (editingId === i.id && editForm) {
               return (
                 <div key={i.id} style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-3 space-y-2">
-                  <ARFields kind={kind} f={editForm} set={eset} data={data} addSub={addSub} />
+                  <ARFields kind={kind} f={editForm} set={eset} data={data} addSub={addSub} addCredit={addCredit} />
                   <div className="flex gap-2">
                     <Btn className="flex-1 justify-center" onClick={saveEdit}><Check size={14} /> Save changes</Btn>
                     <Btn tone="ghost" onClick={() => { setEditingId(null); setEditForm(null); }}><X size={14} /></Btn>
@@ -2285,12 +2309,12 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
                   <div className="text-sm truncate">{i.party}</div>
                   <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap">
                     {isRec(i) && <RecMark />}
-                    {i.description || "\u2014"} \u00b7 due {i.dueDate}{overdue ? " \u00b7 overdue" : ""}
-                    {isRec(i) ? ` \u00b7 ${freqLabel(i.frequency || "monthly")}` : ""}
-                    {i.subcategory ? ` \u00b7 ${i.subcategory}` : ""}
+                    {i.description || "—"} · due {i.dueDate}{overdue ? " · overdue" : ""}
+                    {isRec(i) ? ` · ${freqLabel(i.frequency || "monthly")}` : ""}
+                    {i.subcategory ? ` · ${i.subcategory}` : ""}
                   </div>
                   {isCredits(i) && (
-                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits \u2014 no cash moves</div>
+                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits — no cash moves</div>
                   )}
                 </button>
                 <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
@@ -2302,7 +2326,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
                 <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
                   <Pencil size={13} />
                 </button>
-                <Btn tone="ghost" onClick={() => settleAR(kind, i.id)} title={`${action} \u2014 logs a transaction dated today`}>
+                <Btn tone="ghost" onClick={() => settleAR(kind, i.id)} title={`${action} — logs a transaction dated today`}>
                   <Check size={13} />
                 </Btn>
                 <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
@@ -2317,7 +2341,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
           <Label>Settled</Label>
           {settled.slice(0, 5).map((i) => (
             <div key={i.id} style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex justify-between py-0.5">
-              <span className="truncate">{i.party}{isCredits(i) ? " (credits)" : ""}</span><span>{fmt(i.amount)} \u00b7 {i.settledOn}</span>
+              <span className="truncate">{i.party}{isCredits(i) ? " (credits)" : ""}</span><span>{fmt(i.amount)} · {i.settledOn}</span>
             </div>
           ))}
         </div>
@@ -2327,20 +2351,38 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
 }
 
 /* ================= credit pools (AWS, compute, SR&ED, etc.) ================= */
-function CreditsCard({ data, addCredit, delCredit }) {
+function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
+  const [used, setUsed] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [edit, setEdit] = useState(null);
   const pools = data.credits || [];
 
   const committedFor = (creditId) =>
     data.payables.filter((p) => p.status === "open" && p.creditId === creditId).reduce((s, p) => s + p.amount, 0);
+  const trackedSpend = (creditId) =>
+    data.transactions.filter((t) => t.creditId === creditId && t.type === "expense").reduce((s, t) => s + t.amount, 0);
 
   const submit = () => {
     const v = parseFloat(amount);
     if (!name.trim() || Number.isNaN(v)) return;
-    addCredit(name.trim(), Math.abs(v));
-    setName(""); setAmount(""); setAdding(false);
+    const id = addCredit(name.trim(), Math.abs(v));
+    const u = parseFloat(used);
+    if (!Number.isNaN(u) && u > 0) updateCredit(id, { usedAdjustment: Math.abs(u) });
+    setName(""); setAmount(""); setUsed(""); setAdding(false);
+  };
+
+  const saveEdit = () => {
+    const initial = parseFloat(edit.initial);
+    const adj = parseFloat(edit.usedAdjustment);
+    updateCredit(editingId, {
+      name: edit.name.trim() || "Credits",
+      initial: Number.isNaN(initial) ? 0 : Math.abs(initial),
+      usedAdjustment: Number.isNaN(adj) ? 0 : Math.abs(adj),
+    });
+    setEditingId(null); setEdit(null);
   };
 
   return (
@@ -2350,31 +2392,57 @@ function CreditsCard({ data, addCredit, delCredit }) {
         <Btn tone="ghost" onClick={() => setAdding(!adding)}>{adding ? <X size={14} /> : <Plus size={14} />}</Btn>
       </div>
       <p style={{ color: P.faint }} className="text-xs mb-3">
-        Non-cash pools \u2014 AWS credits, AI compute credits, MongoDB credits, SR&ED. Entries paid with credits draw
-        these down instead of your bank balance.
+        Non-cash pools — AWS credits, AI compute credits, MongoDB credits, SR&ED. Anything "paid via" a pool draws it
+        down instead of your bank balance; the total left shows next to Balance to date up top.
       </p>
 
       {adding && (
-        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mb-3 grid sm:grid-cols-3 gap-2 items-end">
-          <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="AWS Activate" /></div>
-          <div><Label>Amount granted</Label><Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="5000" /></div>
+        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mb-3 grid sm:grid-cols-4 gap-2 items-end">
+          <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="MongoDB credits" /></div>
+          <div><Label>Granted</Label><Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="5000" /></div>
+          <div><Label>Already used (before the app)</Label><Input type="number" value={used} onChange={(e) => setUsed(e.target.value)} placeholder="0" /></div>
           <Btn className="justify-center" onClick={submit}><Check size={14} /> Add pool</Btn>
         </div>
       )}
 
       {pools.length === 0 && !adding ? (
-        <p style={{ color: P.faint }} className="text-sm py-2">No credit pools yet \u2014 add one with +, then pick it under "Paid via" when adding a payable or transaction.</p>
+        <p style={{ color: P.faint }} className="text-sm py-2">No credit pools yet — add one with +, or pick "+ add a credit pool…" right inside any Paid via dropdown.</p>
       ) : (
         <div className="grid sm:grid-cols-2 gap-3">
           {pools.map((c) => {
+            if (editingId === c.id && edit) {
+              return (
+                <div key={c.id} style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-3 space-y-2">
+                  <div><Label>Name</Label><Input value={edit.name} onChange={(e) => setEdit((p) => ({ ...p, name: e.target.value }))} /></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><Label>Granted</Label><Input type="number" value={edit.initial} onChange={(e) => setEdit((p) => ({ ...p, initial: e.target.value }))} /></div>
+                    <div><Label>Used outside the app</Label><Input type="number" value={edit.usedAdjustment} onChange={(e) => setEdit((p) => ({ ...p, usedAdjustment: e.target.value }))} /></div>
+                  </div>
+                  <p style={{ color: P.faint }} className="text-xs">
+                    "Used outside the app" covers burn that never went through the ledger — everything you log with
+                    "Paid via {c.name}" is subtracted automatically on top of it.
+                  </p>
+                  <div className="flex gap-2">
+                    <Btn className="flex-1 justify-center" onClick={saveEdit}><Check size={14} /> Save</Btn>
+                    <Btn tone="ghost" onClick={() => { setEditingId(null); setEdit(null); }}><X size={14} /></Btn>
+                  </div>
+                </div>
+              );
+            }
             const remaining = creditRemaining(data, c.id);
             const committed = committedFor(c.id);
+            const tracked = trackedSpend(c.id);
             const usedPct = c.initial > 0 ? Math.min(Math.max(((c.initial - remaining) / c.initial) * 100, 0), 100) : 0;
             return (
               <div key={c.id} style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3">
                 <div className="flex justify-between items-baseline gap-2">
-                  <div className="text-sm truncate">{c.name}</div>
-                  <button onClick={() => { if (window.confirm(`Remove the ${c.name} pool? Past entries keep their credit tag.`)) delCredit(c.id); }} style={{ color: P.faint }}><Trash2 size={12} /></button>
+                  <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} className="text-sm truncate text-left underline decoration-dotted underline-offset-2" style={{ color: P.text, textDecorationColor: P.faint }} title="Edit this pool">
+                    {c.name}
+                  </button>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} style={{ color: P.faint }} title="Edit"><Pencil size={12} /></button>
+                    <button onClick={() => { if (window.confirm(`Remove the ${c.name} pool? Past entries keep their credit tag.`)) delCredit(c.id); }} style={{ color: P.faint }} title="Remove"><Trash2 size={12} /></button>
+                  </div>
                 </div>
                 <div style={{ fontFamily: MONO, color: remaining > 0 ? P.credit : P.debit }} className="text-lg tabular-nums">
                   {fmt(remaining)} <span style={{ color: P.faint }} className="text-xs">/ {fmt0(c.initial)} left</span>
@@ -2382,11 +2450,11 @@ function CreditsCard({ data, addCredit, delCredit }) {
                 <div className="h-1.5 rounded-full overflow-hidden mt-1" style={{ background: P.surface2 }}>
                   <div style={{ width: `${100 - usedPct}%`, background: P.brass, opacity: 0.8 }} className="h-full" />
                 </div>
-                {committed > 0 && (
-                  <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs mt-1">
-                    {fmt(committed)} committed in open payables
-                  </div>
-                )}
+                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs mt-1">
+                  used: {fmt0((c.usedAdjustment || 0) + tracked)}
+                  {(c.usedAdjustment || 0) > 0 ? ` (${fmt0(c.usedAdjustment)} pre-app + ${fmt0(tracked)} tracked)` : ""}
+                  {committed > 0 ? ` · ${fmt0(committed)} committed in open payables` : ""}
+                </div>
               </div>
             );
           })}
@@ -2441,12 +2509,12 @@ function CashCalendar({ data }) {
       <div className="flex-1 min-w-0">
         <div className="text-sm truncate">{o.party}</div>
         <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-          {o.description || "\u2014"}{isRec(o) ? ` \u00b7 ${freqLabel(o.frequency || "monthly")}` : ""}{o.projected ? " \u00b7 projected" : ""}
+          {o.description || "—"}{isRec(o) ? ` · ${freqLabel(o.frequency || "monthly")}` : ""}{o.projected ? " · projected" : ""}
         </div>
       </div>
       {isCredits(o) && <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1">{creditName(data, o.creditId)}</span>}
       <div style={{ fontFamily: MONO, color: o.kind === "receivables" ? P.credit : P.debit }} className="text-sm tabular-nums">
-        {o.kind === "receivables" ? "+" : "\u2212"}{fmt(o.amount)}
+        {o.kind === "receivables" ? "+" : "−"}{fmt(o.amount)}
       </div>
     </div>
   );
@@ -2455,8 +2523,8 @@ function CashCalendar({ data }) {
     <div className="space-y-6">
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
         <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
-          <Stat label={`Expected in \u00b7 ${span}d`} value={fmt(cashIn)} color={P.credit} />
-          <Stat label={`Expected out \u00b7 ${span}d`} value={fmt(cashOut)} color={P.debit} />
+          <Stat label={`Expected in · ${span}d`} value={fmt(cashIn)} color={P.credit} />
+          <Stat label={`Expected out · ${span}d`} value={fmt(cashOut)} color={P.debit} />
           <Stat label="Net cash impact" value={fmt(cashIn - cashOut)} color={cashIn - cashOut >= 0 ? P.credit : P.debit} />
           <div className="flex gap-1">
             {[30, 90].map((s) => (
@@ -2470,7 +2538,7 @@ function CashCalendar({ data }) {
         </div>
         {creditsOut > 0 && (
           <p style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-            plus {fmt(creditsOut)} due in credits \u2014 not counted in cash impact
+            plus {fmt(creditsOut)} due in credits — not counted in cash impact
           </p>
         )}
       </div>
@@ -2493,7 +2561,7 @@ function CashCalendar({ data }) {
             {dates.map((d) => (
               <div key={d}>
                 <div style={{ fontFamily: MONO, color: d === today ? P.brass : P.faint, borderBottom: `1px solid ${P.line}` }} className="text-xs uppercase tracking-widest pb-1 mb-1">
-                  {prettyDate(d)}{d === today ? " \u00b7 today" : ""}
+                  {prettyDate(d)}{d === today ? " · today" : ""}
                 </div>
                 {byDate[d].map((o, i) => <Row key={i} o={o} />)}
               </div>

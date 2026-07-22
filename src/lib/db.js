@@ -155,7 +155,7 @@ export async function loadAll() {
   let credits = [];
   try {
     const { data: cr } = await supabase.from("credits").select("*").order("created_at");
-    credits = (cr || []).map((c) => ({ id: c.id, name: c.name, initial: Number(c.initial) }));
+    credits = (cr || []).map((c) => ({ id: c.id, name: c.name, initial: Number(c.initial), usedAdjustment: Number(c.used_adjustment || 0) }));
   } catch { /* table not created yet */ }
 
   // anchor history is optional — tolerate a missing table if the migration hasn't run yet
@@ -255,7 +255,18 @@ export async function updateObligation(id, patch) {
 }
 
 export async function insertCredit(credit) {
-  const { error } = await supabase.from("credits").insert({ id: credit.id, name: credit.name, initial: credit.initial });
+  const { error } = await supabase.from("credits").insert({
+    id: credit.id, name: credit.name, initial: credit.initial, used_adjustment: credit.usedAdjustment || 0,
+  });
+  if (error) throw error;
+}
+
+export async function updateCredit(id, patch) {
+  const row = {};
+  if ("name" in patch) row.name = patch.name;
+  if ("initial" in patch) row.initial = patch.initial;
+  if ("usedAdjustment" in patch) row.used_adjustment = patch.usedAdjustment;
+  const { error } = await supabase.from("credits").update(row).eq("id", id);
   if (error) throw error;
 }
 
