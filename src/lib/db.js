@@ -16,6 +16,8 @@ const rowToTx = (r) => ({
   account: r.account,
   recurrence: r.recurrence,
   subcategory: r.subcategory || undefined,
+  payMethod: r.pay_method || "cash",
+  creditId: r.credit_id || undefined,
   attachmentId: r.attachment_path || undefined,
   attachmentName: r.attachment_name || undefined,
 });
@@ -30,6 +32,8 @@ const txToRow = (t) => ({
   account: t.account || "business",
   recurrence: t.recurrence === "recurring" ? "recurring" : "once",
   subcategory: t.subcategory || null,
+  pay_method: t.payMethod === "credits" ? "credits" : "cash",
+  credit_id: t.creditId || null,
   attachment_path: t.attachmentId || null,
   attachment_name: t.attachmentName || null,
 });
@@ -44,6 +48,11 @@ const rowToOb = (r) => ({
   settledOn: r.settled_on || undefined,
   account: r.account,
   recurrence: r.recurrence,
+  category: r.category || undefined,
+  subcategory: r.subcategory || undefined,
+  frequency: r.frequency || undefined,
+  payMethod: r.pay_method || "cash",
+  creditId: r.credit_id || undefined,
   attachmentId: r.attachment_path || undefined,
   attachmentName: r.attachment_name || undefined,
 });
@@ -59,6 +68,11 @@ const obToRow = (kind, o) => ({
   settled_on: o.settledOn || null,
   account: o.account || "business",
   recurrence: o.recurrence === "recurring" ? "recurring" : "once",
+  category: o.category || null,
+  subcategory: o.subcategory || null,
+  frequency: o.frequency || null,
+  pay_method: o.payMethod === "credits" ? "credits" : "cash",
+  credit_id: o.creditId || null,
   attachment_path: o.attachmentId || null,
   attachment_name: o.attachmentName || null,
 });
@@ -137,6 +151,13 @@ export async function loadAll() {
   if (txs.error) throw txs.error;
   if (obs.error) throw obs.error;
 
+  // credit pools are optional — tolerate a missing table until the migration runs
+  let credits = [];
+  try {
+    const { data: cr } = await supabase.from("credits").select("*").order("created_at");
+    credits = (cr || []).map((c) => ({ id: c.id, name: c.name, initial: Number(c.initial) }));
+  } catch { /* table not created yet */ }
+
   // anchor history is optional — tolerate a missing table if the migration hasn't run yet
   let anchorHistory = [];
   try {
@@ -166,6 +187,7 @@ export async function loadAll() {
     receivables: obs.data.filter((o) => o.kind === "receivable").map(rowToOb),
     payables: obs.data.filter((o) => o.kind === "payable").map(rowToOb),
     anchorHistory,
+    credits,
   };
 }
 
@@ -186,6 +208,7 @@ export async function updateTransaction(id, patch) {
   const map = {
     date: "date", amount: "amount", type: "type", category: "category",
     description: "description", account: "account", recurrence: "recurrence", subcategory: "subcategory",
+    payMethod: "pay_method", creditId: "credit_id",
     attachmentId: "attachment_path", attachmentName: "attachment_name",
   };
   const row = {};
@@ -217,10 +240,27 @@ export async function insertObligation(kind, item) {
 }
 
 export async function updateObligation(id, patch) {
+  const map = {
+    party: "party", description: "description", amount: "amount", dueDate: "due_date",
+    status: "status", settledOn: "settled_on", account: "account", recurrence: "recurrence",
+    category: "category", subcategory: "subcategory", frequency: "frequency",
+    payMethod: "pay_method", creditId: "credit_id",
+  };
   const row = {};
-  if ("status" in patch) row.status = patch.status;
-  if ("settledOn" in patch) row.settled_on = patch.settledOn || null;
+  for (const [k, col] of Object.entries(map)) {
+    if (k in patch) row[col] = patch[k] ?? null;
+  }
   const { error } = await supabase.from("obligations").update(row).eq("id", id);
+  if (error) throw error;
+}
+
+export async function insertCredit(credit) {
+  const { error } = await supabase.from("credits").insert({ id: credit.id, name: credit.name, initial: credit.initial });
+  if (error) throw error;
+}
+
+export async function deleteCredit(id) {
+  const { error } = await supabase.from("credits").delete().eq("id", id);
   if (error) throw error;
 }
 

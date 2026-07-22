@@ -222,6 +222,30 @@ function SubPicker({ data, type, category, value, onChange, addSub, compact }) {
   );
 }
 
+/* frequency cadences for recurring AR/AP */
+const FREQS = [["weekly", "Weekly"], ["biweekly", "Every 2 weeks"], ["monthly", "Monthly"], ["quarterly", "Quarterly"], ["yearly", "Yearly"]];
+const freqLabel = (f) => (FREQS.find(([k]) => k === f) || [null, "Recurring"])[1];
+const addInterval = (dateStr, freq) => {
+  const d = new Date(dateStr + "T00:00:00");
+  if (freq === "weekly") d.setDate(d.getDate() + 7);
+  else if (freq === "biweekly") d.setDate(d.getDate() + 14);
+  else if (freq === "quarterly") d.setMonth(d.getMonth() + 3);
+  else if (freq === "yearly") d.setFullYear(d.getFullYear() + 1);
+  else d.setMonth(d.getMonth() + 1); // monthly default
+  return d.toISOString().slice(0, 10);
+};
+
+/* credits: remaining = initial + credit-denominated income − credit-denominated spend */
+const creditRemaining = (data, creditId) => {
+  const pool = (data.credits || []).find((c) => c.id === creditId);
+  if (!pool) return 0;
+  const spent = data.transactions.filter((t) => t.creditId === creditId && t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const earned = data.transactions.filter((t) => t.creditId === creditId && t.type === "income").reduce((s, t) => s + t.amount, 0);
+  return pool.initial + earned - spent;
+};
+const creditName = (data, creditId) => (data.credits || []).find((c) => c.id === creditId)?.name || "credits";
+const isCredits = (x) => x?.payMethod === "credits";
+
 /* ================= AI extraction prompts ================= */
 const subPromptInfo = (cats) => {
   const lines = [...cats.expense, ...cats.income]
@@ -394,7 +418,7 @@ function Ledger({ onSignOut }) {
         setData({
           settings: { startingBalance: 0, anchorDate: "1970-01-01", currency: "CAD", theme: "dark" },
           categories: { expense: [], income: [] },
-          transactions: [], receivables: [], payables: [], anchorHistory: [],
+          transactions: [], receivables: [], payables: [], anchorHistory: [], credits: [],
         });
       }
     })();
@@ -410,9 +434,11 @@ function Ledger({ onSignOut }) {
     () => (data ? data.transactions.filter((t) => t.date && t.date.startsWith(month)) : []),
     [data, month]
   );
+  // ledger line shows CASH flow — entries paid/received in credits don't move money
   const sums = useMemo(() => {
-    const inc = monthTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
-    const exp = monthTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    const cash = monthTx.filter((t) => !isCredits(t));
+    const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+    const exp = cash.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     return { inc, exp, net: inc - exp };
   }, [monthTx]);
   // Balance anchoring: "balance was $X as of anchorDate". Only transactions AFTER the
@@ -423,7 +449,7 @@ function Ledger({ onSignOut }) {
     const anchorAmount = data.settings.startingBalance;
     const beforeAnchor = month < anchorDate.slice(0, 7); // viewing a month that ends before the anchor
     const cum = data.transactions
-      .filter((t) => t.date && t.date > anchorDate && t.date.slice(0, 7) <= month)
+      .filter((t) => t.date && t.date > anchorDate && t.date.slice(0, 7) <= month && !isCredits(t))
       .reduce((s, t) => s + (t.type === "income" ? t.amount : -t.amount), 0);
     return { value: anchorAmount + cum, beforeAnchor, anchorAmount, anchorDate };
   }, [data, month]);
@@ -501,23 +527,47 @@ function Ledger({ onSignOut }) {
       date: todayStr(),
       amount: item.amount,
       type: kind === "receivables" ? "income" : "expense",
-      category: kind === "receivables" ? "Client revenue" : "GENIE AI",
+      category: item.category || (kind === "receivables" ? "Client revenue" : "GENIE AI"),
+      subcategory: item.subcategory,
       description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party} — ${item.description}`,
       account: item.account || "business",
       recurrence: item.recurrence,
+      payMethod: item.payMethod === "credits" ? "credits" : "cash",
+      creditId: item.payMethod === "credits" ? item.creditId : undefined,
       attachmentId: item.attachmentId,
       attachmentName: item.attachmentName,
     };
+    // recurring obligations respawn with the next due date instead of disappearing
+    const next = item.recurrence === "recurring"
+      ? { ...item, id: crypto.randomUUID(), dueDate: addInterval(item.dueDate || todayStr(), item.frequency || "monthly"), attachmentId: undefined, attachmentName: undefined }
+      : null;
     setData((d) => ({
       ...d,
-      [kind]: d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn: todayStr() } : x)),
+      [kind]: [
+        ...(next ? [next] : []),
+        ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn: todayStr() } : x)),
+      ],
       transactions: [tx, ...d.transactions],
     }));
     setMonth(thisMonth());
     dbTry(async () => {
       await db.updateObligation(id, { status: "paid", settledOn: todayStr() });
       await db.insertTransaction(tx);
+      if (next) await db.insertObligation(kind, next);
     });
+  };
+  const updateAR = (kind, id, patch) => {
+    setData((d) => ({ ...d, [kind]: d[kind].map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+    dbTry(() => db.updateObligation(id, patch));
+  };
+  const addCredit = (name, initial) => {
+    const rec = { id: crypto.randomUUID(), name, initial };
+    setData((d) => ({ ...d, credits: [...(d.credits || []), rec] }));
+    dbTry(() => db.insertCredit(rec));
+  };
+  const delCredit = (id) => {
+    setData((d) => ({ ...d, credits: (d.credits || []).filter((c) => c.id !== id) }));
+    dbTry(() => db.deleteCredit(id));
   };
   const delAR = (kind, id) => {
     const item = data[kind].find((x) => x.id === id);
@@ -579,6 +629,7 @@ function Ledger({ onSignOut }) {
     ["transactions", "Transactions"],
     ["pl", "P&L"],
     ["arap", "AR / AP"],
+    ["calendar", "Calendar"],
   ];
 
   return (
@@ -652,7 +703,8 @@ function Ledger({ onSignOut }) {
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} addSub={addSub} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
-        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} openPreview={openPreview} />}
+        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} delCredit={delCredit} openPreview={openPreview} />}
+        {tab === "calendar" && <CashCalendar data={data} />}
       </div>
 
       {/* ===== floating capture chat (stays mounted so the conversation survives closing) ===== */}
@@ -1626,6 +1678,8 @@ function TxEditor({ tx, data, addSub, onSave, onCancel }) {
       account: f.account,
       recurrence: f.recurrence === "recurring" ? "recurring" : "once",
       subcategory: f.subcategory || null,
+      payMethod: f.payMethod === "credits" ? "credits" : "cash",
+      creditId: f.payMethod === "credits" ? f.creditId : null,
     });
   };
 
@@ -1657,7 +1711,15 @@ function TxEditor({ tx, data, addSub, onSave, onCancel }) {
         </Select>
       </div>
       <div><Label>Frequency</Label><RecToggle value={f.recurrence === "recurring" ? "recurring" : "once"} onChange={(v) => set("recurrence", v)} /></div>
-      <div className="sm:col-span-4"><Label>Description</Label><Input value={f.description} onChange={(e) => set("description", e.target.value)} /></div>
+      <div>
+        <Label>Paid via</Label>
+        <Select value={f.payMethod === "credits" ? f.creditId || "" : "cash"}
+          onChange={(e) => { const v = e.target.value; if (v === "cash") { setF((p) => ({ ...p, payMethod: "cash", creditId: null })); } else { setF((p) => ({ ...p, payMethod: "credits", creditId: v })); } }}>
+          <option value="cash">Cash / bank</option>
+          {(data.credits || []).map((c) => <option key={c.id} value={c.id}>{c.name} credits</option>)}
+        </Select>
+      </div>
+      <div className="sm:col-span-3"><Label>Description</Label><Input value={f.description} onChange={(e) => set("description", e.target.value)} /></div>
       <div className="sm:col-span-2 flex gap-2">
         <Btn className="flex-1 justify-center" onClick={save}><Check size={14} /> Save changes</Btn>
         <Btn tone="ghost" onClick={onCancel}><X size={14} /></Btn>
@@ -1671,7 +1733,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const blank = { date: `${month}-15`, amount: "", type: "expense", category: "GENIE AI", subcategory: "", description: "", account: "business", recurrence: "once" };
+  const blank = { date: `${month}-15`, amount: "", type: "expense", category: "GENIE AI", subcategory: "", description: "", account: "business", recurrence: "once", payMethod: "cash", creditId: null };
   const [form, setForm] = useState(blank);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -1683,7 +1745,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
 
   const submit = () => {
     if (!form.amount || !form.description) return;
-    addTx({ ...form, subcategory: form.subcategory || undefined, amount: parseFloat(form.amount) });
+    addTx({ ...form, subcategory: form.subcategory || undefined, creditId: form.payMethod === "credits" ? form.creditId : undefined, amount: parseFloat(form.amount) });
     setForm(blank);
     setAdding(false);
   };
@@ -1745,7 +1807,15 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
               <option value="business">GENIE AI</option><option value="personal">Personal</option>
             </Select>
           </div>
-          <div className="sm:col-span-4"><Label>Description</Label><Input placeholder="What was it?" value={form.description} onChange={(e) => set("description", e.target.value)} /></div>
+          <div className="sm:col-span-2">
+            <Label>Paid via</Label>
+            <Select value={form.payMethod === "credits" ? form.creditId || "" : "cash"}
+              onChange={(e) => { const v = e.target.value; if (v === "cash") { setForm((p) => ({ ...p, payMethod: "cash", creditId: null })); } else { setForm((p) => ({ ...p, payMethod: "credits", creditId: v })); } }}>
+              <option value="cash">Cash / bank</option>
+              {(data.credits || []).map((c) => <option key={c.id} value={c.id}>{c.name} credits ({fmt0(creditRemaining(data, c.id))} left)</option>)}
+            </Select>
+          </div>
+          <div className="sm:col-span-2"><Label>Description</Label><Input placeholder="What was it?" value={form.description} onChange={(e) => set("description", e.target.value)} /></div>
           <div className="sm:col-span-2"><Label>Frequency</Label><RecToggle value={form.recurrence} onChange={(v) => set("recurrence", v)} /></div>
           <div className="sm:col-span-6 flex gap-2">
             <Btn className="flex-1 justify-center" onClick={submit}><Check size={14} /> Save entry</Btn>
@@ -1778,6 +1848,11 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                     {t.category}{t.subcategory ? " / " + t.subcategory : ""} · {t.account === "business" ? "GENIE AI" : "personal"}{isRec(t) ? " · recurring" : ""}
                   </div>
                 </button>
+                {isCredits(t) && (
+                  <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1 shrink-0" title="Paid with credits — doesn't affect cash balance">
+                    {creditName(data, t.creditId)}
+                  </span>
+                )}
                 <TxAttachment tx={t} setTxAttachment={setTxAttachment} openPreview={openPreview} />
                 <div style={{ fontFamily: MONO, color: t.type === "income" ? P.credit : P.text }} className="text-sm tabular-nums">
                   {t.type === "income" ? "+" : "−"}{fmt(t.amount)}
@@ -1806,6 +1881,7 @@ function ProfitLoss({ data, month }) {
   const revenue = monthTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const costs = monthTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
   const recCosts = monthTx.filter((t) => t.type === "expense" && isRec(t)).reduce((s, t) => s + t.amount, 0);
+  const creditCosts = monthTx.filter((t) => t.type === "expense" && isCredits(t)).reduce((s, t) => s + t.amount, 0);
   const net = revenue - costs;
   const margin = revenue > 0 ? (net / revenue) * 100 : null;
 
@@ -1838,6 +1914,7 @@ function ProfitLoss({ data, month }) {
       ["Costs & expenses", (-costs).toFixed(2)],
       ["  of which recurring", (-recCosts).toFixed(2)],
       ["  of which one-time", (-(costs - recCosts)).toFixed(2)],
+      ["  of which covered by credits (non-cash)", (-creditCosts).toFixed(2)],
       [`Net ${net >= 0 ? "profit" : "loss"}`, net.toFixed(2)],
       ["Margin", margin !== null ? `${margin.toFixed(1)}%` : "n/a"],
       [],
@@ -1884,6 +1961,12 @@ function ProfitLoss({ data, month }) {
             <div style={{ color: P.faint }} className="flex justify-between text-xs pl-4">
               <span className="inline-flex items-center gap-1"><Repeat size={10} /> recurring / one-time</span>
               <span className="tabular-nums">{fmt(-recCosts)} / {fmt(-(costs - recCosts))}</span>
+            </div>
+          )}
+          {creditCosts > 0 && (
+            <div style={{ color: P.faint }} className="flex justify-between text-xs pl-4">
+              <span>covered by credits (no cash out)</span>
+              <span className="tabular-nums" style={{ color: P.brass }}>{fmt(-creditCosts)}</span>
             </div>
           )}
           <div style={{ borderTop: `1px double ${P.brass}` }} className="pt-2 flex justify-between text-base">
@@ -1948,22 +2031,23 @@ const PLRow = ({ label, value, color }) => (
 );
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, openPreview }) {
+function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, delCredit, openPreview }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
-  const max = Math.max(openAR, openAP, 1);
 
   const exportCSV = () => {
-    const row = (kind, i) => [kind, i.party, i.description || "", i.amount.toFixed(2), i.dueDate || "", i.status, i.settledOn || "", i.account === "personal" ? "Personal" : "GENIE AI", isRec(i) ? "Recurring" : "One-time"];
+    const row = (kind, i) => [kind, i.party, i.description || "", i.amount.toFixed(2), i.dueDate || "", i.status, i.settledOn || "",
+      i.account === "personal" ? "Personal" : "GENIE AI", isRec(i) ? `Recurring (${freqLabel(i.frequency || "monthly")})` : "One-time",
+      i.category || "", i.subcategory || "", isCredits(i) ? creditName(data, i.creditId) : "Cash"];
     downloadCSV(`AR_AP_${todayStr()}.csv`, [
       [`Receivables & Payables`, `exported ${todayStr()}`],
       [],
-      ["Open — owed to you", openAR.toFixed(2)],
-      ["Open — you owe", openAP.toFixed(2)],
+      ["Open \u2014 owed to you", openAR.toFixed(2)],
+      ["Open \u2014 you owe", openAP.toFixed(2)],
       ["Net position", net.toFixed(2)],
       [],
-      ["Kind", "Party", "For", "Amount", "Due", "Status", "Settled on", "Account", "Frequency"],
+      ["Kind", "Party", "For", "Amount", "Due", "Status", "Settled on", "Account", "Frequency", "Category", "Subcategory", "Paid via"],
       ...data.receivables.map((i) => row("Receivable", i)),
       ...data.payables.map((i) => row("Payable", i)),
     ]);
@@ -1986,22 +2070,87 @@ function ARAP({ data, addAR, settleAR, delAR, openPreview }) {
         </div>
       </div>
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="Receivables — they owe you" items={data.receivables} addAR={addAR} settleAR={settleAR} delAR={delAR} openPreview={openPreview} tone={P.credit} action="Mark received" />
-        <ARList kind="payables" title="Payables — you owe them" items={data.payables} addAR={addAR} settleAR={settleAR} delAR={delAR} openPreview={openPreview} tone={P.debit} action="Mark paid" />
+        <ARList kind="receivables" title="Receivables \u2014 they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} openPreview={openPreview} tone={P.credit} action="Mark received" />
+        <ARList kind="payables" title="Payables \u2014 you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} openPreview={openPreview} tone={P.debit} action="Mark paid" />
       </div>
+      <CreditsCard data={data} addCredit={addCredit} delCredit={delCredit} />
     </div>
   );
 }
 
-function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone, action }) {
+/* ---------- shared field block for AR/AP add + edit forms ---------- */
+function ARFields({ kind, f, set, data, addSub }) {
+  const type = kind === "receivables" ? "income" : "expense";
+  const cats = data.categories[type].map((c) => c.name);
+  const catVal = f.category && cats.includes(f.category) ? f.category : (kind === "receivables" ? "Client revenue" : "GENIE AI");
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-2">
+        <div><Label>{kind === "receivables" ? "Who owes you" : "Who you owe"}</Label><Input value={f.party} onChange={(e) => set("party", e.target.value)} placeholder="Client / vendor" /></div>
+        <div><Label>Amount</Label><Input type="number" value={f.amount} onChange={(e) => set("amount", e.target.value)} placeholder="0.00" /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div><Label>For</Label><Input value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Invoice #, work\u2026" /></div>
+        <div><Label>Due</Label><Input type="date" value={f.dueDate} onChange={(e) => set("dueDate", e.target.value)} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>Category</Label>
+          <Select value={catVal} onChange={(e) => { set("category", e.target.value); set("subcategory", ""); }}>
+            {cats.map((c) => <option key={c}>{c}</option>)}
+          </Select>
+        </div>
+        <div>
+          <Label>Subcategory</Label>
+          <SubPicker data={data} type={type} category={catVal} value={f.subcategory || ""} onChange={(v) => set("subcategory", v)} addSub={addSub} />
+        </div>
+      </div>
+      <div><Label>Frequency</Label><RecToggle value={f.recurrence === "recurring" ? "recurring" : "once"} onChange={(v) => set("recurrence", v)} /></div>
+      {f.recurrence === "recurring" && (
+        <div>
+          <Label>Repeats</Label>
+          <Select value={f.frequency || "monthly"} onChange={(e) => set("frequency", e.target.value)}>
+            {FREQS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </Select>
+          <p style={{ color: P.faint }} className="text-xs mt-1">When you settle it, the next occurrence is queued automatically.</p>
+        </div>
+      )}
+      <div>
+        <Label>{kind === "receivables" ? "Received as" : "Paid via"}</Label>
+        <Select
+          value={f.payMethod === "credits" ? f.creditId || "" : "cash"}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "cash") { set("payMethod", "cash"); set("creditId", null); }
+            else { set("payMethod", "credits"); set("creditId", v); }
+          }}
+        >
+          <option value="cash">Cash / bank</option>
+          {(data.credits || []).map((c) => (
+            <option key={c.id} value={c.id}>{c.name} credits ({fmt0(creditRemaining(data, c.id))} left)</option>
+          ))}
+        </Select>
+        {f.payMethod === "credits" && (
+          <p style={{ color: P.faint }} className="text-xs mt-1">Settling this moves credits, not cash \u2014 your balance won't change.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, addSub, openPreview, tone, action }) {
   const [adding, setAdding] = useState(false);
-  const blank = { party: "", description: "", amount: "", dueDate: todayStr(), account: "business", recurrence: "once" };
+  const [editingId, setEditingId] = useState(null);
+  const defaultCat = kind === "receivables" ? "Client revenue" : "GENIE AI";
+  const blank = { party: "", description: "", amount: "", dueDate: todayStr(), account: "business", recurrence: "once", frequency: "monthly", category: defaultCat, subcategory: "", payMethod: "cash", creditId: null };
   const [form, setForm] = useState(blank);
-  const [att, setAtt] = useState(null); // pending file to be stored on save
+  const [editForm, setEditForm] = useState(null);
+  const [att, setAtt] = useState(null);
   const [reading, setReading] = useState(false);
   const [readErr, setReadErr] = useState("");
   const fileRef = useRef(null);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+  const eset = (k, v) => setEditForm((p) => ({ ...p, [k]: v }));
   const open = items.filter((i) => i.status === "open");
   const settled = items.filter((i) => i.status !== "open");
 
@@ -2009,7 +2158,7 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
     if (!file) return;
     setReadErr("");
     if (file.size > MAX_FILE_BYTES) {
-      setReadErr(`That file is ${(file.size / 1048576).toFixed(1)} MB — max 8 MB. Try a smaller export or a screenshot.`);
+      setReadErr(`That file is ${(file.size / 1048576).toFixed(1)} MB \u2014 max 8 MB. Try a smaller export or a screenshot.`);
       return;
     }
     const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
@@ -2021,18 +2170,18 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
         : { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: b64 } };
       const d = await askClaude([block, { type: "text", text: arExtractionPrompt(kind) }]);
       setForm({
+        ...blank,
         party: d.party || "",
         description: d.description || "",
         amount: d.amount != null ? String(d.amount) : "",
         dueDate: d.dueDate || todayStr(),
-        account: "business",
         recurrence: d.recurrence === "recurring" ? "recurring" : "once",
       });
       setAtt({ name: file.name || "invoice.pdf", type: isPdf ? "application/pdf" : (file.type || "image/png"), data: b64, file });
-      if (d.note) setReadErr(d.note); // shown as an info line under the form
+      if (d.note) setReadErr(d.note);
       setAdding(true);
     } catch {
-      setReadErr("Couldn't read that invoice — check the fields yourself or try a clearer file.");
+      setReadErr("Couldn't read that invoice \u2014 check the fields yourself or try a clearer file.");
       setAdding(true);
     }
     setReading(false);
@@ -2046,18 +2195,38 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
       attachmentName = attachmentId ? att.name : undefined;
       if (!attachmentId) setReadErr("The entry was added, but the file itself couldn't be saved to storage.");
     }
-    addAR(kind, { ...form, amount: parseFloat(form.amount), attachmentId: attachmentId || undefined, attachmentName });
+    addAR(kind, {
+      ...form,
+      amount: parseFloat(form.amount),
+      subcategory: form.subcategory || undefined,
+      creditId: form.payMethod === "credits" ? form.creditId : undefined,
+      attachmentId: attachmentId || undefined,
+      attachmentName,
+    });
     setForm(blank);
     setAtt(null);
     setAdding(false);
   };
 
-  const cancelAdd = () => {
-    setAdding(false);
-    setForm(blank);
-    setAtt(null);
-    setReadErr("");
+  const saveEdit = () => {
+    const amount = parseFloat(editForm.amount);
+    updateAR(kind, editingId, {
+      party: editForm.party,
+      description: editForm.description,
+      amount: Number.isNaN(amount) ? undefined : Math.abs(amount),
+      dueDate: editForm.dueDate,
+      recurrence: editForm.recurrence === "recurring" ? "recurring" : "once",
+      frequency: editForm.recurrence === "recurring" ? (editForm.frequency || "monthly") : null,
+      category: editForm.category || defaultCat,
+      subcategory: editForm.subcategory || null,
+      payMethod: editForm.payMethod === "credits" ? "credits" : "cash",
+      creditId: editForm.payMethod === "credits" ? editForm.creditId : null,
+    });
+    setEditingId(null);
+    setEditForm(null);
   };
+
+  const cancelAdd = () => { setAdding(false); setForm(blank); setAtt(null); setReadErr(""); };
 
   return (
     <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
@@ -2066,7 +2235,7 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
           onChange={(e) => { onInvoice(e.target.files[0]); e.target.value = ""; }} />
         <Btn tone="ghost" onClick={() => fileRef.current.click()} disabled={reading}
-          title={`Upload an invoice — I'll read it and pre-fill this ${kind === "receivables" ? "receivable" : "payable"}`}>
+          title={`Upload an invoice \u2014 I'll read it and pre-fill this ${kind === "receivables" ? "receivable" : "payable"}`}>
           {reading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
         </Btn>
         <Btn tone="ghost" onClick={() => (adding ? cancelAdd() : setAdding(true))} title="Add manually">
@@ -2076,7 +2245,7 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
 
       {reading && (
         <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3 flex items-center gap-2">
-          <Loader2 size={12} className="animate-spin" /> reading the invoice…
+          <Loader2 size={12} className="animate-spin" /> reading the invoice\u2026
         </div>
       )}
 
@@ -2087,15 +2256,7 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
               <Paperclip size={11} /> {att.name} will be filed with this entry
             </div>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <div><Label>{kind === "receivables" ? "Who owes you" : "Who you owe"}</Label><Input value={form.party} onChange={(e) => set("party", e.target.value)} placeholder="Client / vendor" /></div>
-            <div><Label>Amount</Label><Input type="number" value={form.amount} onChange={(e) => set("amount", e.target.value)} placeholder="0.00" /></div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div><Label>For</Label><Input value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Invoice #, work…" /></div>
-            <div><Label>Due</Label><Input type="date" value={form.dueDate} onChange={(e) => set("dueDate", e.target.value)} /></div>
-          </div>
-          <div><Label>Frequency</Label><RecToggle value={form.recurrence === "recurring" ? "recurring" : "once"} onChange={(v) => set("recurrence", v)} /></div>
+          <ARFields kind={kind} f={form} set={set} data={data} addSub={addSub} />
           {readErr && <p style={{ color: P.brass }} className="text-xs">{readErr}</p>}
           <Btn className="w-full justify-center" onClick={submit}><Check size={14} /> Add</Btn>
         </div>
@@ -2107,22 +2268,41 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
         <div className="space-y-2">
           {open.map((i) => {
             const overdue = i.dueDate && i.dueDate < todayStr();
-            return (
-              <div key={i.id} style={{ background: P.bg, border: `1px solid ${overdue ? P.debit : P.line}` }} className="rounded-lg p-3 flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm truncate">{i.party}</div>
-                  <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1">
-                    {isRec(i) && <RecMark />}
-                    {i.description || "—"} · due {i.dueDate}{overdue ? " · overdue" : ""}{isRec(i) ? " · recurring" : ""}
+            if (editingId === i.id && editForm) {
+              return (
+                <div key={i.id} style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-3 space-y-2">
+                  <ARFields kind={kind} f={editForm} set={eset} data={data} addSub={addSub} />
+                  <div className="flex gap-2">
+                    <Btn className="flex-1 justify-center" onClick={saveEdit}><Check size={14} /> Save changes</Btn>
+                    <Btn tone="ghost" onClick={() => { setEditingId(null); setEditForm(null); }}><X size={14} /></Btn>
                   </div>
                 </div>
+              );
+            }
+            return (
+              <div key={i.id} style={{ background: P.bg, border: `1px solid ${overdue ? P.debit : P.line}` }} className="rounded-lg p-3 flex items-center gap-2">
+                <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} className="flex-1 min-w-0 text-left" title="Edit">
+                  <div className="text-sm truncate">{i.party}</div>
+                  <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap">
+                    {isRec(i) && <RecMark />}
+                    {i.description || "\u2014"} \u00b7 due {i.dueDate}{overdue ? " \u00b7 overdue" : ""}
+                    {isRec(i) ? ` \u00b7 ${freqLabel(i.frequency || "monthly")}` : ""}
+                    {i.subcategory ? ` \u00b7 ${i.subcategory}` : ""}
+                  </div>
+                  {isCredits(i) && (
+                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits \u2014 no cash moves</div>
+                  )}
+                </button>
                 <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
                 {i.attachmentId && (
                   <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brass }}>
                     <Paperclip size={13} />
                   </button>
                 )}
-                <Btn tone="ghost" onClick={() => settleAR(kind, i.id)} title={`${action} — logs a transaction dated today`}>
+                <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
+                  <Pencil size={13} />
+                </button>
+                <Btn tone="ghost" onClick={() => settleAR(kind, i.id)} title={`${action} \u2014 logs a transaction dated today`}>
                   <Check size={13} />
                 </Btn>
                 <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
@@ -2137,11 +2317,190 @@ function ARList({ kind, title, items, addAR, settleAR, delAR, openPreview, tone,
           <Label>Settled</Label>
           {settled.slice(0, 5).map((i) => (
             <div key={i.id} style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex justify-between py-0.5">
-              <span className="truncate">{i.party}</span><span>{fmt(i.amount)} · {i.settledOn}</span>
+              <span className="truncate">{i.party}{isCredits(i) ? " (credits)" : ""}</span><span>{fmt(i.amount)} \u00b7 {i.settledOn}</span>
             </div>
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+/* ================= credit pools (AWS, compute, SR&ED, etc.) ================= */
+function CreditsCard({ data, addCredit, delCredit }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const pools = data.credits || [];
+
+  const committedFor = (creditId) =>
+    data.payables.filter((p) => p.status === "open" && p.creditId === creditId).reduce((s, p) => s + p.amount, 0);
+
+  const submit = () => {
+    const v = parseFloat(amount);
+    if (!name.trim() || Number.isNaN(v)) return;
+    addCredit(name.trim(), Math.abs(v));
+    setName(""); setAmount(""); setAdding(false);
+  };
+
+  return (
+    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <div className="flex justify-between items-center mb-1 gap-2">
+        <h2 style={{ fontFamily: SERIF }} className="text-lg">Credits</h2>
+        <Btn tone="ghost" onClick={() => setAdding(!adding)}>{adding ? <X size={14} /> : <Plus size={14} />}</Btn>
+      </div>
+      <p style={{ color: P.faint }} className="text-xs mb-3">
+        Non-cash pools \u2014 AWS credits, AI compute credits, MongoDB credits, SR&ED. Entries paid with credits draw
+        these down instead of your bank balance.
+      </p>
+
+      {adding && (
+        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mb-3 grid sm:grid-cols-3 gap-2 items-end">
+          <div><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="AWS Activate" /></div>
+          <div><Label>Amount granted</Label><Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="5000" /></div>
+          <Btn className="justify-center" onClick={submit}><Check size={14} /> Add pool</Btn>
+        </div>
+      )}
+
+      {pools.length === 0 && !adding ? (
+        <p style={{ color: P.faint }} className="text-sm py-2">No credit pools yet \u2014 add one with +, then pick it under "Paid via" when adding a payable or transaction.</p>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-3">
+          {pools.map((c) => {
+            const remaining = creditRemaining(data, c.id);
+            const committed = committedFor(c.id);
+            const usedPct = c.initial > 0 ? Math.min(Math.max(((c.initial - remaining) / c.initial) * 100, 0), 100) : 0;
+            return (
+              <div key={c.id} style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3">
+                <div className="flex justify-between items-baseline gap-2">
+                  <div className="text-sm truncate">{c.name}</div>
+                  <button onClick={() => { if (window.confirm(`Remove the ${c.name} pool? Past entries keep their credit tag.`)) delCredit(c.id); }} style={{ color: P.faint }}><Trash2 size={12} /></button>
+                </div>
+                <div style={{ fontFamily: MONO, color: remaining > 0 ? P.credit : P.debit }} className="text-lg tabular-nums">
+                  {fmt(remaining)} <span style={{ color: P.faint }} className="text-xs">/ {fmt0(c.initial)} left</span>
+                </div>
+                <div className="h-1.5 rounded-full overflow-hidden mt-1" style={{ background: P.surface2 }}>
+                  <div style={{ width: `${100 - usedPct}%`, background: P.brass, opacity: 0.8 }} className="h-full" />
+                </div>
+                {committed > 0 && (
+                  <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs mt-1">
+                    {fmt(committed)} committed in open payables
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ================= cash calendar: what's due in the next 30 / 90 days ================= */
+function CashCalendar({ data }) {
+  const [span, setSpan] = useState(30);
+  const today = todayStr();
+  const end = (() => { const d = new Date(); d.setDate(d.getDate() + span); return d.toISOString().slice(0, 10); })();
+
+  // expand open obligations into dated occurrences (recurring ones project forward)
+  const occurrences = [];
+  for (const kind of ["receivables", "payables"]) {
+    for (const item of data[kind]) {
+      if (item.status !== "open") continue;
+      let due = item.dueDate || today;
+      if (due < today) {
+        occurrences.push({ ...item, kind, due, overdue: true });
+        if (item.recurrence !== "recurring") continue;
+        while (due < today) due = addInterval(due, item.frequency || "monthly");
+      }
+      let guard = 0;
+      while (due <= end && guard < 24) {
+        if (due >= today) occurrences.push({ ...item, kind, due, overdue: false, projected: guard > 0 || (item.dueDate || today) < today });
+        if (item.recurrence !== "recurring") break;
+        due = addInterval(due, item.frequency || "monthly");
+        guard += 1;
+      }
+    }
+  }
+
+  const overdue = occurrences.filter((o) => o.overdue).sort((a, b) => a.due.localeCompare(b.due));
+  const upcoming = occurrences.filter((o) => !o.overdue).sort((a, b) => a.due.localeCompare(b.due));
+  const cashIn = upcoming.filter((o) => o.kind === "receivables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+  const cashOut = upcoming.filter((o) => o.kind === "payables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+  const creditsOut = upcoming.filter((o) => o.kind === "payables" && isCredits(o)).reduce((s, o) => s + o.amount, 0);
+
+  const byDate = upcoming.reduce((m, o) => { (m[o.due] = m[o.due] || []).push(o); return m; }, {});
+  const dates = Object.keys(byDate).sort();
+  const prettyDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" });
+
+  const Row = ({ o }) => (
+    <div className="flex items-center gap-2 py-1.5">
+      {o.kind === "receivables"
+        ? <ArrowDownRight size={13} style={{ color: P.credit }} className="shrink-0" />
+        : <ArrowUpRight size={13} style={{ color: P.debit }} className="shrink-0" />}
+      <div className="flex-1 min-w-0">
+        <div className="text-sm truncate">{o.party}</div>
+        <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+          {o.description || "\u2014"}{isRec(o) ? ` \u00b7 ${freqLabel(o.frequency || "monthly")}` : ""}{o.projected ? " \u00b7 projected" : ""}
+        </div>
+      </div>
+      {isCredits(o) && <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1">{creditName(data, o.creditId)}</span>}
+      <div style={{ fontFamily: MONO, color: o.kind === "receivables" ? P.credit : P.debit }} className="text-sm tabular-nums">
+        {o.kind === "receivables" ? "+" : "\u2212"}{fmt(o.amount)}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
+          <Stat label={`Expected in \u00b7 ${span}d`} value={fmt(cashIn)} color={P.credit} />
+          <Stat label={`Expected out \u00b7 ${span}d`} value={fmt(cashOut)} color={P.debit} />
+          <Stat label="Net cash impact" value={fmt(cashIn - cashOut)} color={cashIn - cashOut >= 0 ? P.credit : P.debit} />
+          <div className="flex gap-1">
+            {[30, 90].map((s) => (
+              <button key={s} onClick={() => setSpan(s)}
+                style={{ fontFamily: MONO, background: span === s ? P.surface2 : "transparent", border: `1px solid ${span === s ? P.brass : P.line}`, color: span === s ? P.text : P.muted }}
+                className="rounded px-3 py-1 text-xs">
+                {s} days
+              </button>
+            ))}
+          </div>
+        </div>
+        {creditsOut > 0 && (
+          <p style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+            plus {fmt(creditsOut)} due in credits \u2014 not counted in cash impact
+          </p>
+        )}
+      </div>
+
+      {overdue.length > 0 && (
+        <section style={{ background: P.surface, border: `1px solid ${P.debit}` }} className="rounded-lg p-4">
+          <h2 style={{ fontFamily: SERIF, color: P.debit }} className="text-lg mb-1">Overdue</h2>
+          <div className="divide-y" style={{ borderColor: P.line }}>
+            {overdue.map((o, i) => <div key={i} style={{ borderColor: P.line }}><Row o={o} /></div>)}
+          </div>
+        </section>
+      )}
+
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-2">Next {span} days</h2>
+        {dates.length === 0 ? (
+          <p style={{ color: P.faint }} className="text-sm py-4">Nothing due in this window. Recurring receivables and payables you add will project here automatically.</p>
+        ) : (
+          <div className="space-y-3">
+            {dates.map((d) => (
+              <div key={d}>
+                <div style={{ fontFamily: MONO, color: d === today ? P.brass : P.faint, borderBottom: `1px solid ${P.line}` }} className="text-xs uppercase tracking-widest pb-1 mb-1">
+                  {prettyDate(d)}{d === today ? " \u00b7 today" : ""}
+                </div>
+                {byDate[d].map((o, i) => <Row key={i} o={o} />)}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
