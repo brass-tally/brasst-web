@@ -661,6 +661,7 @@ function Ledger({ onSignOut }) {
     ["transactions", "Transactions"],
     ["pl", "P&L"],
     ["arap", "AR / AP"],
+    ["credits", "Credits"],
     ["calendar", "Calendar"],
   ];
 
@@ -701,7 +702,7 @@ function Ledger({ onSignOut }) {
         </header>
 
         {/* ===== signature ledger line ===== */}
-        <LedgerLine sums={sums} balance={balance} openBooks={openBooks} creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null} onCredits={() => setTab("arap")} onReconcile={() => setReconciling(true)} />
+        <LedgerLine sums={sums} balance={balance} openBooks={openBooks} creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null} onCredits={() => setTab("credits")} onReconcile={() => setReconciling(true)} />
 
         {/* ===== tabs ===== */}
         <nav className="flex gap-1 mt-6 mb-6 overflow-x-auto" style={{ borderBottom: `1px solid ${P.line}` }}>
@@ -735,7 +736,8 @@ function Ledger({ onSignOut }) {
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} addSub={addSub} addCredit={addCredit} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
-        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} openPreview={openPreview} />}
+        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
+        {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
       </div>
 
@@ -2066,7 +2068,7 @@ const PLRow = ({ label, value, color }) => (
 );
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, updateCredit, delCredit, openPreview }) {
+function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openPreview }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -2108,7 +2110,6 @@ function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, updat
         <ARList kind="receivables" title="Receivables — they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
         <ARList kind="payables" title="Payables — you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
       </div>
-      <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />
     </div>
   );
 }
@@ -2464,42 +2465,40 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
   );
 }
 
-/* ================= cash calendar: what's due in the next 30 / 90 days ================= */
-function CashCalendar({ data }) {
-  const [span, setSpan] = useState(30);
-  const today = todayStr();
-  const end = (() => { const d = new Date(); d.setDate(d.getDate() + span); return d.toISOString().slice(0, 10); })();
-
-  // expand open obligations into dated occurrences (recurring ones project forward)
-  const occurrences = [];
+/* ================= cash calendar: list + month-grid views ================= */
+function occurrencesBetween(data, startDate, endDate, today) {
+  const out = [];
   for (const kind of ["receivables", "payables"]) {
     for (const item of data[kind]) {
       if (item.status !== "open") continue;
       let due = item.dueDate || today;
-      if (due < today) {
-        occurrences.push({ ...item, kind, due, overdue: true });
-        if (item.recurrence !== "recurring") continue;
+      // overdue base occurrence (shown regardless of window start)
+      if (due < today) out.push({ ...item, kind, due, overdue: true });
+      if (item.recurrence === "recurring") {
         while (due < today) due = addInterval(due, item.frequency || "monthly");
+      } else if ((item.dueDate || today) < startDate || (item.dueDate || today) > endDate) {
+        continue;
       }
       let guard = 0;
-      while (due <= end && guard < 24) {
-        if (due >= today) occurrences.push({ ...item, kind, due, overdue: false, projected: guard > 0 || (item.dueDate || today) < today });
+      while (due <= endDate && guard < 36) {
+        if (due >= today && due >= startDate) {
+          out.push({ ...item, kind, due, overdue: false, projected: guard > 0 || (item.dueDate || today) < today });
+        }
         if (item.recurrence !== "recurring") break;
         due = addInterval(due, item.frequency || "monthly");
         guard += 1;
       }
     }
   }
+  return out;
+}
 
-  const overdue = occurrences.filter((o) => o.overdue).sort((a, b) => a.due.localeCompare(b.due));
-  const upcoming = occurrences.filter((o) => !o.overdue).sort((a, b) => a.due.localeCompare(b.due));
-  const cashIn = upcoming.filter((o) => o.kind === "receivables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
-  const cashOut = upcoming.filter((o) => o.kind === "payables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
-  const creditsOut = upcoming.filter((o) => o.kind === "payables" && isCredits(o)).reduce((s, o) => s + o.amount, 0);
-
-  const byDate = upcoming.reduce((m, o) => { (m[o.due] = m[o.due] || []).push(o); return m; }, {});
-  const dates = Object.keys(byDate).sort();
-  const prettyDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" });
+function CashCalendar({ data }) {
+  const [view, setView] = useState("list"); // list | grid
+  const [span, setSpan] = useState(30);
+  const [gridMonth, setGridMonth] = useState(thisMonth());
+  const [selectedDay, setSelectedDay] = useState(null);
+  const today = todayStr();
 
   const Row = ({ o }) => (
     <div className="flex items-center gap-2 py-1.5">
@@ -2519,56 +2518,177 @@ function CashCalendar({ data }) {
     </div>
   );
 
+  const ViewToggle = () => (
+    <div className="flex gap-1">
+      {[["list", "List"], ["grid", "Calendar"]].map(([k, label]) => (
+        <button key={k} onClick={() => setView(k)}
+          style={{ fontFamily: MONO, background: view === k ? P.surface2 : "transparent", border: `1px solid ${view === k ? P.brass : P.line}`, color: view === k ? P.text : P.muted }}
+          className="rounded px-3 py-1 text-xs">
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  /* ---------- LIST VIEW ---------- */
+  if (view === "list") {
+    const end = (() => { const d = new Date(); d.setDate(d.getDate() + span); return d.toISOString().slice(0, 10); })();
+    const occ = occurrencesBetween(data, today, end, today);
+    const overdue = occ.filter((o) => o.overdue).sort((a, b) => a.due.localeCompare(b.due));
+    const upcoming = occ.filter((o) => !o.overdue).sort((a, b) => a.due.localeCompare(b.due));
+    const cashIn = upcoming.filter((o) => o.kind === "receivables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+    const cashOut = upcoming.filter((o) => o.kind === "payables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+    const creditsOut = upcoming.filter((o) => o.kind === "payables" && isCredits(o)).reduce((s, o) => s + o.amount, 0);
+    const byDate = upcoming.reduce((m, o) => { (m[o.due] = m[o.due] || []).push(o); return m; }, {});
+    const dates = Object.keys(byDate).sort();
+    const prettyDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" });
+
+    return (
+      <div className="space-y-6">
+        <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+          <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
+            <Stat label={`Expected in · ${span}d`} value={fmt(cashIn)} color={P.credit} />
+            <Stat label={`Expected out · ${span}d`} value={fmt(cashOut)} color={P.debit} />
+            <Stat label="Net cash impact" value={fmt(cashIn - cashOut)} color={cashIn - cashOut >= 0 ? P.credit : P.debit} />
+            <div className="flex flex-col items-end gap-2">
+              <ViewToggle />
+              <div className="flex gap-1">
+                {[30, 90].map((s) => (
+                  <button key={s} onClick={() => setSpan(s)}
+                    style={{ fontFamily: MONO, background: span === s ? P.surface2 : "transparent", border: `1px solid ${span === s ? P.brass : P.line}`, color: span === s ? P.text : P.muted }}
+                    className="rounded px-3 py-1 text-xs">
+                    {s} days
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          {creditsOut > 0 && (
+            <p style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+              plus {fmt(creditsOut)} due in credits — not counted in cash impact
+            </p>
+          )}
+        </div>
+
+        {overdue.length > 0 && (
+          <section style={{ background: P.surface, border: `1px solid ${P.debit}` }} className="rounded-lg p-4">
+            <h2 style={{ fontFamily: SERIF, color: P.debit }} className="text-lg mb-1">Overdue</h2>
+            <div className="divide-y" style={{ borderColor: P.line }}>
+              {overdue.map((o, i) => <div key={i} style={{ borderColor: P.line }}><Row o={o} /></div>)}
+            </div>
+          </section>
+        )}
+
+        <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+          <h2 style={{ fontFamily: SERIF }} className="text-lg mb-2">Next {span} days</h2>
+          {dates.length === 0 ? (
+            <p style={{ color: P.faint }} className="text-sm py-4">Nothing due in this window. Recurring receivables and payables you add will project here automatically.</p>
+          ) : (
+            <div className="space-y-3">
+              {dates.map((d) => (
+                <div key={d}>
+                  <div style={{ fontFamily: MONO, color: d === today ? P.brass : P.faint, borderBottom: `1px solid ${P.line}` }} className="text-xs uppercase tracking-widest pb-1 mb-1">
+                    {prettyDate(d)}{d === today ? " · today" : ""}
+                  </div>
+                  {byDate[d].map((o, i) => <Row key={i} o={o} />)}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  /* ---------- GRID (month calendar) VIEW ---------- */
+  const [gy, gm] = gridMonth.split("-").map(Number);
+  const first = new Date(gy, gm - 1, 1);
+  const daysInMonth = new Date(gy, gm, 0).getDate();
+  const startPad = first.getDay(); // 0 = Sunday
+  const monthStart = `${gridMonth}-01`;
+  const monthEnd = `${gridMonth}-${String(daysInMonth).padStart(2, "0")}`;
+  const occ = occurrencesBetween(data, monthStart, monthEnd, today).filter((o) => !o.overdue || (o.due >= monthStart && o.due <= monthEnd));
+  const byDay = occ.reduce((m, o) => { (m[o.due] = m[o.due] || []).push(o); return m; }, {});
+  const monthIn = occ.filter((o) => !o.overdue && o.kind === "receivables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+  const monthOut = occ.filter((o) => !o.overdue && o.kind === "payables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+
+  const cells = [];
+  for (let i = 0; i < startPad; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(`${gridMonth}-${String(d).padStart(2, "0")}`);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const dayItems = selectedDay ? byDay[selectedDay] || [] : [];
+
   return (
     <div className="space-y-6">
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-        <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
-          <Stat label={`Expected in · ${span}d`} value={fmt(cashIn)} color={P.credit} />
-          <Stat label={`Expected out · ${span}d`} value={fmt(cashOut)} color={P.debit} />
-          <Stat label="Net cash impact" value={fmt(cashIn - cashOut)} color={cashIn - cashOut >= 0 ? P.credit : P.debit} />
-          <div className="flex gap-1">
-            {[30, 90].map((s) => (
-              <button key={s} onClick={() => setSpan(s)}
-                style={{ fontFamily: MONO, background: span === s ? P.surface2 : "transparent", border: `1px solid ${span === s ? P.brass : P.line}`, color: span === s ? P.text : P.muted }}
-                className="rounded px-3 py-1 text-xs">
-                {s} days
-              </button>
-            ))}
+        <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <Btn tone="ghost" onClick={() => { setGridMonth(shiftMonth(gridMonth, -1)); setSelectedDay(null); }}>‹</Btn>
+            <div style={{ fontFamily: MONO }} className="text-sm w-36 text-center">{monthLabel(gridMonth)}</div>
+            <Btn tone="ghost" onClick={() => { setGridMonth(shiftMonth(gridMonth, 1)); setSelectedDay(null); }}>›</Btn>
           </div>
+          <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+            <span style={{ color: P.credit }}>+{fmt0(monthIn)}</span> / <span style={{ color: P.debit }}>−{fmt0(monthOut)}</span> expected
+          </div>
+          <ViewToggle />
         </div>
-        {creditsOut > 0 && (
-          <p style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-            plus {fmt(creditsOut)} due in credits — not counted in cash impact
-          </p>
-        )}
+
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <div key={d} style={{ fontFamily: MONO, color: P.faint }} className="text-xs text-center uppercase tracking-wider">{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((date, i) => {
+            if (!date) return <div key={i} className="rounded" style={{ background: "transparent", minHeight: 64 }} />;
+            const items = byDay[date] || [];
+            const dayIn = items.filter((o) => o.kind === "receivables").reduce((s, o) => s + o.amount, 0);
+            const dayOut = items.filter((o) => o.kind === "payables").reduce((s, o) => s + o.amount, 0);
+            const isToday = date === today;
+            const isSel = date === selectedDay;
+            const isPast = date < today;
+            return (
+              <button
+                key={i}
+                onClick={() => setSelectedDay(isSel ? null : date)}
+                style={{
+                  background: isSel ? P.surface2 : P.bg,
+                  border: `1px solid ${isSel ? P.brass : isToday ? P.brass : P.line}`,
+                  opacity: isPast && !items.length ? 0.45 : 1,
+                  minHeight: 64,
+                }}
+                className="rounded p-1 text-left flex flex-col"
+              >
+                <div style={{ fontFamily: MONO, color: isToday ? P.brass : P.faint }} className="text-xs">{Number(date.slice(8))}</div>
+                <div className="flex-1 flex flex-col justify-end gap-0.5">
+                  {dayIn > 0 && <div style={{ fontFamily: MONO, color: P.credit, background: P.surface }} className="text-xs rounded px-1 truncate tabular-nums">+{fmt0(dayIn)}</div>}
+                  {dayOut > 0 && <div style={{ fontFamily: MONO, color: P.debit, background: P.surface }} className="text-xs rounded px-1 truncate tabular-nums">−{fmt0(dayOut)}</div>}
+                  {items.some(isCredits) && <div style={{ background: P.brass }} className="h-0.5 rounded-full w-1/2" title="includes credits" />}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {overdue.length > 0 && (
-        <section style={{ background: P.surface, border: `1px solid ${P.debit}` }} className="rounded-lg p-4">
-          <h2 style={{ fontFamily: SERIF, color: P.debit }} className="text-lg mb-1">Overdue</h2>
-          <div className="divide-y" style={{ borderColor: P.line }}>
-            {overdue.map((o, i) => <div key={i} style={{ borderColor: P.line }}><Row o={o} /></div>)}
-          </div>
+      {selectedDay && (
+        <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+          <h2 style={{ fontFamily: SERIF }} className="text-lg mb-1">
+            {new Date(selectedDay + "T00:00:00").toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}
+          </h2>
+          {dayItems.length === 0 ? (
+            <p style={{ color: P.faint }} className="text-sm py-2">Nothing due this day.</p>
+          ) : (
+            <div className="divide-y" style={{ borderColor: P.line }}>
+              {dayItems.map((o, i) => <div key={i} style={{ borderColor: P.line }}><Row o={o} /></div>)}
+            </div>
+          )}
         </section>
       )}
-
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-2">Next {span} days</h2>
-        {dates.length === 0 ? (
-          <p style={{ color: P.faint }} className="text-sm py-4">Nothing due in this window. Recurring receivables and payables you add will project here automatically.</p>
-        ) : (
-          <div className="space-y-3">
-            {dates.map((d) => (
-              <div key={d}>
-                <div style={{ fontFamily: MONO, color: d === today ? P.brass : P.faint, borderBottom: `1px solid ${P.line}` }} className="text-xs uppercase tracking-widest pb-1 mb-1">
-                  {prettyDate(d)}{d === today ? " · today" : ""}
-                </div>
-                {byDate[d].map((o, i) => <Row key={i} o={o} />)}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      {!selectedDay && (
+        <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs text-center">tap a day to see what's due · brass underline = credits involved</p>
+      )}
     </div>
   );
 }
