@@ -215,6 +215,27 @@ For dueDate: use the stated payment due date; if only an invoice date and paymen
 recurrence: "recurring" if the invoice is clearly part of a repeating cycle (subscription, retainer, monthly service); otherwise "once".`;
 }
 
+/* ================= error boundary: crashes show a message, never a blank page ================= */
+class Boundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div style={{ background: "#101613", color: "#EAE7DA", minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif" }} className="flex items-center justify-center p-6">
+        <div style={{ maxWidth: 480 }}>
+          <h1 style={{ fontFamily: "ui-serif, Georgia, serif" }} className="text-xl mb-2">Something broke</h1>
+          <p style={{ color: "#8B9389" }} className="text-sm mb-3">
+            The app hit an error instead of rendering. Reloading usually clears it — if it keeps happening, send this to whoever maintains the app:
+          </p>
+          <pre style={{ background: "#171F1B", border: "1px solid #2A3530", color: "#C4574E", whiteSpace: "pre-wrap" }} className="rounded p-3 text-xs mb-4">{String(this.state.err)}</pre>
+          <button onClick={() => window.location.reload()} style={{ background: "#C9A24B", color: "#10120C" }} className="rounded px-4 py-2 text-sm font-medium">Reload</button>
+        </div>
+      </div>
+    );
+  }
+}
+
 /* ================= auth gate ================= */
 export default function App() {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
@@ -232,7 +253,11 @@ export default function App() {
       </div>
     );
   if (!session) return <Login />;
-  return <Ledger key={session.user.id} onSignOut={() => supabase.auth.signOut()} />;
+  return (
+    <Boundary>
+      <Ledger key={session.user.id} onSignOut={() => supabase.auth.signOut()} />
+    </Boundary>
+  );
 }
 
 function Login() {
@@ -290,6 +315,7 @@ function Ledger({ onSignOut }) {
   const [theme, setThemeState] = useState("dark");
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [chatOpen, setChatOpen] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
 
   /* ---- load from Supabase (seeds the spreadsheet data on first sign-in) ---- */
   useEffect(() => {
@@ -433,7 +459,6 @@ function Ledger({ onSignOut }) {
     window.location.reload();
   };
 
-  const [reconciling, setReconciling] = useState(false);
   const setAnchor = (amount, date) => {
     setData((d) => ({ ...d, settings: { ...d.settings, startingBalance: amount, anchorDate: date } }));
     setReconciling(false);
