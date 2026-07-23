@@ -1078,7 +1078,7 @@ function Ledger({ onSignOut }) {
 
       {/* ===== floating capture chat (stays mounted so the conversation survives closing) ===== */}
       {/* capture panel floats above the dock */}
-      <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(24rem, calc(100vw - 24px))" }}>
+      <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(24rem, calc(100vw - 24px))", pointerEvents: chatOpen ? "auto" : "none" }}>
         <div className={"capture-pop " + (chatOpen ? "open" : "")}>
           <div
             style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 16px 48px rgba(0,0,0,0.45)" }}
