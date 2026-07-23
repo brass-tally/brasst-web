@@ -105,7 +105,7 @@ const txToRow = (t) => ({
 
 const rowToOb = (r) => ({
   id: r.id, party: r.party, description: r.description, amount: Number(r.amount),
-  dueDate: r.due_date, status: r.status, settledOn: r.settled_on || undefined,
+  dueDate: r.due_date, status: r.status, settledOn: r.settled_on || undefined, settledTxId: r.settled_tx_id || undefined,
   account: r.account, recurrence: r.recurrence,
   category: r.category || undefined, subcategory: r.subcategory || undefined,
   frequency: r.frequency || undefined,
@@ -116,7 +116,7 @@ const rowToOb = (r) => ({
 const obToRow = (kind, o) => ({
   id: o.id, ledger_id: LID, kind: kind === "receivables" ? "receivable" : "payable",
   party: o.party, description: o.description || "", amount: o.amount,
-  due_date: o.dueDate || null, status: o.status || "open", settled_on: o.settledOn || null,
+  due_date: o.dueDate || null, status: o.status || "open", settled_on: o.settledOn || null, settled_tx_id: o.settledTxId || null,
   account: o.account || "business",
   recurrence: o.recurrence === "recurring" ? "recurring" : "once",
   category: o.category || null, subcategory: o.subcategory || null, frequency: o.frequency || null,
@@ -253,7 +253,7 @@ export async function insertObligation(kind, item) {
 export async function updateObligation(id, patch) {
   const map = {
     party: "party", description: "description", amount: "amount", dueDate: "due_date",
-    status: "status", settledOn: "settled_on", account: "account", recurrence: "recurrence",
+    status: "status", settledOn: "settled_on", settledTxId: "settled_tx_id", account: "account", recurrence: "recurrence",
     category: "category", subcategory: "subcategory", frequency: "frequency",
     payMethod: "pay_method", creditId: "credit_id",
   };

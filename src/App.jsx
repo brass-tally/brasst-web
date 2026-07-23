@@ -826,7 +826,7 @@ function Ledger({ onSignOut }) {
         ...d,
         [kind]: [
           ...(next ? [next] : []),
-          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn } : x)),
+          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn, settledTxId: tx.id } : x)),
         ],
         transactions: [tx, ...d.transactions],
       };
@@ -835,7 +835,7 @@ function Ledger({ onSignOut }) {
     const { tx, next, settledOn } = sideEffects;
     setMonth(thisMonth());
     dbTry(async () => {
-      await db.updateObligation(id, { status: "paid", settledOn });
+      await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id });
       await db.insertTransaction(tx);
       if (next) await db.insertObligation(kind, next);
     });
@@ -868,10 +868,18 @@ function Ledger({ onSignOut }) {
   // Undo a settlement: remove the settled obligation AND the transaction it created.
   const removeSettled = (kind, item) => {
     if (!window.confirm(`Remove this settled ${kind === "receivables" ? "receivable" : "payable"} and the transaction it logged? Use this to clear a mistaken or duplicate settlement.`)) return;
-    const matchDesc = `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}, ${item.description || ""}`;
     let killedTxId = null;
     setData((d) => {
-      const tx = d.transactions.find((t) => t.description === matchDesc && Math.abs(t.amount - item.amount) < 0.005);
+      // Prefer the exact linked transaction; fall back to matching legacy rows by description+amount.
+      let tx = item.settledTxId ? d.transactions.find((t) => t.id === item.settledTxId) : null;
+      if (!tx) {
+        const verb = kind === "receivables" ? "Received" : "Paid";
+        tx = d.transactions.find((t) =>
+          Math.abs(t.amount - item.amount) < 0.005 &&
+          typeof t.description === "string" &&
+          t.description.startsWith(`${verb}: ${item.party}`)
+        );
+      }
       killedTxId = tx?.id || null;
       return {
         ...d,
@@ -2780,8 +2788,17 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
               </span>
               <span className="shrink-0 flex items-center gap-2">
                 {fmt(i.amount)} · {kind === "receivables" ? "received" : "paid"} {i.settledOn}
-                <button onClick={() => removeSettled(kind, i)} title="Remove this settlement (and its transaction)" style={{ color: P.faint }}>
-                  <Trash2 size={11} />
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeSettled(kind, i); }}
+                  title="Remove this settlement (and its transaction)"
+                  aria-label="Remove settlement"
+                  style={{ color: P.faint, padding: "4px", margin: "-4px", cursor: "pointer" }}
+                  className="hover:opacity-100"
+                  onMouseEnter={(e) => (e.currentTarget.style.color = P.debit)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = P.faint)}
+                >
+                  <Trash2 size={13} />
                 </button>
               </span>
             </div>
