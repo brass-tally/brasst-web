@@ -42,8 +42,8 @@ const PALETTES = {
 // its values and re-rendering the tree re-themes the whole app.
 const P = { ...PALETTES.dark };
 const MONO = "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-const SERIF = "'Fraunces', ui-serif, Georgia, 'Times New Roman', serif";
-const SANS = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+const SERIF = "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif"; // display: soft sans, headings pick up weight via CSS
+const SANS = "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif";
 
 
 /* ================= helpers ================= */
@@ -572,6 +572,7 @@ function Ledger({ onSignOut }) {
   const [bankReview, setBankReview] = useState(null); // rows from a Plaid sync awaiting review
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const inFlight = useRef(new Set()); // synchronous double-tap lock for settle/remove
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 4200); return () => clearTimeout(t); }, [toast]);
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
@@ -793,35 +794,39 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.insertObligation(kind, rec));
   };
   const settleAR = (kind, id) => {
-    // Everything decided inside the functional update so two fast taps can't both pass the guard.
-    let sideEffects = null;
+    const item = data[kind].find((x) => x.id === id);
+    if (!item || item.status !== "open") return;         // already settled: nothing to do
+    if (inFlight.current.has(id)) return;                 // double-tap within the same tick
+    inFlight.current.add(id);
+    setTimeout(() => inFlight.current.delete(id), 1500);
+
+    const settledOn = todayStr();
+    const tx = {
+      id: crypto.randomUUID(),
+      date: settledOn,
+      amount: item.amount,
+      type: kind === "receivables" ? "income" : "expense",
+      category: item.category
+        || (kind === "receivables"
+          ? (data.categories.income.find((c) => c.name === "Client revenue")?.name || data.categories.income[0]?.name || "Other")
+          : (data.categories.expense[0]?.name || "Other")),
+      subcategory: item.subcategory,
+      description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}${item.description ? ", " + item.description : ""}`,
+      account: item.account || "business",
+      recurrence: item.recurrence,
+      payMethod: item.payMethod === "credits" ? "credits" : "cash",
+      creditId: item.payMethod === "credits" ? item.creditId : undefined,
+      attachmentId: item.attachmentId,
+      attachmentName: item.attachmentName,
+    };
+    // recurring: queue the NEXT occurrence; the settled one locks in Settled
+    const next = item.recurrence === "recurring"
+      ? { ...item, id: crypto.randomUUID(), status: "open", settledOn: undefined, settledTxId: undefined, dueDate: addInterval(item.dueDate || settledOn, item.frequency || "monthly"), attachmentId: undefined, attachmentName: undefined }
+      : null;
+
     setData((d) => {
-      const item = d[kind].find((x) => x.id === id);
-      if (!item || item.status !== "open") return d; // already settled -> no-op, no second transaction
-      const settledOn = todayStr();
-      const tx = {
-        id: crypto.randomUUID(),
-        date: settledOn,
-        amount: item.amount,
-        type: kind === "receivables" ? "income" : "expense",
-        category: item.category
-          || (kind === "receivables"
-            ? (d.categories.income.find((c) => c.name === "Client revenue")?.name || d.categories.income[0]?.name || "Other")
-            : (d.categories.expense[0]?.name || "Other")),
-        subcategory: item.subcategory,
-        description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}, ${item.description}`,
-        account: item.account || "business",
-        recurrence: item.recurrence,
-        payMethod: item.payMethod === "credits" ? "credits" : "cash",
-        creditId: item.payMethod === "credits" ? item.creditId : undefined,
-        attachmentId: item.attachmentId,
-        attachmentName: item.attachmentName,
-      };
-      // recurring: queue the NEXT occurrence, future-dated, so the settled one stays locked in Settled
-      const next = item.recurrence === "recurring"
-        ? { ...item, id: crypto.randomUUID(), status: "open", settledOn: undefined, dueDate: addInterval(item.dueDate || settledOn, item.frequency || "monthly"), attachmentId: undefined, attachmentName: undefined }
-        : null;
-      sideEffects = { tx, next, settledOn };
+      const fresh = d[kind].find((x) => x.id === id);
+      if (!fresh || fresh.status !== "open") return d;    // belt and suspenders
       return {
         ...d,
         [kind]: [
@@ -831,8 +836,6 @@ function Ledger({ onSignOut }) {
         transactions: [tx, ...d.transactions],
       };
     });
-    if (!sideEffects) return; // guard tripped: nothing to persist
-    const { tx, next, settledOn } = sideEffects;
     setMonth(thisMonth());
     dbTry(async () => {
       await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id });
@@ -867,26 +870,30 @@ function Ledger({ onSignOut }) {
   };
   // Undo a settlement: remove the settled obligation AND the transaction it created.
   const removeSettled = (kind, item) => {
+    if (inFlight.current.has(item.id)) return;
     if (!window.confirm(`Remove this settled ${kind === "receivables" ? "receivable" : "payable"} and the transaction it logged? Use this to clear a mistaken or duplicate settlement.`)) return;
-    let killedTxId = null;
-    setData((d) => {
-      // Prefer the exact linked transaction; fall back to matching legacy rows by description+amount.
-      let tx = item.settledTxId ? d.transactions.find((t) => t.id === item.settledTxId) : null;
-      if (!tx) {
-        const verb = kind === "receivables" ? "Received" : "Paid";
-        tx = d.transactions.find((t) =>
-          Math.abs(t.amount - item.amount) < 0.005 &&
-          typeof t.description === "string" &&
-          t.description.startsWith(`${verb}: ${item.party}`)
-        );
-      }
-      killedTxId = tx?.id || null;
-      return {
-        ...d,
-        [kind]: d[kind].filter((x) => x.id !== item.id),
-        transactions: killedTxId ? d.transactions.filter((t) => t.id !== killedTxId) : d.transactions,
-      };
-    });
+    inFlight.current.add(item.id);
+    setTimeout(() => inFlight.current.delete(item.id), 1500);
+
+    // Find the transaction to remove NOW, from current data: linked id first, legacy match second.
+    let tx = item.settledTxId ? data.transactions.find((t) => t.id === item.settledTxId) : null;
+    if (!tx) {
+      const verb = kind === "receivables" ? "Received" : "Paid";
+      const candidates = data.transactions.filter((t) =>
+        Math.abs(t.amount - item.amount) < 0.005 &&
+        typeof t.description === "string" &&
+        t.description.startsWith(`${verb}: ${item.party}`)
+      );
+      // prefer one dated the day it was settled, else take any match
+      tx = candidates.find((t) => t.date === item.settledOn) || candidates[0] || null;
+    }
+    const killedTxId = tx?.id || null;
+
+    setData((d) => ({
+      ...d,
+      [kind]: d[kind].filter((x) => x.id !== item.id),
+      transactions: killedTxId ? d.transactions.filter((t) => t.id !== killedTxId) : d.transactions,
+    }));
     dbTry(async () => {
       await db.deleteObligation(item.id);
       if (killedTxId) await db.deleteTransaction(killedTxId);
