@@ -41,7 +41,7 @@ const PALETTES = {
 // Mutable palette object, every component reads P at render time, so swapping
 // its values and re-rendering the tree re-themes the whole app.
 const P = { ...PALETTES.dark };
-const MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+const MONO = "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 const SERIF = "'Fraunces', ui-serif, Georgia, 'Times New Roman', serif";
 const SANS = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
 
@@ -915,7 +915,7 @@ function Ledger({ onSignOut }) {
 
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }}>
-      <div className="max-w-5xl mx-auto px-4 pb-28">
+      <div className="max-w-5xl mx-auto px-4" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
         {/* ===== header ===== */}
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -1036,7 +1036,7 @@ function Ledger({ onSignOut }) {
 
       {/* ===== floating capture chat (stays mounted so the conversation survives closing) ===== */}
       {/* capture panel floats above the dock */}
-      <div className="fixed z-40" style={{ left: "50%", transform: "translateX(-50%)", bottom: "84px", width: "min(24rem, calc(100vw - 24px))" }}>
+      <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(24rem, calc(100vw - 24px))" }}>
         <div className={"capture-pop " + (chatOpen ? "open" : "")}>
           <div
             style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 16px 48px rgba(0,0,0,0.45)" }}
@@ -1052,31 +1052,31 @@ function Ledger({ onSignOut }) {
         </div>
       </div>
 
-      {/* ===== Apple-style floating dock ===== */}
-      <nav className="fixed z-40 left-1/2 bottom-4" style={{ transform: "translateX(-50%)" }}>
+      {/* ===== floating dock: all sections, capture lives on the right ===== */}
+      <nav className="fixed z-40 left-1/2 bottom-4" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 20px)" }}>
         <div
-          className="dock flex items-center gap-1 px-2 py-1.5 rounded-full"
-          style={{ background: theme === "dark" ? "rgba(23,31,27,0.82)" : "rgba(251,250,245,0.85)", border: `1px solid ${P.line}`, backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", boxShadow: "0 10px 34px rgba(0,0,0,0.34)" }}
+          className="dock flex items-center gap-0.5 px-2 py-1.5 rounded-full"
+          style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: "0 10px 34px rgba(0,0,0,0.30)" }}
         >
-          {tabs.slice(0, 4).map(([k, label, Icon]) => (
+          {tabs.map(([k, label, Icon]) => (
             <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={19} /></DockBtn>
           ))}
 
-          {/* center capture button, raised */}
+          {/* divider */}
+          <span aria-hidden style={{ width: 1, height: 24, background: P.line, margin: "0 4px", flexShrink: 0 }} />
+
+          {/* capture button, frosted brass, on the right */}
           <button
             onClick={() => setChatOpen(!chatOpen)}
             title={chatOpen ? "Close capture" : "Capture a receipt, invoice, or quick entry"}
-            className="dock-capture rounded-full mx-0.5 flex items-center justify-center"
-            style={{ background: P.brass, color: "#10120C", width: 48, height: 48, boxShadow: "0 6px 18px rgba(201,162,75,0.5)" }}
+            aria-label="Capture"
+            className="dock-capture rounded-full flex items-center justify-center shrink-0"
+            style={{ background: theme === "dark" ? "rgba(201,162,75,0.22)" : "rgba(150,118,31,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(201,162,75,0.5)" : "rgba(150,118,31,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
           >
             <span className="dock-capture-icon" style={{ display: "inline-flex", transform: chatOpen ? "rotate(45deg)" : "none", transition: "transform .28s cubic-bezier(.2,.8,.2,1)" }}>
-              <Plus size={24} />
+              <Plus size={22} />
             </span>
           </button>
-
-          {tabs.slice(4).map(([k, label, Icon]) => (
-            <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={19} /></DockBtn>
-          ))}
         </div>
       </nav>
 
@@ -3089,9 +3089,8 @@ function DockBtn({ label, active, onClick, children }) {
       onMouseLeave={() => setHover(false)}
       title={label}
       aria-label={label}
-      className="dock-btn relative rounded-full flex items-center justify-center"
+      className="dock-btn relative rounded-full flex items-center justify-center shrink-0"
       style={{
-        width: 44, height: 44,
         color: active ? "#10120C" : P.muted,
         background: active ? P.brass : "transparent",
         transform: hover && !active ? "translateY(-2px)" : "none",
