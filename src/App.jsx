@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
-  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug
+  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -16,12 +16,12 @@ const PALETTES = {
     surface: "#171F1B",
     surface2: "#1D2622",
     line: "#2A3530",
-    text: "#EAE7DA",
-    muted: "#8B9389",
-    faint: "#5E6660",
-    credit: "#5CB283",
-    debit: "#C4574E",
-    brass: "#C9A24B",
+    text: "#F3F1E7",
+    muted: "#AEB5A9",
+    faint: "#7C847B",
+    credit: "#6FCB97",
+    debit: "#E0705F",
+    brass: "#E0B65A",
     overlay: "rgba(6,10,8,0.75)",
   },
   light: {
@@ -29,12 +29,12 @@ const PALETTES = {
     surface: "#FBFAF5",
     surface2: "#E9E7DC",
     line: "#D6D3C4",
-    text: "#232A21",
-    muted: "#5C6459",
-    faint: "#989C8E",
-    credit: "#1E7A50",
-    debit: "#B23E2E",
-    brass: "#96761F",
+    text: "#1B211A",
+    muted: "#4A5147",
+    faint: "#767C6F",
+    credit: "#186E45",
+    debit: "#A5382A",
+    brass: "#7E6318",
     overlay: "rgba(40,44,36,0.45)",
   },
 };
@@ -132,7 +132,7 @@ function downloadCSV(filename, rows) {
 
 /* ================= tiny UI atoms ================= */
 const Label = ({ children }) => (
-  <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs uppercase tracking-widest mb-1">
+  <div style={{ color: P.muted, fontFamily: MONO, letterSpacing: "0.12em" }} className="text-xs uppercase mb-1">
     {children}
   </div>
 );
@@ -793,41 +793,49 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.insertObligation(kind, rec));
   };
   const settleAR = (kind, id) => {
-    const item = data[kind].find((x) => x.id === id);
-    if (!item || item.status !== "open") return; // guard against double-settle
-    const tx = {
-      id: crypto.randomUUID(),
-      date: todayStr(),
-      amount: item.amount,
-      type: kind === "receivables" ? "income" : "expense",
-      category: item.category
-        || (kind === "receivables"
-          ? (data.categories.income.find((c) => c.name === "Client revenue")?.name || data.categories.income[0]?.name || "Other")
-          : (data.categories.expense[0]?.name || "Other")),
-      subcategory: item.subcategory,
-      description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}, ${item.description}`,
-      account: item.account || "business",
-      recurrence: item.recurrence,
-      payMethod: item.payMethod === "credits" ? "credits" : "cash",
-      creditId: item.payMethod === "credits" ? item.creditId : undefined,
-      attachmentId: item.attachmentId,
-      attachmentName: item.attachmentName,
-    };
-    // recurring obligations respawn with the next due date instead of disappearing
-    const next = item.recurrence === "recurring"
-      ? { ...item, id: crypto.randomUUID(), status: "open", settledOn: undefined, dueDate: addInterval(item.dueDate || todayStr(), item.frequency || "monthly"), attachmentId: undefined, attachmentName: undefined }
-      : null;
-    setData((d) => ({
-      ...d,
-      [kind]: [
-        ...(next ? [next] : []),
-        ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn: todayStr() } : x)),
-      ],
-      transactions: [tx, ...d.transactions],
-    }));
+    // Everything decided inside the functional update so two fast taps can't both pass the guard.
+    let sideEffects = null;
+    setData((d) => {
+      const item = d[kind].find((x) => x.id === id);
+      if (!item || item.status !== "open") return d; // already settled -> no-op, no second transaction
+      const settledOn = todayStr();
+      const tx = {
+        id: crypto.randomUUID(),
+        date: settledOn,
+        amount: item.amount,
+        type: kind === "receivables" ? "income" : "expense",
+        category: item.category
+          || (kind === "receivables"
+            ? (d.categories.income.find((c) => c.name === "Client revenue")?.name || d.categories.income[0]?.name || "Other")
+            : (d.categories.expense[0]?.name || "Other")),
+        subcategory: item.subcategory,
+        description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}, ${item.description}`,
+        account: item.account || "business",
+        recurrence: item.recurrence,
+        payMethod: item.payMethod === "credits" ? "credits" : "cash",
+        creditId: item.payMethod === "credits" ? item.creditId : undefined,
+        attachmentId: item.attachmentId,
+        attachmentName: item.attachmentName,
+      };
+      // recurring: queue the NEXT occurrence, future-dated, so the settled one stays locked in Settled
+      const next = item.recurrence === "recurring"
+        ? { ...item, id: crypto.randomUUID(), status: "open", settledOn: undefined, dueDate: addInterval(item.dueDate || settledOn, item.frequency || "monthly"), attachmentId: undefined, attachmentName: undefined }
+        : null;
+      sideEffects = { tx, next, settledOn };
+      return {
+        ...d,
+        [kind]: [
+          ...(next ? [next] : []),
+          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn } : x)),
+        ],
+        transactions: [tx, ...d.transactions],
+      };
+    });
+    if (!sideEffects) return; // guard tripped: nothing to persist
+    const { tx, next, settledOn } = sideEffects;
     setMonth(thisMonth());
     dbTry(async () => {
-      await db.updateObligation(id, { status: "paid", settledOn: todayStr() });
+      await db.updateObligation(id, { status: "paid", settledOn });
       await db.insertTransaction(tx);
       if (next) await db.insertObligation(kind, next);
     });
@@ -2561,8 +2569,14 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
   const fileRef = useRef(null);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
   const eset = (k, v) => setEditForm((p) => ({ ...p, [k]: v }));
-  const open = items.filter((i) => i.status === "open");
   const settled = items.filter((i) => i.status !== "open");
+  // Open list shows what's actionable now: due within ~35 days (or already due).
+  // Future recurring occurrences stay queued and surface in the Calendar until they come due,
+  // so a freshly-settled monthly item doesn't reappear demanding another settle.
+  const horizon = (() => { const d = new Date(); d.setDate(d.getDate() + 35); return d.toISOString().slice(0, 10); })();
+  const openAll = items.filter((i) => i.status === "open");
+  const open = openAll.filter((i) => !i.dueDate || i.dueDate <= horizon);
+  const queued = openAll.filter((i) => i.dueDate && i.dueDate > horizon);
 
   const onInvoice = async (file) => {
     if (!file) return;
@@ -2693,7 +2707,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
               <div key={i.id} style={{ background: P.bg, border: `1px solid ${overdue ? P.debit : P.line}` }} className="rounded-lg p-3 flex items-center gap-2">
                 <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} className="flex-1 min-w-0 text-left" title="Edit">
                   <div className="text-sm truncate">{i.party}</div>
-                  <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap">
+                  <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap" data-meta>
                     {isRec(i) && <RecMark />}
                     {i.description || "·"} · due {i.dueDate}{overdue ? " · overdue" : ""}
                     {isRec(i) ? ` · ${freqLabel(i.frequency || "monthly")}` : ""}
@@ -2722,12 +2736,19 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
         </div>
       )}
 
+      {queued.length > 0 && (
+        <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-3">
+          {queued.length} upcoming {queued.length === 1 ? "occurrence" : "occurrences"} queued · they appear here when due, and show on the Calendar meanwhile
+        </p>
+      )}
+
       {settled.length > 0 && (
-        <div className="mt-3">
-          <Label>Settled</Label>
-          {settled.slice(0, 5).map((i) => (
-            <div key={i.id} style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex justify-between py-0.5">
-              <span className="truncate">{i.party}{isCredits(i) ? " (credits)" : ""}</span><span>{fmt(i.amount)} · {i.settledOn}</span>
+        <div className="mt-4" style={{ borderTop: `1px solid ${P.line}`, paddingTop: "12px" }}>
+          <Label>Settled · locked</Label>
+          {settled.slice(0, 6).map((i) => (
+            <div key={i.id} style={{ color: P.muted, fontFamily: MONO }} className="text-xs flex justify-between items-center gap-2 py-1">
+              <span className="truncate flex items-center gap-1.5"><Lock size={10} style={{ color: P.faint }} />{i.party}{isCredits(i) ? " (credits)" : ""}</span>
+              <span className="shrink-0">{fmt(i.amount)} · {kind === "receivables" ? "received" : "paid"} {i.settledOn}</span>
             </div>
           ))}
         </div>
