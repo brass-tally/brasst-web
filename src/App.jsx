@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
-  ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat
+  ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
+  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -40,8 +41,9 @@ const PALETTES = {
 // Mutable palette object, every component reads P at render time, so swapping
 // its values and re-rendering the tree re-themes the whole app.
 const P = { ...PALETTES.dark };
-const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-const SERIF = "ui-serif, Georgia, 'Times New Roman', serif";
+const MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+const SERIF = "'Fraunces', ui-serif, Georgia, 'Times New Roman', serif";
+const SANS = "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
 
 
 /* ================= helpers ================= */
@@ -316,7 +318,7 @@ class Boundary extends React.Component {
   render() {
     if (!this.state.err) return this.props.children;
     return (
-      <div style={{ background: "#101613", color: "#EAE7DA", minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif" }} className="flex items-center justify-center p-6">
+      <div style={{ background: "#101613", color: "#EAE7DA", minHeight: "100vh", fontFamily: SANS }} className="flex items-center justify-center p-6">
         <div style={{ maxWidth: 480 }}>
           <h1 style={{ fontFamily: "ui-serif, Georgia, serif" }} className="text-xl mb-2">Something broke</h1>
           <p style={{ color: "#8B9389" }} className="text-sm mb-3">
@@ -361,7 +363,7 @@ export default function App() {
 
 function AuthCard({ children }) {
   return (
-    <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif" }} className="flex items-center justify-center p-4">
+    <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }} className="flex items-center justify-center p-4">
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-6 w-full max-w-sm">
         <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">Down to brass tacks</div>
         <h1 style={{ fontFamily: SERIF }} className="text-2xl mb-4">Brass<span style={{ color: P.brass }}>t</span>ally</h1>
@@ -569,6 +571,8 @@ function Ledger({ onSignOut }) {
   const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
   const [bankReview, setBankReview] = useState(null); // rows from a Plaid sync awaiting review
   const [accountOpen, setAccountOpen] = useState(false);
+  const [toast, setToast] = useState("");
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 4200); return () => clearTimeout(t); }, [toast]);
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
 
@@ -631,8 +635,9 @@ function Ledger({ onSignOut }) {
   };
 
   // local state updates immediately; the matching database write runs behind it
+  // Background writes should never blow away the UI. Log, surface a soft toast, keep going.
   const dbTry = async (fn) => {
-    try { await fn(); setLoadErr(false); } catch (e) { console.error(e); setLoadErr(true); }
+    try { await fn(); } catch (e) { console.error("save failed:", e); setToast("Couldn't reach the server, your last change may not have saved. Check your connection."); }
   };
 
   /* ---- derived ---- */
@@ -789,7 +794,7 @@ function Ledger({ onSignOut }) {
   };
   const settleAR = (kind, id) => {
     const item = data[kind].find((x) => x.id === id);
-    if (!item) return;
+    if (!item || item.status !== "open") return; // guard against double-settle
     const tx = {
       id: crypto.randomUUID(),
       date: todayStr(),
@@ -810,7 +815,7 @@ function Ledger({ onSignOut }) {
     };
     // recurring obligations respawn with the next due date instead of disappearing
     const next = item.recurrence === "recurring"
-      ? { ...item, id: crypto.randomUUID(), dueDate: addInterval(item.dueDate || todayStr(), item.frequency || "monthly"), attachmentId: undefined, attachmentName: undefined }
+      ? { ...item, id: crypto.randomUUID(), status: "open", settledOn: undefined, dueDate: addInterval(item.dueDate || todayStr(), item.frequency || "monthly"), attachmentId: undefined, attachmentName: undefined }
       : null;
     setData((d) => ({
       ...d,
@@ -899,17 +904,17 @@ function Ledger({ onSignOut }) {
   const closePreview = () => setPreview(null); // signed URLs expire on their own
 
   const tabs = [
-    ["overview", "Overview"],
-    ["transactions", "Transactions"],
-    ["pl", "P&L"],
-    ["arap", "AR / AP"],
-    ["credits", "Credits"],
-    ["calendar", "Calendar"],
-    ["integrations", "Integrations"],
+    ["overview", "Overview", LayoutGrid],
+    ["transactions", "Transactions", Receipt],
+    ["pl", "P&L", TrendingUp],
+    ["arap", "AR / AP", FileClock],
+    ["credits", "Credits", Coins],
+    ["calendar", "Calendar", CalendarDays],
+    ["integrations", "Integrations", Plug],
   ];
 
   return (
-    <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
+    <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }}>
       <div className="max-w-5xl mx-auto px-4 pb-28">
         {/* ===== header ===== */}
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
@@ -992,28 +997,16 @@ function Ledger({ onSignOut }) {
         <LedgerLine sums={sums} balance={balance} openBooks={openBooks} creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null} onCredits={() => setTab("credits")} onReconcile={() => setReconciling(true)} />
 
         {/* ===== tabs ===== */}
-        <nav className="flex gap-1 mt-6 mb-6 overflow-x-auto" style={{ borderBottom: `1px solid ${P.line}` }}>
-          {tabs.map(([k, label]) => (
-            <button
-              key={k}
-              onClick={() => setTab(k)}
-              style={{
-                fontFamily: MONO,
-                color: tab === k ? P.text : P.muted,
-                borderBottom: tab === k ? `2px solid ${P.brass}` : "2px solid transparent",
-              }}
-              className="px-3 py-2 text-sm whitespace-nowrap"
-            >
-              {label}
-            </button>
-          ))}
-          <div className="flex-1" />
-          <button onClick={resetAll} title="Reset to spreadsheet data" style={{ color: P.faint }} className="px-2">
+        <div className="mt-6 mb-6 flex items-center justify-between">
+          <h2 style={{ fontFamily: SERIF }} className="text-xl fade-in-key" key={tab}>
+            {tabs.find(([k]) => k === tab)?.[1]}
+          </h2>
+          <button onClick={resetAll} title="Reset this ledger" style={{ color: P.faint }} className="p-1 hover:opacity-70 transition-opacity">
             <RotateCcw size={14} />
           </button>
-        </nav>
+        </div>
 
-        {loadErr && (
+        {false && (
           <div style={{ border: `1px solid ${P.debit}`, color: P.debit }} className="rounded p-2 text-sm mb-4">
             Couldn't reach the database, the last change shows on screen but may not have saved. Check your connection and retry.
           </div>
@@ -1025,6 +1018,7 @@ function Ledger({ onSignOut }) {
             setSeenTours((s) => ({ ...s, [tab]: true }));
           }} />
         )}
+        <div key={tab} className="tab-enter">
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} />}
@@ -1037,11 +1031,13 @@ function Ledger({ onSignOut }) {
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
         }} />}
+        </div>
       </div>
 
       {/* ===== floating capture chat (stays mounted so the conversation survives closing) ===== */}
-      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-3">
-        <div style={{ display: chatOpen ? "block" : "none" }} className="w-80 sm:w-96 max-w-full">
+      {/* capture panel floats above the dock */}
+      <div className="fixed z-40" style={{ left: "50%", transform: "translateX(-50%)", bottom: "84px", width: "min(24rem, calc(100vw - 24px))" }}>
+        <div className={"capture-pop " + (chatOpen ? "open" : "")}>
           <div
             style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 16px 48px rgba(0,0,0,0.45)" }}
             className="rounded-lg overflow-hidden"
@@ -1054,15 +1050,43 @@ function Ledger({ onSignOut }) {
             <Capture key={data.ledger.id} data={data} addTx={addTx} addAR={addAR} addSub={addSub} month={month} embedded />
           </div>
         </div>
-        <button
-          onClick={() => setChatOpen(!chatOpen)}
-          title={chatOpen ? "Close capture" : "Capture a receipt, invoice, or quick entry"}
-          style={{ background: P.brass, color: "#10120C", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
-          className="rounded-full p-4"
-        >
-          {chatOpen ? <X size={20} /> : <MessageSquare size={20} />}
-        </button>
       </div>
+
+      {/* ===== Apple-style floating dock ===== */}
+      <nav className="fixed z-40 left-1/2 bottom-4" style={{ transform: "translateX(-50%)" }}>
+        <div
+          className="dock flex items-center gap-1 px-2 py-1.5 rounded-full"
+          style={{ background: theme === "dark" ? "rgba(23,31,27,0.82)" : "rgba(251,250,245,0.85)", border: `1px solid ${P.line}`, backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", boxShadow: "0 10px 34px rgba(0,0,0,0.34)" }}
+        >
+          {tabs.slice(0, 4).map(([k, label, Icon]) => (
+            <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={19} /></DockBtn>
+          ))}
+
+          {/* center capture button, raised */}
+          <button
+            onClick={() => setChatOpen(!chatOpen)}
+            title={chatOpen ? "Close capture" : "Capture a receipt, invoice, or quick entry"}
+            className="dock-capture rounded-full mx-0.5 flex items-center justify-center"
+            style={{ background: P.brass, color: "#10120C", width: 48, height: 48, boxShadow: "0 6px 18px rgba(201,162,75,0.5)" }}
+          >
+            <span className="dock-capture-icon" style={{ display: "inline-flex", transform: chatOpen ? "rotate(45deg)" : "none", transition: "transform .28s cubic-bezier(.2,.8,.2,1)" }}>
+              <Plus size={24} />
+            </span>
+          </button>
+
+          {tabs.slice(4).map(([k, label, Icon]) => (
+            <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={19} /></DockBtn>
+          ))}
+        </div>
+      </nav>
+
+      {toast && (
+        <div className="fixed z-50 left-1/2 toast-in" style={{ transform: "translateX(-50%)", bottom: "88px" }}>
+          <div style={{ background: P.debit, color: "#fff", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }} className="rounded-full px-4 py-2 text-sm max-w-xs text-center">
+            {toast}
+          </div>
+        </div>
+      )}
 
       <PreviewModal preview={preview} onClose={closePreview} />
       {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onClose={() => setAccountOpen(false)} />}
@@ -2521,6 +2545,7 @@ function ARFields({ kind, f, set, data, addSub, addCredit }) {
 
 function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openPreview, tone, action }) {
   const [adding, setAdding] = useState(false);
+  const [settlingId, setSettlingId] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const incomeCats = data.categories.income.map((c) => c.name);
   const expenseCats = data.categories.expense.map((c) => c.name);
@@ -2687,8 +2712,8 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
                 <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
                   <Pencil size={13} />
                 </button>
-                <Btn tone="ghost" onClick={() => settleAR(kind, i.id)} title={`${action}, logs a transaction dated today`}>
-                  <Check size={13} />
+                <Btn tone="ghost" disabled={settlingId === i.id} onClick={() => { setSettlingId(i.id); settleAR(kind, i.id); setTimeout(() => setSettlingId(null), 600); }} title={`${action}, logs a transaction dated today`}>
+                  {settlingId === i.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                 </Btn>
                 <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
               </div>
@@ -3054,6 +3079,38 @@ function CashCalendar({ data }) {
 }
 
 
+/* ================= floating dock button ================= */
+function DockBtn({ label, active, onClick, children }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={label}
+      aria-label={label}
+      className="dock-btn relative rounded-full flex items-center justify-center"
+      style={{
+        width: 44, height: 44,
+        color: active ? "#10120C" : P.muted,
+        background: active ? P.brass : "transparent",
+        transform: hover && !active ? "translateY(-2px)" : "none",
+        transition: "background .25s ease, color .25s ease, transform .18s cubic-bezier(.2,.8,.2,1)",
+      }}
+    >
+      {children}
+      {hover && !active && (
+        <span
+          className="dock-tip"
+          style={{ position: "absolute", bottom: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", background: P.text, color: P.bg, fontFamily: MONO, fontSize: 11, padding: "3px 8px", borderRadius: 6, whiteSpace: "nowrap", pointerEvents: "none" }}
+        >
+          {label}
+        </span>
+      )}
+    </button>
+  );
+}
+
 /* ================= first-visit tutorials ================= */
 const TOUR_COPY = {
   overview: ["Your month at a glance", "Planned versus actual, per category. Tap a planned amount to set a budget, tap a category name to see the entries behind it, and use the small arrow to expand subcategories. The chat bubble in the corner captures receipts anywhere in the app."],
@@ -3140,7 +3197,7 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
 
   if (onboarding)
     return (
-      <div style={{ background: P.bg, minHeight: "100vh", fontFamily: "ui-sans-serif, system-ui, sans-serif", color: P.text }} className="flex items-center justify-center p-4">
+      <div style={{ background: P.bg, minHeight: "100vh", fontFamily: SANS, color: P.text }} className="flex items-center justify-center p-4">
         {body}
       </div>
     );
