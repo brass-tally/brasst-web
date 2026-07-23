@@ -794,18 +794,22 @@ function Ledger({ onSignOut }) {
     setData((d) => ({ ...d, [kind]: [rec, ...d[kind]] }));
     dbTry(() => db.insertObligation(kind, rec));
   };
-  const settleAR = (kind, id) => {
+  const settleAR = (kind, id, actual = {}) => {
     const item = data[kind].find((x) => x.id === id);
     if (!item || item.status !== "open") return;         // already settled: nothing to do
     if (inFlight.current.has(id)) return;                 // double-tap within the same tick
     inFlight.current.add(id);
     setTimeout(() => inFlight.current.delete(id), 1500);
 
-    const settledOn = todayStr();
+    // the actuals: what was really paid, when, and how
+    const amount = actual.amount != null && !Number.isNaN(actual.amount) && actual.amount > 0 ? Math.abs(actual.amount) : item.amount;
+    const settledOn = actual.date || todayStr();
+    const payMethod = actual.payMethod === "credits" ? "credits" : actual.payMethod === "cash" ? "cash" : (item.payMethod === "credits" ? "credits" : "cash");
+    const creditId = payMethod === "credits" ? (actual.creditId ?? item.creditId) : undefined;
     const tx = {
       id: crypto.randomUUID(),
       date: settledOn,
-      amount: item.amount,
+      amount,
       type: kind === "receivables" ? "income" : "expense",
       category: item.category
         || (kind === "receivables"
@@ -815,8 +819,8 @@ function Ledger({ onSignOut }) {
       description: `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}${item.description ? ", " + item.description : ""}`,
       account: item.account || "business",
       recurrence: item.recurrence,
-      payMethod: item.payMethod === "credits" ? "credits" : "cash",
-      creditId: item.payMethod === "credits" ? item.creditId : undefined,
+      payMethod,
+      creditId,
       attachmentId: item.attachmentId,
       attachmentName: item.attachmentName,
     };
@@ -832,14 +836,14 @@ function Ledger({ onSignOut }) {
         ...d,
         [kind]: [
           ...(next ? [next] : []),
-          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn, settledTxId: tx.id } : x)),
+          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId } : x)),
         ],
         transactions: [tx, ...d.transactions],
       };
     });
-    setMonth(thisMonth());
+    setMonth(settledOn.slice(0, 7));
     dbTry(async () => {
-      await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id });
+      await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId: creditId || null });
       await db.insertTransaction(tx);
       if (next) await db.insertObligation(kind, next);
     });
@@ -2533,7 +2537,8 @@ function ARFields({ kind, f, set, data, addSub, addCredit }) {
 
 function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action }) {
   const [adding, setAdding] = useState(false);
-  const [settlingId, setSettlingId] = useState(null);
+  const [settleFor, setSettleFor] = useState(null);   // item awaiting the confirm dialog
+  const [openGroups, setOpenGroups] = useState({});   // party -> expanded?
   const [noteFor, setNoteFor] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const incomeCats = data.categories.income.map((c) => c.name);
@@ -2558,6 +2563,20 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
   const open = [...items.filter((i) => i.status === "open")]
     .sort((a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31"));
   const daysUntil = (d) => Math.max(0, Math.round((new Date(d + "T00:00:00") - new Date(todayStr() + "T00:00:00")) / 86400000));
+
+  // group open items by party (2+ under the same name collapse into one card)
+  const groupSeq = (list) => {
+    const seq = [], seen = {};
+    list.forEach((i) => {
+      const key = (i.party || "").trim() || "·";
+      if (!seen[key]) { seen[key] = { party: key, items: [] }; seq.push(seen[key]); }
+      seen[key].items.push(i);
+    });
+    return seq;
+  };
+  const openSeq = groupSeq(open);
+  const settledSeq = groupSeq(settled);
+  const toggleGroup = (k) => setOpenGroups((g) => ({ ...g, [k]: !g[k] }));
 
   const onInvoice = async (file) => {
     if (!file) return;
@@ -2633,6 +2652,85 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 
   const cancelAdd = () => { setAdding(false); setForm(blank); setAtt(null); setReadErr(""); };
 
+  const SettledLine = ({ i, indent }) => (
+    <div style={{ color: P.muted, fontFamily: MONO, paddingLeft: indent ? "18px" : 0 }} className="text-xs flex justify-between items-center gap-2 py-1">
+      <span className="truncate flex items-center gap-1.5">
+        <Lock size={10} style={{ color: P.faint }} />
+        {i.party}{isCredits(i) ? " (credits)" : ""}
+        {(i.description || i.attachmentId) && (
+          <button
+            onClick={() => setNoteFor(noteFor?.id === i.id ? null : i)}
+            title="View note / history"
+            style={{ color: noteFor?.id === i.id ? P.brass : P.faint }}
+          >
+            <StickyNote size={11} />
+          </button>
+        )}
+      </span>
+      <span className="shrink-0 flex items-center gap-2">
+        {fmt(i.amount)} · {kind === "receivables" ? "received" : "paid"} {i.settledOn}
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeSettled(kind, i); }}
+          title="Remove this settlement (and its transaction)"
+          aria-label="Remove settlement"
+          style={{ color: P.faint, padding: "4px", margin: "-4px", cursor: "pointer" }}
+          className="hover:opacity-100"
+          onMouseEnter={(e) => (e.currentTarget.style.color = P.debit)}
+          onMouseLeave={(e) => (e.currentTarget.style.color = P.faint)}
+        >
+          <Trash2 size={13} />
+        </button>
+      </span>
+    </div>
+  );
+
+  const renderRow = (i, inGroup) => {
+    const overdue = i.dueDate && i.dueDate < todayStr();
+    const future = !overdue && i.dueDate && i.dueDate > horizon;
+
+    if (editingId === i.id && editForm) {
+      return (
+        <div key={i.id} style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-3 space-y-2">
+          <ARFields kind={kind} f={editForm} set={eset} data={data} addSub={addSub} addCredit={addCredit} />
+          <div className="flex gap-2">
+    <Btn className="flex-1 justify-center" onClick={saveEdit}><Check size={14} /> Save changes</Btn>
+    <Btn tone="ghost" onClick={() => { setEditingId(null); setEditForm(null); }}><X size={14} /></Btn>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div key={i.id} style={{ background: inGroup ? P.surface : P.bg, border: `1px solid ${overdue ? P.debit : P.line}`, opacity: future ? 0.7 : 1 }} className="rounded-lg p-3 flex items-center gap-2">
+        <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} className="flex-1 min-w-0 text-left" title="Edit">
+          <div className="text-sm truncate">{i.party}</div>
+          <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap" data-meta>
+    {isRec(i) && <RecMark />}
+    {i.description || "·"} · due {i.dueDate}{overdue ? " · overdue" : ""}{future ? ` · upcoming in ${daysUntil(i.dueDate)}d` : ""}
+    {isRec(i) ? ` · ${freqLabel(i.frequency || "monthly")}` : ""}
+    {i.subcategory ? ` · ${i.subcategory}` : ""}
+          </div>
+          {isCredits(i) && (
+    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits, no cash moves</div>
+          )}
+        </button>
+        <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
+        {i.attachmentId && (
+          <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brass }}>
+    <Paperclip size={13} />
+          </button>
+        )}
+        <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
+          <Pencil size={13} />
+        </button>
+        <Btn tone="ghost" onClick={() => setSettleFor(i)} title={`${action}: confirm the actual amount, date, and payment`}>
+          <Check size={13} />
+        </Btn>
+        <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
+      </div>
+    );
+  };
+
   return (
     <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
       <div className="flex justify-between items-center mb-3 gap-2">
@@ -2675,88 +2773,70 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         <p style={{ color: P.faint }} className="text-sm py-3">Nothing open.</p>
       ) : (
         <div className="space-y-2">
-          {open.map((i) => {
-            const overdue = i.dueDate && i.dueDate < todayStr();
-            const future = !overdue && i.dueDate && i.dueDate > horizon;
-            if (editingId === i.id && editForm) {
-              return (
-                <div key={i.id} style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-3 space-y-2">
-                  <ARFields kind={kind} f={editForm} set={eset} data={data} addSub={addSub} addCredit={addCredit} />
-                  <div className="flex gap-2">
-                    <Btn className="flex-1 justify-center" onClick={saveEdit}><Check size={14} /> Save changes</Btn>
-                    <Btn tone="ghost" onClick={() => { setEditingId(null); setEditForm(null); }}><X size={14} /></Btn>
-                  </div>
-                </div>
-              );
-            }
+          {openSeq.map((g) => {
+            if (g.items.length === 1) return renderRow(g.items[0]);
+            const total = g.items.reduce((s, x) => s + x.amount, 0);
+            const nextDue = g.items[0].dueDate;
+            const expanded = !!openGroups[g.party];
             return (
-              <div key={i.id} style={{ background: P.bg, border: `1px solid ${overdue ? P.debit : P.line}`, opacity: future ? 0.7 : 1 }} className="rounded-lg p-3 flex items-center gap-2">
-                <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} className="flex-1 min-w-0 text-left" title="Edit">
-                  <div className="text-sm truncate">{i.party}</div>
-                  <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap" data-meta>
-                    {isRec(i) && <RecMark />}
-                    {i.description || "·"} · due {i.dueDate}{overdue ? " · overdue" : ""}{future ? ` · upcoming in ${daysUntil(i.dueDate)}d` : ""}
-                    {isRec(i) ? ` · ${freqLabel(i.frequency || "monthly")}` : ""}
-                    {i.subcategory ? ` · ${i.subcategory}` : ""}
+              <div key={"g:" + g.party} style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg overflow-hidden">
+                <button onClick={() => toggleGroup(g.party)} className="w-full p-3 flex items-center gap-2 text-left">
+                  <ChevronDown size={15} style={{ color: P.brass, transform: expanded ? "none" : "rotate(-90deg)", transition: "transform .18s" }} className="shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate">{g.party}</div>
+                    <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+                      {g.items.length} items · next due {nextDue}
+                    </div>
                   </div>
-                  {isCredits(i) && (
-                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits, no cash moves</div>
-                  )}
+                  <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(total)}</div>
                 </button>
-                <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
-                {i.attachmentId && (
-                  <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brass }}>
-                    <Paperclip size={13} />
-                  </button>
+                {expanded && (
+                  <div className="px-3 pb-3 space-y-2">
+                    {g.items.map((i) => renderRow(i, true))}
+                  </div>
                 )}
-                <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
-                  <Pencil size={13} />
-                </button>
-                <Btn tone="ghost" disabled={settlingId === i.id} onClick={() => { setSettlingId(i.id); settleAR(kind, i.id); setTimeout(() => setSettlingId(null), 600); }} title={`${action}, logs a transaction dated today`}>
-                  {settlingId === i.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                </Btn>
-                <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
               </div>
             );
           })}
         </div>
       )}
 
+      {settleFor && (
+        <SettleModal
+          kind={kind}
+          item={settleFor}
+          data={data}
+          addCredit={addCredit}
+          action={action}
+          onConfirm={(actual) => { settleAR(kind, settleFor.id, actual); setSettleFor(null); }}
+          onClose={() => setSettleFor(null)}
+        />
+      )}
+
+
       {settled.length > 0 && (
         <div className="mt-4" style={{ borderTop: `1px solid ${P.line}`, paddingTop: "12px" }}>
           <Label>Settled · locked</Label>
-          {settled.slice(0, 6).map((i) => (
-            <div key={i.id} style={{ color: P.muted, fontFamily: MONO }} className="text-xs flex justify-between items-center gap-2 py-1">
-              <span className="truncate flex items-center gap-1.5">
-                <Lock size={10} style={{ color: P.faint }} />
-                {i.party}{isCredits(i) ? " (credits)" : ""}
-                {(i.description || i.attachmentId) && (
-                  <button
-                    onClick={() => setNoteFor(noteFor?.id === i.id ? null : i)}
-                    title="View note / history"
-                    style={{ color: noteFor?.id === i.id ? P.brass : P.faint }}
-                  >
-                    <StickyNote size={11} />
+          {settledSeq.slice(0, 6).map((g) => {
+            if (g.items.length > 1) {
+              const gTotal = g.items.reduce((s, x) => s + x.amount, 0);
+              const gk = "s:" + g.party;
+              return (
+                <div key={gk}>
+                  <button onClick={() => toggleGroup(gk)} style={{ color: P.muted, fontFamily: MONO }} className="text-xs flex justify-between items-center gap-2 py-1 w-full">
+                    <span className="truncate flex items-center gap-1.5">
+                      <ChevronDown size={11} style={{ color: P.brass, transform: openGroups[gk] ? "none" : "rotate(-90deg)", transition: "transform .18s" }} />
+                      <Lock size={10} style={{ color: P.faint }} />
+                      {g.party}
+                    </span>
+                    <span className="shrink-0">{g.items.length} {kind === "receivables" ? "received" : "paid"} · {fmt(gTotal)} total</span>
                   </button>
-                )}
-              </span>
-              <span className="shrink-0 flex items-center gap-2">
-                {fmt(i.amount)} · {kind === "receivables" ? "received" : "paid"} {i.settledOn}
-                <button
-                  type="button"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeSettled(kind, i); }}
-                  title="Remove this settlement (and its transaction)"
-                  aria-label="Remove settlement"
-                  style={{ color: P.faint, padding: "4px", margin: "-4px", cursor: "pointer" }}
-                  className="hover:opacity-100"
-                  onMouseEnter={(e) => (e.currentTarget.style.color = P.debit)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = P.faint)}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </span>
-            </div>
-          ))}
+                  {openGroups[gk] && g.items.map((i) => <SettledLine key={i.id} i={i} indent />)}
+                </div>
+              );
+            }
+            return <SettledLine key={g.items[0].id} i={g.items[0]} />;
+          })}
           {noteFor && (
             <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-2">
               <div className="flex justify-between items-start gap-2">
@@ -2780,6 +2860,66 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         </div>
       )}
     </section>
+  );
+}
+
+/* ================= settle confirm: the actuals ================= */
+function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }) {
+  const [amount, setAmount] = useState(String(item.amount));
+  const [date, setDate] = useState(todayStr());
+  const [payMethod, setPayMethod] = useState(item.payMethod === "credits" ? "credits" : "cash");
+  const [creditId, setCreditId] = useState(item.creditId || null);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const parsed = parseFloat(amount);
+  const valid = !Number.isNaN(parsed) && parsed > 0 && date;
+  const differs = valid && Math.abs(parsed - item.amount) > 0.005;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-start mb-1">
+          <h3 style={{ fontFamily: SERIF }} className="text-lg">{action}</h3>
+          <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+        </div>
+        <p style={{ color: P.muted }} className="text-sm mb-3 truncate">{item.party}{item.description ? ` · ${item.description}` : ""}</p>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label>Actual amount</Label>
+            <Input type="number" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} style={{ fontFamily: MONO }} />
+          </div>
+          <div>
+            <Label>{kind === "receivables" ? "Received on" : "Paid on"}</Label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+        </div>
+        <div className="mt-2">
+          <Label>{kind === "receivables" ? "Received as" : "Paid via"}</Label>
+          <PayViaSelect data={data} payMethod={payMethod} creditId={creditId} addCredit={addCredit}
+            onChange={(pm, cid) => { setPayMethod(pm); setCreditId(cid); }} />
+        </div>
+
+        {differs && (
+          <p style={{ color: P.brass, fontFamily: MONO }} className="text-xs mt-2">
+            estimated {fmt(item.amount)} → actual {fmt(parsed)}; the books record the actual
+          </p>
+        )}
+
+        <Btn className="w-full justify-center mt-4" disabled={!valid}
+          onClick={() => onConfirm({ amount: parsed, date, payMethod, creditId })}>
+          <Check size={14} /> {action} · {valid ? fmt(parsed) : "…"}
+        </Btn>
+        <p style={{ color: P.faint }} className="text-xs mt-2">
+          Logs the transaction, locks this entry{item.recurrence === "recurring" ? ", and queues the next occurrence" : ""}.
+        </p>
+      </div>
+    </div>
   );
 }
 
