@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
-  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock
+  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -865,6 +865,25 @@ function Ledger({ onSignOut }) {
     setData((d) => ({ ...d, [kind]: d[kind].filter((x) => x.id !== id) }));
     dbTry(() => db.deleteObligation(id));
   };
+  // Undo a settlement: remove the settled obligation AND the transaction it created.
+  const removeSettled = (kind, item) => {
+    if (!window.confirm(`Remove this settled ${kind === "receivables" ? "receivable" : "payable"} and the transaction it logged? Use this to clear a mistaken or duplicate settlement.`)) return;
+    const matchDesc = `${kind === "receivables" ? "Received" : "Paid"}: ${item.party}, ${item.description || ""}`;
+    let killedTxId = null;
+    setData((d) => {
+      const tx = d.transactions.find((t) => t.description === matchDesc && Math.abs(t.amount - item.amount) < 0.005);
+      killedTxId = tx?.id || null;
+      return {
+        ...d,
+        [kind]: d[kind].filter((x) => x.id !== item.id),
+        transactions: killedTxId ? d.transactions.filter((t) => t.id !== killedTxId) : d.transactions,
+      };
+    });
+    dbTry(async () => {
+      await db.deleteObligation(item.id);
+      if (killedTxId) await db.deleteTransaction(killedTxId);
+    });
+  };
   const resetAll = async () => {
     if (!window.confirm(`Wipe "${data.ledger.name}" and start it fresh? Every entry, receivable, and credit pool in THIS ledger will be removed. Other ledgers are untouched.`)) return;
     setData(null);
@@ -1031,7 +1050,7 @@ function Ledger({ onSignOut }) {
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
-        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
+        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
         {tab === "integrations" && <IntegrationsTab data={data} openBankReview={(rows) => setBankReview(rows)} updateLedgerMeta={(patch) => {
@@ -2456,7 +2475,7 @@ const PLRow = ({ label, value, color }) => (
 );
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openPreview }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -2495,8 +2514,8 @@ function ARAP({ data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openP
         </div>
       </div>
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="Receivables · they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
-        <ARList kind="payables" title="Payables · you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
+        <ARList kind="receivables" title="Receivables · they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
+        <ARList kind="payables" title="Payables · you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
       </div>
     </div>
   );
@@ -2551,9 +2570,10 @@ function ARFields({ kind, f, set, data, addSub, addCredit }) {
   );
 }
 
-function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, addSub, addCredit, openPreview, tone, action }) {
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action }) {
   const [adding, setAdding] = useState(false);
   const [settlingId, setSettlingId] = useState(null);
+  const [noteFor, setNoteFor] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const incomeCats = data.categories.income.map((c) => c.name);
   const expenseCats = data.categories.expense.map((c) => c.name);
@@ -2658,13 +2678,11 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
         <h2 style={{ fontFamily: SERIF }} className="text-lg flex-1">{title}</h2>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
           onChange={(e) => { onInvoice(e.target.files[0]); e.target.value = ""; }} />
-        <Btn tone="ghost" onClick={() => fileRef.current.click()} disabled={reading}
-          title={`Upload an invoice, I'll read it and pre-fill this ${kind === "receivables" ? "receivable" : "payable"}`}>
-          {reading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-        </Btn>
-        <Btn tone="ghost" onClick={() => (adding ? cancelAdd() : setAdding(true))} title="Add manually">
-          {adding ? <X size={14} /> : <Plus size={14} />}
-        </Btn>
+        {adding
+          ? <button onClick={cancelAdd} style={{ color: P.muted }} className="text-sm px-1" title="Close">Cancel</button>
+          : <button onClick={() => setAdding(true)} style={{ color: P.brass }} className="text-sm px-1 inline-flex items-center gap-1">
+              <Plus size={15} /> Add
+            </button>}
       </div>
 
       {reading && (
@@ -2680,6 +2698,12 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
               <Paperclip size={11} /> {att.name} will be filed with this entry
             </div>
           )}
+          <button onClick={() => fileRef.current.click()} disabled={reading}
+            style={{ color: P.muted, border: `1px dashed ${P.line}` }}
+            className="w-full rounded-lg py-2 text-sm inline-flex items-center justify-center gap-2">
+            {reading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+            {reading ? "reading the invoice…" : "Upload an invoice to fill this automatically"}
+          </button>
           <ARFields kind={kind} f={form} set={set} data={data} addSub={addSub} addCredit={addCredit} />
           {readErr && <p style={{ color: P.brass }} className="text-xs">{readErr}</p>}
           <Btn className="w-full justify-center" onClick={submit}><Check size={14} /> Add</Btn>
@@ -2687,7 +2711,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
       )}
 
       {open.length === 0 && !adding ? (
-        <p style={{ color: P.faint }} className="text-sm py-4">Nothing open. Upload an invoice with the file button, add one with +, or capture it in the chat.</p>
+        <p style={{ color: P.faint }} className="text-sm py-3">Nothing open.</p>
       ) : (
         <div className="space-y-2">
           {open.map((i) => {
@@ -2736,21 +2760,52 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, updateAR, ad
         </div>
       )}
 
-      {queued.length > 0 && (
-        <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-3">
-          {queued.length} upcoming {queued.length === 1 ? "occurrence" : "occurrences"} queued · they appear here when due, and show on the Calendar meanwhile
-        </p>
-      )}
-
       {settled.length > 0 && (
         <div className="mt-4" style={{ borderTop: `1px solid ${P.line}`, paddingTop: "12px" }}>
           <Label>Settled · locked</Label>
           {settled.slice(0, 6).map((i) => (
             <div key={i.id} style={{ color: P.muted, fontFamily: MONO }} className="text-xs flex justify-between items-center gap-2 py-1">
-              <span className="truncate flex items-center gap-1.5"><Lock size={10} style={{ color: P.faint }} />{i.party}{isCredits(i) ? " (credits)" : ""}</span>
-              <span className="shrink-0">{fmt(i.amount)} · {kind === "receivables" ? "received" : "paid"} {i.settledOn}</span>
+              <span className="truncate flex items-center gap-1.5">
+                <Lock size={10} style={{ color: P.faint }} />
+                {i.party}{isCredits(i) ? " (credits)" : ""}
+                {(i.description || i.attachmentId) && (
+                  <button
+                    onClick={() => setNoteFor(noteFor?.id === i.id ? null : i)}
+                    title="View note / history"
+                    style={{ color: noteFor?.id === i.id ? P.brass : P.faint }}
+                  >
+                    <StickyNote size={11} />
+                  </button>
+                )}
+              </span>
+              <span className="shrink-0 flex items-center gap-2">
+                {fmt(i.amount)} · {kind === "receivables" ? "received" : "paid"} {i.settledOn}
+                <button onClick={() => removeSettled(kind, i)} title="Remove this settlement (and its transaction)" style={{ color: P.faint }}>
+                  <Trash2 size={11} />
+                </button>
+              </span>
             </div>
           ))}
+          {noteFor && (
+            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-2">
+              <div className="flex justify-between items-start gap-2">
+                <Label>Note · {noteFor.party}</Label>
+                <button onClick={() => setNoteFor(null)} style={{ color: P.faint }}><X size={12} /></button>
+              </div>
+              <p style={{ color: P.text }} className="text-sm">{noteFor.description || "No note recorded."}</p>
+              <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-2">
+                {kind === "receivables" ? "received" : "paid"} {noteFor.settledOn}
+                {isRec(noteFor) ? ` · was ${freqLabel(noteFor.frequency || "monthly")}` : ""}
+                {isCredits(noteFor) ? ` · via ${creditName(data, noteFor.creditId)} credits` : ""}
+              </p>
+              {noteFor.attachmentId && (
+                <button onClick={() => openPreview(noteFor.attachmentId, noteFor.attachmentName)}
+                  style={{ color: P.brass }} className="text-xs inline-flex items-center gap-1 mt-2">
+                  <Paperclip size={11} /> View filed invoice
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>
