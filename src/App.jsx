@@ -7,6 +7,7 @@ import {
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
 import * as bank from "./lib/bank";
+import { jsPDF } from "jspdf";
 import { askClaude } from "./lib/extract";
 
 /* ================= palettes: midnight & daylight ledger ================= */
@@ -25,17 +26,17 @@ const PALETTES = {
     overlay: "rgba(6,10,8,0.75)",
   },
   light: {
-    bg: "#F1F0E8",
-    surface: "#FBFAF5",
-    surface2: "#E9E7DC",
-    line: "#D6D3C4",
-    text: "#1B211A",
-    muted: "#4A5147",
-    faint: "#767C6F",
-    credit: "#186E45",
-    debit: "#A5382A",
-    brass: "#7E6318",
-    overlay: "rgba(40,44,36,0.45)",
+    bg: "#F5F3EC",            // warm paper, a touch brighter so cards don't glare against it
+    surface: "#FAF8F1",       // soft cream instead of near-white
+    surface2: "#EDEAE0",
+    line: "#E0DCCE",          // hairlines recede instead of gridding the page
+    text: "#2A2F27",          // soft ink, not black
+    muted: "#59604F",
+    faint: "#83887A",
+    credit: "#2E7D54",        // calmer green
+    debit: "#B0523F",         // terracotta instead of alarm red
+    brass: "#8A6D1F",
+    overlay: "rgba(52,56,46,0.38)",
   },
 };
 // Mutable palette object, every component reads P at render time, so swapping
@@ -1039,13 +1040,10 @@ function Ledger({ onSignOut }) {
         <LedgerLine sums={sums} balance={balance} openBooks={openBooks} creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null} onCredits={() => setTab("credits")} onReconcile={() => setReconciling(true)} />
 
         {/* ===== tabs ===== */}
-        <div className="mt-6 mb-6 flex items-center justify-between">
+        <div className="mt-6 mb-6">
           <h2 style={{ fontFamily: SERIF }} className="text-xl fade-in-key" key={tab}>
             {tabs.find(([k]) => k === tab)?.[1]}
           </h2>
-          <button onClick={resetAll} title="Reset this ledger" style={{ color: P.faint }} className="p-1 hover:opacity-70 transition-opacity">
-            <RotateCcw size={14} />
-          </button>
         </div>
 
         {false && (
@@ -1131,7 +1129,7 @@ function Ledger({ onSignOut }) {
       )}
 
       <PreviewModal preview={preview} onClose={closePreview} />
-      {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onClose={() => setAccountOpen(false)} />}
+      {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll} ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />}
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
       {bankReview && (
         <ImportModal
@@ -3326,6 +3324,77 @@ const gifiFor = (category, subcategory) => {
   return { code: "9270", name: "Other expenses" };
 };
 
+/* CRA-form-styled PDF: line codes, right-ruled amounts, parenthesized negatives, draft banner */
+const pdfMoney = (n) => (n < 0 ? "(" : "") + Math.abs(n).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (n < 0 ? ")" : "");
+
+function taxPdf({ filename, formTitle, formSub, ident, columns, rows, note }) {
+  const doc = new jsPDF({ unit: "mm", format: "letter" });
+  const W = 215.9, L = 16, R = W - 16;
+  let y = 18;
+  const hr = (yy, dark) => { doc.setDrawColor(dark ? 60 : 150); doc.setLineWidth(dark ? 0.4 : 0.2); doc.line(L, yy, R, yy); };
+  const pageBreak = () => { if (y > 260) { doc.addPage(); y = 18; } };
+
+  doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+  doc.text(formTitle, L, y);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  doc.text("DRAFT · for preparation only", R, y, { align: "right" });
+  y += 5.5;
+  doc.setFontSize(10);
+  doc.text(formSub, L, y);
+  y += 3; hr(y, true); y += 6;
+
+  doc.setFontSize(9);
+  ident.forEach(([k, v]) => {
+    pageBreak();
+    doc.setFont("helvetica", "normal"); doc.text(k, L, y);
+    doc.setFont("helvetica", "bold"); doc.text(String(v), L + 48, y);
+    y += 5;
+  });
+  y += 1.5; hr(y); y += 6;
+
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+  doc.text(columns[0], L, y);
+  doc.text(columns[1], L + 24, y);
+  doc.text(columns[2], R, y, { align: "right" });
+  y += 2.5; hr(y, true); y += 5.5;
+
+  doc.setFontSize(9.5);
+  rows.forEach((r) => {
+    pageBreak();
+    if (r.section) {
+      y += 1;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      doc.text(r.section.toUpperCase(), L, y);
+      doc.setFontSize(9.5);
+      y += 5.5;
+      return;
+    }
+    doc.setFont("helvetica", r.strong ? "bold" : "normal");
+    if (r.final) { doc.setDrawColor(40); doc.setLineWidth(0.3); doc.line(L + 128, y - 4.4, R, y - 4.4); doc.line(L + 128, y - 3.6, R, y - 3.6); }
+    if (r.code) doc.text(String(r.code), L, y);
+    doc.text(doc.splitTextToSize(r.name, 116)[0], L + 24, y);
+    if (r.amount !== null && r.amount !== undefined) doc.text(pdfMoney(r.amount), R, y, { align: "right" });
+    y += 5.5;
+    if (r.strong && !r.final) hr(y - 4);
+  });
+  y += 0.5; hr(y, true); y += 5.5;
+
+  if (note) {
+    doc.setFont("helvetica", "italic"); doc.setFontSize(8.5);
+    doc.splitTextToSize(note, R - L).forEach((t) => { pageBreak(); doc.text(t, L, y); y += 4; });
+  }
+
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(120);
+    doc.text(`Prepared in Brasstally · ${todayStr()} · draft for use with CRA-certified software, not a filed return`, L, 279);
+    doc.text(`Page ${i} of ${pages}`, R, 279, { align: "right" });
+    doc.setTextColor(0);
+  }
+  doc.save(filename);
+}
+
 function fiscalWindow(fye, endYear) {
   // fye "MM-DD"; returns [startDate, endDate] for the fiscal year ending in endYear
   const end = `${endYear}-${fye}`;
@@ -3385,6 +3454,23 @@ function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
   const copyDraft = () => {
     navigator.clipboard?.writeText(draftText().replace(/\\n/g, "\n")).catch(() => {});
     setCopied(true); setTimeout(() => setCopied(false), 2000);
+  };
+  const exportGifiPDF = () => {
+    taxPdf({
+      filename: `T2_S125_GIFI_${data.ledger.name.replace(/\s/g, "")}_FY${fy}.pdf`,
+      formTitle: "Schedule 125 · Income Statement Information",
+      formSub: `General Index of Financial Information (GIFI) · draft prepared from the ${data.ledger.name} ledger`,
+      ident: [
+        ["Corporation's name", data.ledger.name],
+        ["Business number (BN)", "_________ RC0001 (to be completed)"],
+        ["Tax year", `${fyStart} to ${fyEnd}`],
+        ["Currency", data.ledger.currency || "CAD"],
+      ],
+      columns: ["GIFI code", "Description", "Amount"],
+      rows: gifiRows.map((r) => ({ code: r.code, name: r.name, amount: r.amount, strong: r.strong, final: r.final })),
+      note: (creditsCovered > 0 ? `Note for the preparer: ${pdfMoney(creditsCovered)} of expenses were covered by vendor credits (non-cash); review treatment for SR&ED / ITC purposes. ` : "")
+        + "GIFI codes were inferred from ledger categories; confirm mappings before filing. Schedule 100 (balance sheet) items are not tracked in this ledger.",
+    });
   };
   const exportGifiCSV = () => {
     downloadCSV(`T2_GIFI_${data.ledger.name.replace(/\s/g, "")}_FY${fy}.csv`, [
@@ -3469,6 +3555,7 @@ function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
                 <div className="flex gap-2">
                   <Btn tone="ghost" onClick={copyDraft}>{copied ? <Check size={13} /> : null} {copied ? "Copied" : "Copy"}</Btn>
                   <Btn tone="ghost" onClick={exportGifiCSV}><Download size={13} /> CSV</Btn>
+                  <Btn tone="ghost" onClick={exportGifiPDF}><FileText size={13} /> PDF</Btn>
                 </div>
               </div>
               {fyTx.length === 0 ? (
@@ -3860,6 +3947,28 @@ function PersonalTaxCard({ data }) {
     navigator.clipboard?.writeText(draftText()).catch(() => {});
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
+  const exportPDF = () => {
+    taxPdf({
+      filename: `T1_prep_${ty}_${data.ledger.name.replace(/\s/g, "")}.pdf`,
+      formTitle: "T1 Preparation Summary",
+      formSub: `Personal income tax working paper · draft prepared from the ${data.ledger.name} ledger`,
+      ident: [
+        ["Taxpayer", data.ledger.name],
+        ["Social insurance number", "___ ___ ___ (to be completed)"],
+        ["Tax year", String(ty)],
+        ["Slips (T4/T5/RRSP)", "via CRA Auto-fill; not included here"],
+      ],
+      columns: ["Line", "Description", "Amount"],
+      rows: lines.map(([label, v, strong]) => {
+        if (v === null) return { section: label.trim() };
+        const m = label.match(/line (\d{5})/i);
+        return { code: m ? m[1] : "", name: label.trim().replace(/\s*\(line \d{5}\)/i, ""), amount: v, strong: strong === "strong" };
+      }),
+      note: "Deduction lines are candidates drawn from ledger categories; confirm eligibility before claiming. "
+        + (hasSE ? "Self-employment figures feed form T2125 inside the T1 return. " : "")
+        + "File via NETFILE-certified software or a representative's EFILE.",
+    });
+  };
   const exportCSV = () => {
     downloadCSV(`T1_prep_${ty}.csv`, [
       [`T1 prep · ${data.ledger.name}`, `tax year ${ty}`],
@@ -3928,6 +4037,7 @@ function PersonalTaxCard({ data }) {
               <div className="flex gap-2">
                 <Btn tone="ghost" onClick={copyDraft}>{copied ? <Check size={13} /> : null} {copied ? "Copied" : "Copy"}</Btn>
                 <Btn tone="ghost" onClick={exportCSV}><Download size={13} /> CSV</Btn>
+                <Btn tone="ghost" onClick={exportPDF}><FileText size={13} /> PDF</Btn>
               </div>
             </div>
             {yrTx.length === 0 ? (
@@ -4013,7 +4123,7 @@ function PersonalTaxCard({ data }) {
 }
 
 /* ================= account: profile, membership, billing, settings ================= */
-function AccountModal({ theme, setTheme, onSignOut, onClose }) {
+function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, onClose }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -4103,7 +4213,15 @@ function AccountModal({ theme, setTheme, onSignOut, onClose }) {
 
         {msg && <p style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-3">{msg}</p>}
 
-        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4">
+        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4 space-y-2">
+          <button
+            onClick={() => { onClose(); onResetLedger(); }}
+            style={{ color: P.debit, border: `1px solid ${P.debit}` }}
+            className="w-full rounded px-3 py-2 text-sm inline-flex items-center justify-center gap-2"
+            title="Erase everything in this ledger and start it fresh"
+          >
+            <RotateCcw size={14} /> Reset "{ledgerName}" ledger
+          </button>
           <Btn tone="ghost" className="w-full justify-center" onClick={onSignOut}><LogOut size={14} /> Sign out</Btn>
         </div>
       </div>
