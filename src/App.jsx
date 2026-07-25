@@ -3926,7 +3926,7 @@ function BankFeedCard({ data, openBankReview }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Bank feed</h2>
-          <p style={{ color: P.muted }} className="text-sm">Connect a bank and pull new transactions into review, right here</p>
+          <p style={{ color: P.muted }} className="text-sm">Connections belong to this ledger ({data.ledger.name}); each ledger links its own bank accounts</p>
         </div>
         <span style={{ fontFamily: MONO, color: conns?.length ? P.credit : P.faint, border: `1px solid ${conns?.length ? P.credit : P.line}` }} className="text-xs rounded-full px-2 py-0.5 whitespace-nowrap">
           {conns === null ? "checking…" : conns.length ? `${conns.length} connected` : "not connected"}
@@ -3956,7 +3956,7 @@ function BankFeedCard({ data, openBankReview }) {
         <Btn onClick={connect} disabled={busy}>
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Connect a bank
         </Btn>
-        <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">opens Plaid inside the app · your banking password never touches Brasstally</span>
+        <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">no signup needed · you sign in with your own bank · Brasstally never sees the password</span>
       </div>
       {notice && <p style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-2">{notice}</p>}
       {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}

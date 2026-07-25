@@ -5,7 +5,16 @@ import { supabase } from "./supabase";
 
 export async function plaid(action, body = {}) {
   const { data, error } = await supabase.functions.invoke("plaid", { body: { action, ...body } });
-  if (error) throw error;
+  if (error) {
+    // supabase-js hides non-2xx bodies behind error.context; dig the real message out
+    try {
+      const detail = await error.context?.json?.();
+      if (detail?.error) throw new Error(detail.error);
+    } catch (inner) {
+      if (inner instanceof Error && inner.message && !/json/i.test(inner.message)) throw inner;
+    }
+    throw new Error(error.message || "The bank connector didn't respond");
+  }
   if (data?.error) throw new Error(data.error);
   return data;
 }
