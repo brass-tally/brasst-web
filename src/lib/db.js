@@ -321,6 +321,24 @@ export async function resetLedger(kind) {
   await supabase.from("categories").insert(rows);
 }
 
+
+/* ---------------- filing tracker ---------------- */
+
+export async function getFiling(ledgerId, taxYear, form) {
+  const { data, error } = await supabase.from("filings").select("*")
+    .eq("ledger_id", ledgerId).eq("tax_year", taxYear).eq("form", form).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function saveFiling(ledgerId, taxYear, form, patch) {
+  const row = { ledger_id: ledgerId, tax_year: taxYear, form, ...patch, updated_at: new Date().toISOString() };
+  const { data, error } = await supabase.from("filings")
+    .upsert(row, { onConflict: "ledger_id,tax_year,form" }).select().single();
+  if (error) throw error;
+  return data;
+}
+
 /* ---------------- file storage (receipts & invoice PDFs) ---------------- */
 
 export async function uploadAttachment(file, name, contentType) {

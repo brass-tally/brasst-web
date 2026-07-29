@@ -3670,40 +3670,8 @@ function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
                 Schedule 100 (balance sheet) needs assets/liabilities the ledger doesn't track.
               </p>
             </div>
+            <FilingConnector data={data} form="T2" taxYear={fy} accountantEmail={accEmail} />
 
-            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-              <Label>How to file this</Label>
-              <div className="flex gap-1 mt-1 mb-3 flex-wrap">
-                {[["A", "File it myself"], ["B", "Through my accountant"], ["C", "After it's filed"]].map(([k, label]) => (
-                  <button key={k} onClick={() => setPath(k)}
-                    style={{ fontFamily: MONO, background: path === k ? P.surface2 : "transparent", border: `1px solid ${path === k ? P.brass : P.line}`, color: path === k ? P.text : P.muted }}
-                    className="rounded px-3 py-1 text-xs">
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {(path === "A" ? [
-                ["Pick CRA-certified T2 software", "UFile T2 (~$200/return), TaxTron T2, or WebTax4B, the certified list is on canada.ca. This CSV pastes into their GIFI screens line-for-line."],
-                ["Enter identification + GIFI lines", "BN (9 digits + RC0001), tax year dates, then Schedule 125 from this draft. Schedule 100 needs your bank balance, receivables (AR tab), payables, and share capital."],
-                ["Get your Web Access Code", "The software fetches it with your BN, or call CRA business enquiries (1-800-959-5525)."],
-                ["Transmit + save the confirmation", "File, save the confirmation number, and attach it to a $0 entry in the ledger so the paper trail lives with the books."],
-              ] : path === "B" ? [
-                ["Send the package below", "GIFI draft + P&L export + AR/AP export, a complete handoff. Every entry already has its invoice filed in the app."],
-                ["Flag the SR&ED angle", "Dev salaries and compute costs are claim material, and credit-covered expenses need specific T661 treatment."],
-                ["Authorize them in Represent a Client", "Approve their RepID in CRA My Business Account, they EFILE, you never touch a form."],
-                ["Review + sign the T183CORP", "The one thing you personally sign before they transmit."],
-              ] : [
-                ["Track the return", "CRA My Business Account shows assessment status, balance owing, and instalments."],
-                ["Watch for the Notice of Assessment", "Usually 2 to 6 weeks e-filed, attach it to a $0 entry in the ledger."],
-                ["Instalments if owing > $3,000", "Add next year's quarterly instalments as recurring payables so the Calendar warns you."],
-                ["Anchor after paying", "When the tax payment clears the bank, log it and re-anchor the balance."],
-              ]).map(([t, b], i) => (
-                <div key={i} className="flex gap-2 mb-2">
-                  <span style={{ fontFamily: MONO, color: P.brass }} className="text-sm shrink-0">{i + 1}.</span>
-                  <div><div className="text-sm" style={{ color: P.text }}>{t}</div><div className="text-xs" style={{ color: P.muted }}>{b}</div></div>
-                </div>
-              ))}
-            </div>
 
             <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
               <Label>Send to your accountant</Label>
@@ -4150,35 +4118,8 @@ function PersonalTaxCard({ data }) {
               Deduction lines are candidates from your categories; eligibility rules apply, so confirm before claiming.
             </p>
           </div>
+            <FilingConnector data={data} form="T1" taxYear={ty} accountantEmail={accEmail} />
 
-          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-            <Label>How to file this</Label>
-            <div className="flex gap-1 mt-1 mb-3 flex-wrap">
-              {[["A", "File it myself"], ["B", "Through an accountant"]].map(([k, label]) => (
-                <button key={k} onClick={() => setPath(k)}
-                  style={{ fontFamily: MONO, background: path === k ? P.surface2 : "transparent", border: `1px solid ${path === k ? P.brass : P.line}`, color: path === k ? P.text : P.muted }}
-                  className="rounded px-3 py-1 text-xs">
-                  {label}
-                </button>
-              ))}
-            </div>
-            {(path === "A" ? [
-              ["Pick NETFILE-certified software", "Wealthsimple Tax (free), TurboTax, or UFile. The certified list is on canada.ca."],
-              ["Auto-fill from CRA My Account", "One click pulls every T4, T5, and RRSP slip CRA already has. No typing slips."],
-              ["Enter what CRA can't see", "This summary: self-employment income and expenses (the T2125 section), medical, donations."],
-              ["NETFILE and keep the confirmation", "File from the software, then attach the confirmation to a $0 entry here so the record lives with the books."],
-            ] : [
-              ["Send the package below", "This summary plus the P&L export. Slips arrive via their CRA access, so this is the missing half."],
-              ["Authorize them once", "Approve their RepID in CRA My Account so they can pull your slips and EFILE."],
-              ["Review and sign the T183", "The one form you personally sign before they transmit."],
-              ["File the NOA here", "When the Notice of Assessment arrives, attach it to a $0 entry so next year starts organized."],
-            ]).map(([t, b], i) => (
-              <div key={i} className="flex gap-2 mb-2">
-                <span style={{ fontFamily: MONO, color: P.brass }} className="text-sm shrink-0">{i + 1}.</span>
-                <div><div className="text-sm" style={{ color: P.text }}>{t}</div><div className="text-xs" style={{ color: P.muted }}>{b}</div></div>
-              </div>
-            ))}
-          </div>
 
           <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
             <Label>Send to your accountant</Label>
@@ -4208,6 +4149,202 @@ function PersonalTaxCard({ data }) {
         </div>
       )}
     </section>
+  );
+}
+
+/* ================= filing connector: certified software or accountant ================= */
+const FILING_SOFTWARE = {
+  T2: [
+    { id: "taxtron", name: "TaxTron T2", platform: "Windows, Mac", note: "Free tier covers a single small corporation; paid above that.", gifiImport: false },
+    { id: "ufile", name: "UFile T2", platform: "Windows", note: "Guided interview, roughly $200 per return.", gifiImport: false },
+    { id: "futuretax", name: "FutureTax T2", platform: "Windows", note: "Low cost per return, no frills.", gifiImport: false },
+    { id: "taxcycle", name: "TaxCycle T2", platform: "Windows", note: "Professional subscription, supports spreadsheet GIFI import.", gifiImport: true },
+    { id: "profile", name: "ProFile T2", platform: "Windows", note: "Intuit's practitioner package, imports from spreadsheets.", gifiImport: true },
+    { id: "other", name: "Something else", platform: "", note: "Any package on the CRA certified list.", gifiImport: false },
+  ],
+  T1: [
+    { id: "wealthsimple", name: "Wealthsimple Tax", platform: "Web", note: "Pay what you want, CRA Auto-fill pulls your slips.", gifiImport: false },
+    { id: "turbotax", name: "TurboTax", platform: "Web, Windows", note: "Tiered pricing, strong self-employment guidance.", gifiImport: false },
+    { id: "ufile1", name: "UFile", platform: "Web, Windows", note: "Long-standing Canadian package.", gifiImport: false },
+    { id: "hrblock", name: "H&R Block Online", platform: "Web", note: "Free tier for simple returns.", gifiImport: false },
+    { id: "studiotax", name: "StudioTax", platform: "Windows, Mac", note: "Small licence fee, minimal hand-holding.", gifiImport: false },
+    { id: "other", name: "Something else", platform: "", note: "Any package on the CRA certified list.", gifiImport: false },
+  ],
+};
+
+const FILING_STATUSES = [["draft", "Draft"], ["package_sent", "Package sent"], ["filed", "Filed"], ["assessed", "Assessed"]];
+
+const softwareSteps = (form, sw) => form === "T2" ? [
+  ["Start a new T2 return", `Open ${sw.name} and create the return for this fiscal year.`],
+  ["Enter identification", "Corporation name, business number with the RC0001 suffix, and the tax year dates from the draft above."],
+  sw.gifiImport
+    ? ["Import the GIFI spreadsheet", "Use the package's GIFI or spreadsheet import and point it at the CSV exported above."]
+    : ["Key in the GIFI lines", "Open the working paper PDF beside the software and enter each code and amount on Schedule 125."],
+  ["Complete Schedule 100", "Balance sheet items this ledger does not track: bank balance, receivables from the AR tab, payables, and share capital."],
+  ["Get the Web Access Code and transmit", "The software can fetch the code with your business number, or call CRA business enquiries. File, then record the confirmation below."],
+] : [
+  ["Start the return and run Auto-fill", `In ${sw.name}, connect CRA Auto-fill so every T4, T5, and RRSP slip loads itself.`],
+  ["Add what CRA cannot see", "The figures in the summary above: self-employment income and expenses, medical, donations."],
+  ["Check the self-employment section", "Self-employment figures belong on form T2125 inside the return."],
+  ["NETFILE and record it", "Transmit, then save the confirmation number below so next year starts organised."],
+];
+
+const accountantSteps = (form) => [
+  ["Send the package", `Use "Send to your accountant" below: the ${form} draft, the CSV, and the working paper PDF.`],
+  ["Authorise them once", "They request access with their RepID in Represent a Client; you approve it in CRA My Account. That lets them pull slips and transmit."],
+  [form === "T2" ? "Review and sign the T183CORP" : "Review and sign the T183", "The one form you personally sign before they transmit."],
+  ["Record the confirmation", "When they confirm the filing, log the number below so the paper trail lives with the books."],
+];
+
+function FilingConnector({ data, form, taxYear, accountantEmail }) {
+  const [rec, setRec] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [picking, setPicking] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [conf, setConf] = useState("");
+  const [filedOn, setFiledOn] = useState(todayStr());
+  const [err, setErr] = useState("");
+  const list = FILING_SOFTWARE[form];
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    (async () => {
+      try {
+        const r = await db.getFiling(data.ledger.id, taxYear, form);
+        if (alive) { setRec(r); setConf(r?.confirmation_number || ""); }
+      } catch (e) { if (alive) setErr("Run the filings migration to enable tracking."); }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [data.ledger.id, taxYear, form]);
+
+  const save = async (patch) => {
+    setErr("");
+    try {
+      const r = await db.saveFiling(data.ledger.id, taxYear, form, { ...patch });
+      setRec(r);
+    } catch (e) { setErr(String(e.message || e)); }
+  };
+
+  const sw = rec?.software ? list.find((s) => s.id === rec.software) : null;
+  const route = rec?.route || null;
+  const status = rec?.status || "draft";
+  const statusIdx = Math.max(0, FILING_STATUSES.findIndex(([k]) => k === status));
+
+  if (loading) {
+    return (
+      <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <Label>Filing</Label>
+        <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs">checking…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <div className="flex items-start justify-between gap-2">
+        <Label>Filing {form} · {taxYear}</Label>
+        <span style={{ fontFamily: MONO, color: route ? P.credit : P.faint, border: `1px solid ${route ? P.credit : P.line}` }} className="text-xs rounded-full px-2 py-0.5 whitespace-nowrap">
+          {route === "software" ? (sw?.name || "software") : route === "accountant" ? "accountant" : "not set up"}
+        </span>
+      </div>
+
+      <p style={{ color: P.muted }} className="text-xs mb-3">
+        No Canadian tax software exposes a filing API, so nothing transmits from here. This connects your books to the
+        package or person who does file, and keeps the return on track.
+      </p>
+
+      {/* status pipeline */}
+      <div className="flex items-center gap-1 mb-4">
+        {FILING_STATUSES.map(([k, label], i) => (
+          <button key={k} onClick={() => save({ status: k })} className="flex-1 text-left" title={`Mark as ${label}`}>
+            <div style={{ height: 4, borderRadius: 99, background: i <= statusIdx ? P.brass : P.line }} />
+            <div style={{ fontFamily: MONO, color: i <= statusIdx ? P.text : P.faint }} className="text-xs mt-1 truncate">{label}</div>
+          </button>
+        ))}
+      </div>
+
+      {!route || picking ? (
+        <>
+          <div className="flex gap-1 mb-3">
+            {[["software", "I file it myself"], ["accountant", "My accountant files"]].map(([k, label]) => (
+              <button key={k} onClick={() => { save({ route: k }); setPicking(k === "software"); }}
+                style={{ fontFamily: MONO, background: route === k ? P.surface2 : "transparent", border: `1px solid ${route === k ? P.brass : P.line}`, color: route === k ? P.text : P.muted }}
+                className="flex-1 rounded px-3 py-2 text-xs">
+                {label}
+              </button>
+            ))}
+          </div>
+          {(route === "software" || picking) && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              {list.map((s) => (
+                <button key={s.id}
+                  onClick={() => { save({ route: "software", software: s.id }); setPicking(false); }}
+                  style={{ background: P.surface, border: `1px solid ${rec?.software === s.id ? P.brass : P.line}` }}
+                  className="rounded-lg p-3 text-left">
+                  <div className="text-sm">{s.name}</div>
+                  <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">{s.platform}</div>
+                  <div style={{ color: P.muted }} className="text-xs mt-1">{s.note}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {route === "software" && sw && (
+            <div className="flex items-center gap-2 mb-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm truncate">{sw.name}</div>
+                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">{sw.platform || "certified software"}{sw.gifiImport ? " · spreadsheet import" : " · manual GIFI entry"}</div>
+              </div>
+              <button onClick={() => setPicking(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">change</button>
+            </div>
+          )}
+          {route === "accountant" && (
+            <div className="flex items-center gap-2 mb-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm">Filed by your accountant</div>
+                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs truncate">{accountantEmail || "add their email below"}</div>
+              </div>
+              <button onClick={() => save({ route: null, software: null })} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">change</button>
+            </div>
+          )}
+
+          {(route === "software" ? softwareSteps(form, sw || list[0]) : accountantSteps(form)).map(([t, b], i) => (
+            <div key={i} className="flex gap-2 mb-2">
+              <span style={{ fontFamily: MONO, color: P.brass }} className="text-sm shrink-0">{i + 1}.</span>
+              <div><div className="text-sm" style={{ color: P.text }}>{t}</div><div className="text-xs" style={{ color: P.muted }}>{b}</div></div>
+            </div>
+          ))}
+
+          <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
+            {rec?.confirmation_number && !recording ? (
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div style={{ fontFamily: MONO, color: P.credit }} className="text-xs">filed {rec.filed_on || ""}</div>
+                  <div style={{ fontFamily: MONO, color: P.text }} className="text-sm">confirmation {rec.confirmation_number}</div>
+                </div>
+                <button onClick={() => setRecording(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">edit</button>
+              </div>
+            ) : recording ? (
+              <div className="grid sm:grid-cols-3 gap-2 items-end">
+                <div><Label>Confirmation number</Label><Input value={conf} onChange={(e) => setConf(e.target.value)} placeholder="from the transmission" /></div>
+                <div><Label>Filed on</Label><Input type="date" value={filedOn} onChange={(e) => setFiledOn(e.target.value)} /></div>
+                <Btn className="justify-center" onClick={() => { save({ confirmation_number: conf.trim(), filed_on: filedOn, status: "filed" }); setRecording(false); }}>
+                  <Check size={14} /> Record
+                </Btn>
+              </div>
+            ) : (
+              <Btn tone="ghost" onClick={() => setRecording(true)}><Check size={14} /> Record the filing</Btn>
+            )}
+          </div>
+        </>
+      )}
+
+      {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
+    </div>
   );
 }
 
