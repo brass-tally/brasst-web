@@ -1239,25 +1239,6 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // rows arriving from a bank sync skip the AI step entirely
-  useEffect(() => {
-    if (!initialRows) return;
-    const defaults = initialRows.map((t) => ({
-      date: t.date,
-      amount: Math.abs(Number(t.amount)) || 0,
-      direction: t.direction === "credit" ? "credit" : "debit",
-      description: t.description || "·",
-      category: t.direction === "credit"
-        ? (data.categories.income[0]?.name || "Other")
-        : (data.categories.expense[0]?.name || "Other"),
-      subcategory: "",
-      account: data.ledger.kind === "personal" ? "personal" : "business",
-      recurrence: "once",
-    })).filter((t) => t.amount > 0 && t.date);
-    setRows(markDuplicates(defaults));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const parsed = parseFloat(amount);
   const valid = !Number.isNaN(parsed) && date;
   const drift = valid && currentValue != null ? parsed - currentValue : null;
@@ -1348,6 +1329,26 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
       return { ...r, dup, checked: !dup };
     });
   };
+
+  // rows arriving from a bank sync skip the AI step entirely
+  useEffect(() => {
+    if (!initialRows) return;
+    const defaults = initialRows.map((t) => ({
+      date: t.date,
+      amount: Math.abs(Number(t.amount)) || 0,
+      direction: t.direction === "credit" ? "credit" : "debit",
+      description: t.description || "·",
+      category: t.direction === "credit"
+        ? (data.categories.income[0]?.name || "Other")
+        : (data.categories.expense[0]?.name || "Other"),
+      subcategory: "",
+      account: data.ledger.kind === "personal" ? "personal" : "business",
+      recurrence: "once",
+    })).filter((t) => t.amount > 0 && t.date);
+    setRows(markDuplicates(defaults));
+    setStep("review");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const runParse = async (content) => {
     setBusy(true);
@@ -1443,7 +1444,7 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
-          <h3 style={{ fontFamily: SERIF }} className="text-lg">Import a statement</h3>
+          <h3 style={{ fontFamily: SERIF }} className="text-lg">{sourceLabel === "bank sync" ? "Review bank sync" : "Import a statement"}</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
 
@@ -3492,6 +3493,21 @@ function fiscalWindow(fye, endYear) {
   s.setDate(s.getDate() + 1);
   return [s.toISOString().slice(0, 10), end];
 }
+
+/** FY end years that contain at least one transaction, given ledger FYE (MM-DD). */
+function fyEndYearsFromTxs(txs, fye) {
+  const years = new Set();
+  for (const t of txs) {
+    const date = t.date || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const y = Number(date.slice(0, 4));
+    const mmdd = date.slice(5);
+    // After the FYE calendar day, the tx belongs to the next FY end year
+    years.add(mmdd <= fye ? y : y + 1);
+  }
+  return [...years].sort((a, b) => b - a);
+}
+
 const addMonths = (dateStr, m) => {
   const d = new Date(dateStr + "T00:00:00");
   d.setMonth(d.getMonth() + m);
@@ -3501,7 +3517,8 @@ const addMonths = (dateStr, m) => {
 function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
-  const yearsAvail = [...new Set(bizTx.map((t) => Number((t.date || "").slice(0, 4))).filter(Boolean))].sort((a, b) => b - a);
+  const fye = data.ledger.fye || "12-31";
+  const yearsAvail = fyEndYearsFromTxs(bizTx, fye);
   const [fy, setFy] = useState(yearsAvail[0] || new Date().getFullYear());
   const [draft, setDraft] = useState(false);
   const [path, setPath] = useState("B");
@@ -3510,7 +3527,11 @@ function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
   const [accNote, setAccNote] = useState(`Hi, below is our GIFI-coded T2 draft for ${data.ledger.name}. Balance sheet items still to come from your side. Can you review and let me know what else you need?`);
   const [emailCopied, setEmailCopied] = useState(false);
 
-  const fye = data.ledger.fye || "12-31";
+  // Keep selected FY valid when FYE or txs change
+  useEffect(() => {
+    if (yearsAvail.length && !yearsAvail.includes(fy)) setFy(yearsAvail[0]);
+  }, [fye, yearsAvail.join(","), fy]);
+
   const [fyStart, fyEnd] = fiscalWindow(fye, fy);
   const fyTx = bizTx.filter((t) => t.date >= fyStart && t.date <= fyEnd && !t.plExclude);
   const revenue = fyTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
