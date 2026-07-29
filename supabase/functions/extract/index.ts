@@ -12,7 +12,8 @@ const cors = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const MODEL = "claude-opus-5";
+// Receipt/entry extraction is a reading task — Haiku is fast and cheap enough.
+const MODEL = "claude-haiku-4-5";
 const ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ATTEMPTS = 3;
 
@@ -46,10 +47,8 @@ Deno.serve(async (req) => {
     return json({ error: "content must be a non-empty array of blocks", code: "bad_request" }, 400);
   }
 
-  // On Claude Opus 5 max_tokens caps thinking *and* the reply, so keep a floor
-  // well above the size of the JSON we're asking for — a tight cap truncates
-  // the answer mid-object and every parse downstream fails.
-  const maxTokens = Math.min(Math.max(Number(max_tokens) || 1024, 2048), 16000);
+  // Keep a modest floor so a tight caller cap can't truncate JSON mid-object.
+  const maxTokens = Math.min(Math.max(Number(max_tokens) || 1024, 1024), 8192);
 
   // Structured outputs: when the caller hands us a schema, the response is
   // guaranteed to match it instead of merely asked to.
@@ -58,10 +57,9 @@ Deno.serve(async (req) => {
   const payload = () => ({
     model: MODEL,
     max_tokens: maxTokens,
-    output_config: {
-      effort: "low", // extraction is a reading task, not a reasoning one
-      ...(useSchema ? { format: { type: "json_schema", schema } } : {}),
-    },
+    ...(useSchema
+      ? { output_config: { format: { type: "json_schema", schema } } }
+      : {}),
     messages: [{ role: "user", content }],
   });
 
@@ -122,7 +120,6 @@ Deno.serve(async (req) => {
       .trim();
 
     if (!text) {
-      // Almost always max_tokens: the reply was all thinking and no answer.
       last = {
         error: data?.stop_reason === "max_tokens"
           ? "the reply was cut off before any JSON was produced"
