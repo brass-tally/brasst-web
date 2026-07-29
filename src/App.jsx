@@ -8,7 +8,8 @@ import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
 import * as bank from "./lib/bank";
 import { jsPDF } from "jspdf";
-import { askClaude } from "./lib/extract";
+import { askClaude, friendlyError } from "./lib/extract";
+import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
 
 /* ================= palettes: midnight & daylight ledger ================= */
 const PALETTES = {
@@ -49,7 +50,7 @@ const SANS = "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans
 
 /* ================= helpers ================= */
 const uid = () => Math.random().toString(36).slice(2, 10);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = todayLocal; // local calendar day, not UTC (see lib/parse.js)
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const fmt = (n) =>
   (n < 0 ? "−$" : "$") +
@@ -297,6 +298,48 @@ Respond ONLY with raw JSON (no markdown, no preamble):
 Software/SaaS/cloud/contractor items are business expenses, pick the closest business category (software, hosting, salaries, etc.). If the date is missing, use today's date. Amount is the total paid.
 recurrence: "recurring" for subscriptions, SaaS, hosting, rent/mortgage, salaries, retainers, utilities, anything billed on a repeating cycle; "once" for one-off purchases.`;
 }
+
+// Structured outputs: the response is constrained to this shape, so the field
+// set and the category names come back valid instead of merely requested.
+const nullableString = (values) => ({
+  anyOf: [values?.length ? { type: "string", enum: values } : { type: "string" }, { type: "null" }],
+});
+
+function extractionSchema(cats) {
+  const all = [...cats.expense, ...cats.income];
+  const names = all.map((c) => c.name);
+  const subs = [...new Set(all.flatMap((c) => c.subs || []))];
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["type", "amount", "date", "description", "category", "subcategory", "account", "recurrence", "note"],
+    properties: {
+      type: { type: "string", enum: ["expense", "income"] },
+      amount: { type: "number" },
+      date: { type: "string", format: "date" },
+      description: { type: "string" },
+      category: names.length ? { type: "string", enum: names } : { type: "string" },
+      subcategory: nullableString(subs),
+      account: { type: "string", enum: ["business", "personal"] },
+      recurrence: { type: "string", enum: ["recurring", "once"] },
+      note: { type: "string" },
+    },
+  };
+}
+
+const AR_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["party", "description", "amount", "dueDate", "recurrence", "note"],
+  properties: {
+    party: { type: "string" },
+    description: { type: "string" },
+    amount: { type: "number" },
+    dueDate: { type: "string", format: "date" },
+    recurrence: { type: "string", enum: ["recurring", "once"] },
+    note: { type: "string" },
+  },
+};
 
 function arExtractionPrompt(kind) {
   const who =
@@ -1869,10 +1912,14 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
       const block = isPdf
         ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
         : { type: "image", source: { type: "base64", media_type: att.type, data: b64 } };
-      const draft = await askClaude([block, { type: "text", text: extractionPrompt(data.categories, data.ledger.name) }]);
+      const raw = await askClaude(
+        [block, { type: "text", text: extractionPrompt(data.categories, data.ledger.name) }],
+        { maxTokens: 2048, schema: extractionSchema(data.categories) }
+      );
+      const draft = normalizeDraft(raw, { categories: data.categories, ledgerKind: data.ledger.kind });
       push({ role: "assistant", text: draft.note || "Here's what I read, confirm or adjust:", draft, att });
-    } catch {
-      push({ role: "assistant", text: "I couldn't read that one. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”)." });
+    } catch (e) {
+      push({ role: "assistant", text: `I couldn't read that one — ${friendlyError(e)}. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”).` });
     }
     setBusy(false);
   };
@@ -1883,11 +1930,23 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
     setInput("");
     push({ role: "user", text });
     setBusy(true);
+    // Parsed on-device first. It costs nothing, and it's the draft we fall back
+    // to when the reader is unreachable — a typed line with an amount in it
+    // should never come back empty-handed.
+    const local = parseEntryText(text, { categories: data.categories, ledgerKind: data.ledger.kind });
     try {
-      const draft = await askClaude([{ type: "text", text: `${extractionPrompt(data.categories, data.ledger.name)}\n\nUser message: "${text}"` }]);
+      const raw = await askClaude(
+        [{ type: "text", text: `${extractionPrompt(data.categories, data.ledger.name)}\n\nUser message: "${text}"` }],
+        { schema: extractionSchema(data.categories) }
+      );
+      const draft = normalizeDraft(raw, { categories: data.categories, ledgerKind: data.ledger.kind, fallback: local });
       push({ role: "assistant", text: draft.note || "Got it, confirm or adjust:", draft });
-    } catch {
-      push({ role: "assistant", text: "I couldn't parse that. Try including an amount, e.g. “paid Canva $40 yesterday”." });
+    } catch (e) {
+      if (local) {
+        push({ role: "assistant", text: `${friendlyError(e)}, so I filled this in from your message — check the category before saving.`, draft: local });
+      } else {
+        push({ role: "assistant", text: "I couldn't find an amount in that. Try including one, e.g. “paid Canva $40 yesterday”." });
+      }
     }
     setBusy(false);
   };
@@ -2593,20 +2652,21 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
       const block = isPdf
         ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
         : { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: b64 } };
-      const d = await askClaude([block, { type: "text", text: arExtractionPrompt(kind) }]);
+      const d = await askClaude([block, { type: "text", text: arExtractionPrompt(kind) }], { maxTokens: 2048, schema: AR_SCHEMA });
+      const amount = coerceAmount(d.amount);
       setForm({
         ...blank,
-        party: d.party || "",
-        description: d.description || "",
-        amount: d.amount != null ? String(d.amount) : "",
-        dueDate: d.dueDate || todayStr(),
+        party: String(d.party || "").trim(),
+        description: String(d.description || "").trim(),
+        amount: amount ? String(amount) : "",
+        dueDate: coerceDate(d.dueDate) || todayStr(),
         recurrence: d.recurrence === "recurring" ? "recurring" : "once",
       });
       setAtt({ name: file.name || "invoice.pdf", type: isPdf ? "application/pdf" : (file.type || "image/png"), data: b64, file });
       if (d.note) setReadErr(d.note);
       setAdding(true);
-    } catch {
-      setReadErr("Couldn't read that invoice, check the fields yourself or try a clearer file.");
+    } catch (e) {
+      setReadErr(`Couldn't read that invoice — ${friendlyError(e)}. Fill the fields in yourself, or try a clearer file.`);
       setAdding(true);
     }
     setReading(false);
