@@ -8,7 +8,8 @@ import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
 import * as bank from "./lib/bank";
 import { jsPDF } from "jspdf";
-import { askClaude } from "./lib/extract";
+import { askClaude, friendlyError } from "./lib/extract";
+import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
 
 /* ================= palettes: midnight & daylight ledger ================= */
 const PALETTES = {
@@ -49,7 +50,7 @@ const SANS = "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans
 
 /* ================= helpers ================= */
 const uid = () => Math.random().toString(36).slice(2, 10);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = todayLocal; // local calendar day, not UTC (see lib/parse.js)
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const fmt = (n) =>
   (n < 0 ? "−$" : "$") +
@@ -297,6 +298,48 @@ Respond ONLY with raw JSON (no markdown, no preamble):
 Software/SaaS/cloud/contractor items are business expenses, pick the closest business category (software, hosting, salaries, etc.). If the date is missing, use today's date. Amount is the total paid.
 recurrence: "recurring" for subscriptions, SaaS, hosting, rent/mortgage, salaries, retainers, utilities, anything billed on a repeating cycle; "once" for one-off purchases.`;
 }
+
+// Structured outputs: the response is constrained to this shape, so the field
+// set and the category names come back valid instead of merely requested.
+const nullableString = (values) => ({
+  anyOf: [values?.length ? { type: "string", enum: values } : { type: "string" }, { type: "null" }],
+});
+
+function extractionSchema(cats) {
+  const all = [...cats.expense, ...cats.income];
+  const names = all.map((c) => c.name);
+  const subs = [...new Set(all.flatMap((c) => c.subs || []))];
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["type", "amount", "date", "description", "category", "subcategory", "account", "recurrence", "note"],
+    properties: {
+      type: { type: "string", enum: ["expense", "income"] },
+      amount: { type: "number" },
+      date: { type: "string", format: "date" },
+      description: { type: "string" },
+      category: names.length ? { type: "string", enum: names } : { type: "string" },
+      subcategory: nullableString(subs),
+      account: { type: "string", enum: ["business", "personal"] },
+      recurrence: { type: "string", enum: ["recurring", "once"] },
+      note: { type: "string" },
+    },
+  };
+}
+
+const AR_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["party", "description", "amount", "dueDate", "recurrence", "note"],
+  properties: {
+    party: { type: "string" },
+    description: { type: "string" },
+    amount: { type: "number" },
+    dueDate: { type: "string", format: "date" },
+    recurrence: { type: "string", enum: ["recurring", "once"] },
+    note: { type: "string" },
+  },
+};
 
 function arExtractionPrompt(kind) {
   const who =
@@ -585,8 +628,14 @@ function Ledger({ onSignOut }) {
         const list = await db.listLedgers();
         setLedgers(list);
         if (list.length) {
+          // Prefer the ledger that started a Plaid OAuth redirect, else last-used
+          const oauthSession = bank.oauthReturnUri() ? bank.loadLinkSession() : null;
           const last = window.localStorage.getItem("ledger:last");
-          setCurrentLedger(list.find((l) => l.id === last) || list[0]);
+          setCurrentLedger(
+            (oauthSession?.ledger_id && list.find((l) => l.id === oauthSession.ledger_id))
+            || list.find((l) => l.id === last)
+            || list[0]
+          );
         }
         // empty list -> onboarding renders below
       } catch (e) {
@@ -609,7 +658,8 @@ function Ledger({ onSignOut }) {
         Object.assign(P, PALETTES[t]);
         setThemeState(t);
         setMonth(thisMonth());
-        setTab("overview");
+        // OAuth banks bounce back to origin/; BankFeedCard only mounts on Connectors
+        setTab(bank.oauthReturnUri() ? "integrations" : "overview");
         setData(loaded);
       } catch (e) {
         console.error(e);
@@ -620,6 +670,7 @@ function Ledger({ onSignOut }) {
           categories: { expense: [], income: [] },
           transactions: [], receivables: [], payables: [], anchorHistory: [], credits: [],
         });
+        if (bank.oauthReturnUri()) setTab("integrations");
       }
     })();
   }, [currentLedger]);
@@ -1239,25 +1290,6 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // rows arriving from a bank sync skip the AI step entirely
-  useEffect(() => {
-    if (!initialRows) return;
-    const defaults = initialRows.map((t) => ({
-      date: t.date,
-      amount: Math.abs(Number(t.amount)) || 0,
-      direction: t.direction === "credit" ? "credit" : "debit",
-      description: t.description || "·",
-      category: t.direction === "credit"
-        ? (data.categories.income[0]?.name || "Other")
-        : (data.categories.expense[0]?.name || "Other"),
-      subcategory: "",
-      account: data.ledger.kind === "personal" ? "personal" : "business",
-      recurrence: "once",
-    })).filter((t) => t.amount > 0 && t.date);
-    setRows(markDuplicates(defaults));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const parsed = parseFloat(amount);
   const valid = !Number.isNaN(parsed) && date;
   const drift = valid && currentValue != null ? parsed - currentValue : null;
@@ -1348,6 +1380,26 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
       return { ...r, dup, checked: !dup };
     });
   };
+
+  // rows arriving from a bank sync skip the AI step entirely
+  useEffect(() => {
+    if (!initialRows) return;
+    const defaults = initialRows.map((t) => ({
+      date: t.date,
+      amount: Math.abs(Number(t.amount)) || 0,
+      direction: t.direction === "credit" ? "credit" : "debit",
+      description: t.description || "·",
+      category: t.direction === "credit"
+        ? (data.categories.income[0]?.name || "Other")
+        : (data.categories.expense[0]?.name || "Other"),
+      subcategory: "",
+      account: data.ledger.kind === "personal" ? "personal" : "business",
+      recurrence: "once",
+    })).filter((t) => t.amount > 0 && t.date);
+    setRows(markDuplicates(defaults));
+    setStep("review");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const runParse = async (content) => {
     setBusy(true);
@@ -1443,7 +1495,7 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
-          <h3 style={{ fontFamily: SERIF }} className="text-lg">Import a statement</h3>
+          <h3 style={{ fontFamily: SERIF }} className="text-lg">{sourceLabel === "bank sync" ? "Review bank sync" : "Import a statement"}</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
 
@@ -1868,10 +1920,14 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
       const block = isPdf
         ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
         : { type: "image", source: { type: "base64", media_type: att.type, data: b64 } };
-      const draft = await askClaude([block, { type: "text", text: extractionPrompt(data.categories, data.ledger.name) }]);
+      const raw = await askClaude(
+        [block, { type: "text", text: extractionPrompt(data.categories, data.ledger.name) }],
+        { maxTokens: 2048, schema: extractionSchema(data.categories) }
+      );
+      const draft = normalizeDraft(raw, { categories: data.categories, ledgerKind: data.ledger.kind });
       push({ role: "assistant", text: draft.note || "Here's what I read, confirm or adjust:", draft, att });
-    } catch {
-      push({ role: "assistant", text: "I couldn't read that one. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”)." });
+    } catch (e) {
+      push({ role: "assistant", text: `I couldn't read that one — ${friendlyError(e)}. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”).` });
     }
     setBusy(false);
   };
@@ -1882,11 +1938,23 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
     setInput("");
     push({ role: "user", text });
     setBusy(true);
+    // Parsed on-device first. It costs nothing, and it's the draft we fall back
+    // to when the reader is unreachable — a typed line with an amount in it
+    // should never come back empty-handed.
+    const local = parseEntryText(text, { categories: data.categories, ledgerKind: data.ledger.kind });
     try {
-      const draft = await askClaude([{ type: "text", text: `${extractionPrompt(data.categories, data.ledger.name)}\n\nUser message: "${text}"` }]);
+      const raw = await askClaude(
+        [{ type: "text", text: `${extractionPrompt(data.categories, data.ledger.name)}\n\nUser message: "${text}"` }],
+        { schema: extractionSchema(data.categories) }
+      );
+      const draft = normalizeDraft(raw, { categories: data.categories, ledgerKind: data.ledger.kind, fallback: local });
       push({ role: "assistant", text: draft.note || "Got it, confirm or adjust:", draft });
-    } catch {
-      push({ role: "assistant", text: "I couldn't parse that. Try including an amount, e.g. “paid Canva $40 yesterday”." });
+    } catch (e) {
+      if (local) {
+        push({ role: "assistant", text: `${friendlyError(e)}, so I filled this in from your message — check the category before saving.`, draft: local });
+      } else {
+        push({ role: "assistant", text: "I couldn't find an amount in that. Try including one, e.g. “paid Canva $40 yesterday”." });
+      }
     }
     setBusy(false);
   };
@@ -2592,20 +2660,21 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
       const block = isPdf
         ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
         : { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: b64 } };
-      const d = await askClaude([block, { type: "text", text: arExtractionPrompt(kind) }]);
+      const d = await askClaude([block, { type: "text", text: arExtractionPrompt(kind) }], { maxTokens: 2048, schema: AR_SCHEMA });
+      const amount = coerceAmount(d.amount);
       setForm({
         ...blank,
-        party: d.party || "",
-        description: d.description || "",
-        amount: d.amount != null ? String(d.amount) : "",
-        dueDate: d.dueDate || todayStr(),
+        party: String(d.party || "").trim(),
+        description: String(d.description || "").trim(),
+        amount: amount ? String(amount) : "",
+        dueDate: coerceDate(d.dueDate) || todayStr(),
         recurrence: d.recurrence === "recurring" ? "recurring" : "once",
       });
       setAtt({ name: file.name || "invoice.pdf", type: isPdf ? "application/pdf" : (file.type || "image/png"), data: b64, file });
       if (d.note) setReadErr(d.note);
       setAdding(true);
-    } catch {
-      setReadErr("Couldn't read that invoice, check the fields yourself or try a clearer file.");
+    } catch (e) {
+      setReadErr(`Couldn't read that invoice — ${friendlyError(e)}. Fill the fields in yourself, or try a clearer file.`);
       setAdding(true);
     }
     setReading(false);
@@ -3492,6 +3561,21 @@ function fiscalWindow(fye, endYear) {
   s.setDate(s.getDate() + 1);
   return [s.toISOString().slice(0, 10), end];
 }
+
+/** FY end years that contain at least one transaction, given ledger FYE (MM-DD). */
+function fyEndYearsFromTxs(txs, fye) {
+  const years = new Set();
+  for (const t of txs) {
+    const date = t.date || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const y = Number(date.slice(0, 4));
+    const mmdd = date.slice(5);
+    // After the FYE calendar day, the tx belongs to the next FY end year
+    years.add(mmdd <= fye ? y : y + 1);
+  }
+  return [...years].sort((a, b) => b - a);
+}
+
 const addMonths = (dateStr, m) => {
   const d = new Date(dateStr + "T00:00:00");
   d.setMonth(d.getMonth() + m);
@@ -3501,7 +3585,8 @@ const addMonths = (dateStr, m) => {
 function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
-  const yearsAvail = [...new Set(bizTx.map((t) => Number((t.date || "").slice(0, 4))).filter(Boolean))].sort((a, b) => b - a);
+  const fye = data.ledger.fye || "12-31";
+  const yearsAvail = fyEndYearsFromTxs(bizTx, fye);
   const [fy, setFy] = useState(yearsAvail[0] || new Date().getFullYear());
   const [draft, setDraft] = useState(false);
   const [path, setPath] = useState("B");
@@ -3510,7 +3595,11 @@ function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
   const [accNote, setAccNote] = useState(`Hi, below is our GIFI-coded T2 draft for ${data.ledger.name}. Balance sheet items still to come from your side. Can you review and let me know what else you need?`);
   const [emailCopied, setEmailCopied] = useState(false);
 
-  const fye = data.ledger.fye || "12-31";
+  // Keep selected FY valid when FYE or txs change
+  useEffect(() => {
+    if (yearsAvail.length && !yearsAvail.includes(fy)) setFy(yearsAvail[0]);
+  }, [fye, yearsAvail.join(","), fy]);
+
   const [fyStart, fyEnd] = fiscalWindow(fye, fy);
   const fyTx = bizTx.filter((t) => t.date >= fyStart && t.date <= fyEnd && !t.plExclude);
   const revenue = fyTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -3831,6 +3920,27 @@ function BankFeedCard({ data, openBankReview }) {
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
   const [showSetup, setShowSetup] = useState(false);
+  const oauthHandled = useRef(false);
+
+  const finishConnect = async (public_token, metadata, ledgerId) => {
+    await bank.plaid("exchange", {
+      public_token,
+      ledger_id: ledgerId,
+      institution: metadata?.institution?.name || "Bank",
+    });
+    setConns(await bank.listConnections(data.ledger.id));
+    setNotice("Bank connected. Tap Sync now to pull transactions into review.");
+  };
+
+  const handleLinkExit = (exitErr) => {
+    if (!exitErr) return;
+    const msg = exitErr.display_message || exitErr.error_message || exitErr.error_code || String(exitErr);
+    // Ignore user-initiated closes; surface real Link / institution failures
+    if (/INSTITUTION_NOT_RESPONDING|INVALID_CREDENTIALS|USER_SETUP_REQUIRED|ITEM_LOCKED|PENDING_EXPIRATION/i.test(msg)
+      || exitErr.error_type || exitErr.error_code) {
+      setErr(msg);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -3839,27 +3949,54 @@ function BankFeedCard({ data, openBankReview }) {
     })();
   }, [data.ledger.id]);
 
+  // Resume Plaid Link after a bank OAuth redirect (?oauth_state_id=…)
+  useEffect(() => {
+    if (oauthHandled.current) return;
+    const receivedRedirectUri = bank.oauthReturnUri();
+    if (!receivedRedirectUri) return;
+    const session = bank.loadLinkSession();
+    if (!session) {
+      bank.stripOauthParams();
+      setErr("Bank sign-in expired. Tap Connect a bank and try again.");
+      return;
+    }
+    oauthHandled.current = true;
+    setBusy(true);
+    setErr("");
+    (async () => {
+      try {
+        await bank.openPlaidLink({
+          link_token: session.link_token,
+          receivedRedirectUri,
+          onSuccess: async (public_token, metadata) => {
+            try { await finishConnect(public_token, metadata, session.ledger_id); }
+            catch (e) { setErr(String(e.message || e)); }
+          },
+          onExit: handleLinkExit,
+        });
+      } catch (e) {
+        setErr(String(e.message || e));
+        bank.clearLinkSession();
+        bank.stripOauthParams();
+      }
+      setBusy(false);
+    })();
+  }, [data.ledger.id]);
+
   const connect = async () => {
     setErr(""); setNotice(""); setBusy(true);
     try {
-      const { link_token } = await bank.plaid("create_link_token");
-      const Plaid = await bank.loadPlaidLink();
-      const handler = Plaid.create({
-        token: link_token,
+      const redirect_uri = bank.plaidRedirectUri();
+      const { link_token } = await bank.plaid("create_link_token", { redirect_uri });
+      bank.saveLinkSession({ link_token, ledger_id: data.ledger.id });
+      await bank.openPlaidLink({
+        link_token,
         onSuccess: async (public_token, metadata) => {
-          try {
-            await bank.plaid("exchange", {
-              public_token,
-              ledger_id: data.ledger.id,
-              institution: metadata?.institution?.name || "Bank",
-            });
-            setConns(await bank.listConnections(data.ledger.id));
-            setNotice("Bank connected. Tap Sync now to pull transactions into review.");
-          } catch (e) { setErr(String(e.message || e)); }
+          try { await finishConnect(public_token, metadata, data.ledger.id); }
+          catch (e) { setErr(String(e.message || e)); }
         },
-        onExit: () => {},
+        onExit: handleLinkExit,
       });
-      handler.open();
     } catch (e) {
       const msg = String(e.message || e);
       setErr(/configured|PLAID|client_id|secret/i.test(msg)
@@ -3938,7 +4075,8 @@ function BankFeedCard({ data, openBankReview }) {
             ["1", "Run supabase/migration-bank-connections.sql in the SQL Editor"],
             ["2", "Edge Functions: add secrets PLAID_CLIENT_ID, PLAID_SECRET, and PLAID_ENV (sandbox to test, production when approved)"],
             ["3", "Deploy the function: Edge Functions, New function, name it exactly \"plaid\", paste supabase/functions/plaid/index.ts, Deploy"],
-            ["4", "Reload this page and tap Connect a bank"],
+            ["4", `In the Plaid Dashboard → Team Settings → API, add Allowed redirect URI: ${typeof window !== "undefined" ? window.location.origin + "/" : "https://your-site/"}`],
+            ["5", "Reload this page and tap Connect a bank. Console warnings about WebGPU/WASM from Plaid's own scripts are harmless — ignore them."],
           ].map(([n, t]) => (
             <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
               <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>
