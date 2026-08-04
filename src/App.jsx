@@ -628,8 +628,14 @@ function Ledger({ onSignOut }) {
         const list = await db.listLedgers();
         setLedgers(list);
         if (list.length) {
+          // Prefer the ledger that started a Plaid OAuth redirect, else last-used
+          const oauthSession = bank.oauthReturnUri() ? bank.loadLinkSession() : null;
           const last = window.localStorage.getItem("ledger:last");
-          setCurrentLedger(list.find((l) => l.id === last) || list[0]);
+          setCurrentLedger(
+            (oauthSession?.ledger_id && list.find((l) => l.id === oauthSession.ledger_id))
+            || list.find((l) => l.id === last)
+            || list[0]
+          );
         }
         // empty list -> onboarding renders below
       } catch (e) {
@@ -652,7 +658,8 @@ function Ledger({ onSignOut }) {
         Object.assign(P, PALETTES[t]);
         setThemeState(t);
         setMonth(thisMonth());
-        setTab("overview");
+        // OAuth banks bounce back to origin/; BankFeedCard only mounts on Connectors
+        setTab(bank.oauthReturnUri() ? "integrations" : "overview");
         setData(loaded);
       } catch (e) {
         console.error(e);
@@ -663,6 +670,7 @@ function Ledger({ onSignOut }) {
           categories: { expense: [], income: [] },
           transactions: [], receivables: [], payables: [], anchorHistory: [], credits: [],
         });
+        if (bank.oauthReturnUri()) setTab("integrations");
       }
     })();
   }, [currentLedger]);
