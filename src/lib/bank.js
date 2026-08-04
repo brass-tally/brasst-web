@@ -3,6 +3,8 @@
 
 import { supabase } from "./supabase";
 
+const LINK_SESSION_KEY = "plaid:link_session";
+
 export async function plaid(action, body = {}) {
   const { data, error } = await supabase.functions.invoke("plaid", { body: { action, ...body } });
   if (error) {
@@ -36,10 +38,91 @@ export function loadPlaidLink() {
     linkPromise = new Promise((resolve, reject) => {
       const s = document.createElement("script");
       s.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
-      s.onload = () => resolve(window.Plaid);
+      s.async = true;
+      s.onload = () => {
+        if (window.Plaid) resolve(window.Plaid);
+        else reject(new Error("Couldn't load Plaid Link"));
+      };
       s.onerror = () => reject(new Error("Couldn't load Plaid Link"));
       document.head.appendChild(s);
     });
   }
   return linkPromise;
+}
+
+/** Exact origin path Plaid must have allowlisted (no query/hash). */
+export function plaidRedirectUri() {
+  return `${window.location.origin}/`;
+}
+
+export function saveLinkSession({ link_token, ledger_id }) {
+  try {
+    sessionStorage.setItem(LINK_SESSION_KEY, JSON.stringify({ link_token, ledger_id, at: Date.now() }));
+  } catch { /* private mode */ }
+}
+
+export function loadLinkSession() {
+  try {
+    const raw = sessionStorage.getItem(LINK_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.link_token || !parsed?.ledger_id) return null;
+    // link tokens expire ~4h; drop stale sessions
+    if (parsed.at && Date.now() - parsed.at > 3.5 * 60 * 60 * 1000) {
+      clearLinkSession();
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearLinkSession() {
+  try { sessionStorage.removeItem(LINK_SESSION_KEY); } catch { /* ignore */ }
+}
+
+/** True when returning from a bank OAuth page with ?oauth_state_id=… */
+export function oauthReturnUri() {
+  const q = new URLSearchParams(window.location.search);
+  if (!q.has("oauth_state_id")) return null;
+  return window.location.href;
+}
+
+export function stripOauthParams() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("oauth_state_id")) return;
+  url.searchParams.delete("oauth_state_id");
+  const clean = url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : "") + url.hash;
+  window.history.replaceState({}, "", clean);
+}
+
+/**
+ * Open (or resume) Plaid Link. Callers supply success/error handlers.
+ * `receivedRedirectUri` is only set when finishing an OAuth return.
+ */
+export async function openPlaidLink({
+  link_token,
+  receivedRedirectUri,
+  onSuccess,
+  onExit,
+}) {
+  const Plaid = await loadPlaidLink();
+  const handler = Plaid.create({
+    token: link_token,
+    ...(receivedRedirectUri ? { receivedRedirectUri } : {}),
+    onSuccess: async (public_token, metadata) => {
+      clearLinkSession();
+      stripOauthParams();
+      await onSuccess?.(public_token, metadata);
+    },
+    onExit: (err, metadata) => {
+      stripOauthParams();
+      // Keep session if user just closed — they may retry OAuth on mobile
+      if (err) clearLinkSession();
+      onExit?.(err, metadata);
+    },
+  });
+  handler.open();
+  return handler;
 }

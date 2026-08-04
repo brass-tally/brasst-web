@@ -3912,6 +3912,27 @@ function BankFeedCard({ data, openBankReview }) {
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
   const [showSetup, setShowSetup] = useState(false);
+  const oauthHandled = useRef(false);
+
+  const finishConnect = async (public_token, metadata, ledgerId) => {
+    await bank.plaid("exchange", {
+      public_token,
+      ledger_id: ledgerId,
+      institution: metadata?.institution?.name || "Bank",
+    });
+    setConns(await bank.listConnections(data.ledger.id));
+    setNotice("Bank connected. Tap Sync now to pull transactions into review.");
+  };
+
+  const handleLinkExit = (exitErr) => {
+    if (!exitErr) return;
+    const msg = exitErr.display_message || exitErr.error_message || exitErr.error_code || String(exitErr);
+    // Ignore user-initiated closes; surface real Link / institution failures
+    if (/INSTITUTION_NOT_RESPONDING|INVALID_CREDENTIALS|USER_SETUP_REQUIRED|ITEM_LOCKED|PENDING_EXPIRATION/i.test(msg)
+      || exitErr.error_type || exitErr.error_code) {
+      setErr(msg);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -3920,27 +3941,54 @@ function BankFeedCard({ data, openBankReview }) {
     })();
   }, [data.ledger.id]);
 
+  // Resume Plaid Link after a bank OAuth redirect (?oauth_state_id=…)
+  useEffect(() => {
+    if (oauthHandled.current) return;
+    const receivedRedirectUri = bank.oauthReturnUri();
+    if (!receivedRedirectUri) return;
+    const session = bank.loadLinkSession();
+    if (!session) {
+      bank.stripOauthParams();
+      setErr("Bank sign-in expired. Tap Connect a bank and try again.");
+      return;
+    }
+    oauthHandled.current = true;
+    setBusy(true);
+    setErr("");
+    (async () => {
+      try {
+        await bank.openPlaidLink({
+          link_token: session.link_token,
+          receivedRedirectUri,
+          onSuccess: async (public_token, metadata) => {
+            try { await finishConnect(public_token, metadata, session.ledger_id); }
+            catch (e) { setErr(String(e.message || e)); }
+          },
+          onExit: handleLinkExit,
+        });
+      } catch (e) {
+        setErr(String(e.message || e));
+        bank.clearLinkSession();
+        bank.stripOauthParams();
+      }
+      setBusy(false);
+    })();
+  }, [data.ledger.id]);
+
   const connect = async () => {
     setErr(""); setNotice(""); setBusy(true);
     try {
-      const { link_token } = await bank.plaid("create_link_token");
-      const Plaid = await bank.loadPlaidLink();
-      const handler = Plaid.create({
-        token: link_token,
+      const redirect_uri = bank.plaidRedirectUri();
+      const { link_token } = await bank.plaid("create_link_token", { redirect_uri });
+      bank.saveLinkSession({ link_token, ledger_id: data.ledger.id });
+      await bank.openPlaidLink({
+        link_token,
         onSuccess: async (public_token, metadata) => {
-          try {
-            await bank.plaid("exchange", {
-              public_token,
-              ledger_id: data.ledger.id,
-              institution: metadata?.institution?.name || "Bank",
-            });
-            setConns(await bank.listConnections(data.ledger.id));
-            setNotice("Bank connected. Tap Sync now to pull transactions into review.");
-          } catch (e) { setErr(String(e.message || e)); }
+          try { await finishConnect(public_token, metadata, data.ledger.id); }
+          catch (e) { setErr(String(e.message || e)); }
         },
-        onExit: () => {},
+        onExit: handleLinkExit,
       });
-      handler.open();
     } catch (e) {
       const msg = String(e.message || e);
       setErr(/configured|PLAID|client_id|secret/i.test(msg)
@@ -4019,7 +4067,8 @@ function BankFeedCard({ data, openBankReview }) {
             ["1", "Run supabase/migration-bank-connections.sql in the SQL Editor"],
             ["2", "Edge Functions: add secrets PLAID_CLIENT_ID, PLAID_SECRET, and PLAID_ENV (sandbox to test, production when approved)"],
             ["3", "Deploy the function: Edge Functions, New function, name it exactly \"plaid\", paste supabase/functions/plaid/index.ts, Deploy"],
-            ["4", "Reload this page and tap Connect a bank"],
+            ["4", `In the Plaid Dashboard → Team Settings → API, add Allowed redirect URI: ${typeof window !== "undefined" ? window.location.origin + "/" : "https://your-site/"}`],
+            ["5", "Reload this page and tap Connect a bank. Console warnings about WebGPU/WASM from Plaid's own scripts are harmless — ignore them."],
           ].map(([n, t]) => (
             <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
               <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>

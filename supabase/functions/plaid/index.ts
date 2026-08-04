@@ -38,14 +38,30 @@ Deno.serve(async (req) => {
     };
 
     if (action === "create_link_token") {
-      const d = await plaid("/link/token/create", {
+      // redirect_uri enables OAuth banks (US) and mobile-webview resumes.
+      // Must exactly match an Allowed redirect URI in the Plaid Dashboard.
+      const payload: Record<string, unknown> = {
         user: { client_user_id: user.id },
         client_name: "Brasstally",
         products: ["transactions"],
         country_codes: ["CA", "US"],
         language: "en",
-      });
-      return json({ link_token: d.link_token });
+      };
+      if (typeof body.redirect_uri === "string" && body.redirect_uri) {
+        payload.redirect_uri = body.redirect_uri;
+      }
+      try {
+        const d = await plaid("/link/token/create", payload);
+        return json({ link_token: d.link_token, oauth: Boolean(payload.redirect_uri) });
+      } catch (e) {
+        // Not allowlisted yet — still open Link without OAuth redirect support
+        if (payload.redirect_uri && /redirect/i.test(String((e as Error).message || e))) {
+          delete payload.redirect_uri;
+          const d = await plaid("/link/token/create", payload);
+          return json({ link_token: d.link_token, oauth: false });
+        }
+        throw e;
+      }
     }
 
     if (action === "exchange") {
