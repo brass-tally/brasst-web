@@ -106,17 +106,25 @@ export async function openPlaidLink({
   receivedRedirectUri,
   onSuccess,
   onExit,
+  onEvent,
 }) {
   const Plaid = await loadPlaidLink();
   const handler = Plaid.create({
     token: link_token,
     ...(receivedRedirectUri ? { receivedRedirectUri } : {}),
+    onEvent: (eventName, metadata) => {
+      // link_session_id is needed for Plaid support when Link fails (e.g. institution errors)
+      console.log("[Plaid Link onEvent]", eventName, metadata);
+      onEvent?.(eventName, metadata);
+    },
     onSuccess: async (public_token, metadata) => {
+      console.log("[Plaid Link onSuccess]", metadata);
       clearLinkSession();
       stripOauthParams();
       await onSuccess?.(public_token, metadata);
     },
     onExit: (err, metadata) => {
+      console.log("[Plaid Link onExit]", err, metadata);
       stripOauthParams();
       // Keep session if user just closed — they may retry OAuth on mobile
       if (err) clearLinkSession();

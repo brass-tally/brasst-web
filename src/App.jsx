@@ -3932,13 +3932,14 @@ function BankFeedCard({ data, openBankReview }) {
     setNotice("Bank connected. Tap Sync now to pull transactions into review.");
   };
 
-  const handleLinkExit = (exitErr) => {
+  const handleLinkExit = (exitErr, metadata) => {
     if (!exitErr) return;
     const msg = exitErr.display_message || exitErr.error_message || exitErr.error_code || String(exitErr);
     // Ignore user-initiated closes; surface real Link / institution failures
     if (/INSTITUTION_NOT_RESPONDING|INVALID_CREDENTIALS|USER_SETUP_REQUIRED|ITEM_LOCKED|PENDING_EXPIRATION/i.test(msg)
       || exitErr.error_type || exitErr.error_code) {
-      setErr(msg);
+      const sessionId = metadata?.link_session_id;
+      setErr(sessionId ? `${msg} (link_session_id: ${sessionId})` : msg);
     }
   };
 
