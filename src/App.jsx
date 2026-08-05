@@ -3920,6 +3920,7 @@ function BankFeedCard({ data, openBankReview }) {
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
   const [showSetup, setShowSetup] = useState(false);
+  const [resumable, setResumable] = useState(false);
   const oauthHandled = useRef(false);
 
   const finishConnect = async (public_token, metadata, ledgerId) => {
@@ -3928,11 +3929,13 @@ function BankFeedCard({ data, openBankReview }) {
       ledger_id: ledgerId,
       institution: metadata?.institution?.name || "Bank",
     });
+    setResumable(false);
     setConns(await bank.listConnections(data.ledger.id));
     setNotice("Bank connected. Tap Sync now to pull transactions into review.");
   };
 
   const handleLinkExit = (exitErr, metadata) => {
+    setResumable(Boolean(bank.loadLinkSession()));
     if (!exitErr) return;
     const msg = exitErr.display_message || exitErr.error_message || exitErr.error_code || String(exitErr);
     // Ignore user-initiated closes; surface real Link / institution failures
@@ -3954,11 +3957,16 @@ function BankFeedCard({ data, openBankReview }) {
   useEffect(() => {
     if (oauthHandled.current) return;
     const receivedRedirectUri = bank.oauthReturnUri();
-    if (!receivedRedirectUri) return;
+    if (!receivedRedirectUri) {
+      // Bank-app approvals can reload the page out from under Link; the saved
+      // token still resumes that sign-in.
+      setResumable(Boolean(bank.loadLinkSession()));
+      return;
+    }
     const session = bank.loadLinkSession();
     if (!session) {
       bank.stripOauthParams();
-      setErr("Bank sign-in expired. Tap Connect a bank and try again.");
+      setErr("Your bank sent you back to a new window, so the sign-in couldn't be picked up. Tap Connect a bank and try again in this window.");
       return;
     }
     oauthHandled.current = true;
@@ -3988,8 +3996,15 @@ function BankFeedCard({ data, openBankReview }) {
     setErr(""); setNotice(""); setBusy(true);
     try {
       const redirect_uri = bank.plaidRedirectUri();
-      const { link_token } = await bank.plaid("create_link_token", { redirect_uri });
+      const { link_token, oauth } = await bank.plaid("create_link_token", { redirect_uri });
       bank.saveLinkSession({ link_token, ledger_id: data.ledger.id });
+      setResumable(true);
+      if (oauth === false) {
+        // Without an allowlisted redirect URI, Link can open but any bank that
+        // authenticates in its own app or site dead-ends on the way back.
+        setErr(`Banks that make you approve in their own app (RBC, TD, Scotiabank) can't finish yet: add ${redirect_uri} as an Allowed redirect URI in the Plaid Dashboard.`);
+        setShowSetup(true);
+      }
       await bank.openPlaidLink({
         link_token,
         onSuccess: async (public_token, metadata) => {
@@ -4004,6 +4019,27 @@ function BankFeedCard({ data, openBankReview }) {
         ? "Plaid isn't set up on the server yet. Open the setup steps below."
         : msg);
       setShowSetup(true);
+    }
+    setBusy(false);
+  };
+
+  const resume = async () => {
+    const session = bank.loadLinkSession();
+    if (!session) { setResumable(false); return; }
+    setErr(""); setNotice(""); setBusy(true);
+    try {
+      await bank.openPlaidLink({
+        link_token: session.link_token,
+        onSuccess: async (public_token, metadata) => {
+          try { await finishConnect(public_token, metadata, session.ledger_id); }
+          catch (e) { setErr(String(e.message || e)); }
+        },
+        onExit: handleLinkExit,
+      });
+    } catch (e) {
+      setErr(String(e.message || e));
+      bank.clearLinkSession();
+      setResumable(false);
     }
     setBusy(false);
   };
@@ -4062,6 +4098,11 @@ function BankFeedCard({ data, openBankReview }) {
         <Btn onClick={connect} disabled={busy}>
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Connect a bank
         </Btn>
+        {resumable && (
+          <Btn tone="ghost" onClick={resume} disabled={busy}>
+            <RotateCcw size={13} /> Resume bank sign-in
+          </Btn>
+        )}
         <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">no signup needed · you sign in with your own bank · Brasstally never sees the password</span>
       </div>
       {notice && <p style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-2">{notice}</p>}

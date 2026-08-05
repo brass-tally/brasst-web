@@ -55,31 +55,46 @@ export function plaidRedirectUri() {
   return `${window.location.origin}/`;
 }
 
-export function saveLinkSession({ link_token, ledger_id }) {
-  try {
-    sessionStorage.setItem(LINK_SESSION_KEY, JSON.stringify({ link_token, ledger_id, at: Date.now() }));
-  } catch { /* private mode */ }
+// Banks that authenticate in their own app send the user back through a fresh
+// tab, which has an empty sessionStorage. The link token has to outlive the tab
+// that opened it, so localStorage is the source of truth and sessionStorage is
+// only a fallback for browsers that block it.
+function linkStores() {
+  const out = [];
+  try { if (window.localStorage) out.push(window.localStorage); } catch { /* blocked */ }
+  try { if (window.sessionStorage) out.push(window.sessionStorage); } catch { /* blocked */ }
+  return out;
 }
 
-export function loadLinkSession() {
-  try {
-    const raw = sessionStorage.getItem(LINK_SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.link_token || !parsed?.ledger_id) return null;
-    // link tokens expire ~4h; drop stale sessions
-    if (parsed.at && Date.now() - parsed.at > 3.5 * 60 * 60 * 1000) {
-      clearLinkSession();
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
+export function saveLinkSession({ link_token, ledger_id }) {
+  const value = JSON.stringify({ link_token, ledger_id, at: Date.now() });
+  for (const store of linkStores()) {
+    try { store.setItem(LINK_SESSION_KEY, value); } catch { /* private mode */ }
   }
 }
 
+export function loadLinkSession() {
+  for (const store of linkStores()) {
+    try {
+      const raw = store.getItem(LINK_SESSION_KEY);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.link_token || !parsed?.ledger_id) continue;
+      // link tokens expire ~4h; drop stale sessions
+      if (parsed.at && Date.now() - parsed.at > 3.5 * 60 * 60 * 1000) {
+        clearLinkSession();
+        return null;
+      }
+      return parsed;
+    } catch { /* try the next store */ }
+  }
+  return null;
+}
+
 export function clearLinkSession() {
-  try { sessionStorage.removeItem(LINK_SESSION_KEY); } catch { /* ignore */ }
+  for (const store of linkStores()) {
+    try { store.removeItem(LINK_SESSION_KEY); } catch { /* ignore */ }
+  }
 }
 
 /** True when returning from a bank OAuth page with ?oauth_state_id=… */
@@ -126,8 +141,9 @@ export async function openPlaidLink({
     onExit: (err, metadata) => {
       console.log("[Plaid Link onExit]", err, metadata);
       stripOauthParams();
-      // Keep session if user just closed — they may retry OAuth on mobile
-      if (err) clearLinkSession();
+      // Only drop the token when it can't be reused. Bank-app approvals often
+      // exit mid-flow, and the same token resumes that session.
+      if (err && /INVALID_LINK_TOKEN|TOKEN_EXPIRED|ITEM_LOCKED/i.test(err.error_code || "")) clearLinkSession();
       onExit?.(err, metadata);
     },
   });

@@ -54,11 +54,14 @@ Deno.serve(async (req) => {
         const d = await plaid("/link/token/create", payload);
         return json({ link_token: d.link_token, oauth: Boolean(payload.redirect_uri) });
       } catch (e) {
-        // Not allowlisted yet — still open Link without OAuth redirect support
+        // Not allowlisted yet — still open Link without OAuth redirect support.
+        // Banks that authenticate in their own app can't finish in this mode,
+        // so pass the reason back for the UI to surface.
         if (payload.redirect_uri && /redirect/i.test(String((e as Error).message || e))) {
+          const oauth_error = String((e as Error).message || e);
           delete payload.redirect_uri;
           const d = await plaid("/link/token/create", payload);
-          return json({ link_token: d.link_token, oauth: false });
+          return json({ link_token: d.link_token, oauth: false, oauth_error });
         }
         throw e;
       }
