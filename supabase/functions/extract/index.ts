@@ -1,7 +1,15 @@
 // Supabase Edge Function: extract
-// Proxies receipt/invoice extraction to the Anthropic API so the key
-// never ships to the browser. Deployed with verify_jwt on (the default),
-// so only signed-in users of your app can call it.
+// Proxies Anthropic API calls so the key never ships to the browser. Deployed
+// with verify_jwt on (the default), so only signed-in users of your app can
+// call it.
+//
+// Two shapes, one function (one deploy):
+//   1. extraction — { content, max_tokens, schema }        -> { text }
+//      A single reading turn. Used for receipts, invoices, statements.
+//   2. agent      — { messages, system, tools, max_tokens } -> { content, stop_reason }
+//      One turn of a tool-using conversation. The loop itself runs in the
+//      browser, where the ledger already lives, so tools never need a server
+//      round trip and the raw ledger never has to leave the client wholesale.
 //
 // Deploy:   supabase functions deploy extract
 // Secret:   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
@@ -12,8 +20,10 @@ const cors = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-// Receipt/entry extraction is a reading task — Haiku is fast and cheap enough.
-const MODEL = "claude-haiku-4-5";
+// Reading a receipt is a transcription task — Haiku is fast and cheap enough.
+// Reasoning over a whole ledger is not, so the agent turn gets a bigger model.
+const EXTRACT_MODEL = "claude-haiku-4-5";
+const AGENT_MODEL = "claude-sonnet-5";
 const ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ATTEMPTS = 3;
 
@@ -25,45 +35,19 @@ const json = (body: unknown, status = 200) =>
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: cors });
-  }
+type Failure = { error: string; code: string; status: number };
 
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) {
-    return json({ error: "ANTHROPIC_API_KEY is not set on the extract function", code: "no_key" }, 500);
-  }
-
-  let body: { content?: unknown; max_tokens?: unknown; schema?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: "request body must be JSON", code: "bad_request" }, 400);
-  }
-
-  const { content, max_tokens, schema } = body ?? {};
-  if (!Array.isArray(content) || content.length === 0) {
-    return json({ error: "content must be a non-empty array of blocks", code: "bad_request" }, 400);
-  }
-
-  // Keep a modest floor so a tight caller cap can't truncate JSON mid-object.
-  const maxTokens = Math.min(Math.max(Number(max_tokens) || 1024, 1024), 8192);
-
-  // Structured outputs: when the caller hands us a schema, the response is
-  // guaranteed to match it instead of merely asked to.
-  let useSchema = !!schema;
-
-  const payload = () => ({
-    model: MODEL,
-    max_tokens: maxTokens,
-    ...(useSchema
-      ? { output_config: { format: { type: "json_schema", schema } } }
-      : {}),
-    messages: [{ role: "user", content }],
-  });
-
-  let last = { error: "the Anthropic API did not respond", code: "upstream", status: 502 };
+/**
+ * Posts to Anthropic with retries, and hands back either the parsed body or a
+ * described failure. `onBadRequest` lets a caller salvage a 400 by mutating its
+ * own payload (we use it to drop structured outputs) — return true to retry.
+ */
+async function callAnthropic(
+  apiKey: string,
+  payload: () => unknown,
+  onBadRequest?: (message: string) => boolean,
+): Promise<{ data: Record<string, unknown> } | { failure: Failure }> {
+  let last: Failure = { error: "the Anthropic API did not respond", code: "upstream", status: 502 };
 
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     let r: Response;
@@ -85,55 +69,156 @@ Deno.serve(async (req) => {
 
     const data = await r.json().catch(() => null);
 
-    if (!r.ok) {
-      const message = data?.error?.message ?? `Anthropic API error ${r.status}`;
+    if (r.ok) return { data: data ?? {} };
 
-      // If this deployment's model doesn't accept the structured-output shape,
-      // drop it and let the prompt carry the format instead of failing outright.
-      if (r.status === 400 && useSchema && /output_config|json_schema|schema|format/i.test(message)) {
-        console.error("structured outputs rejected, retrying without a schema:", message);
-        useSchema = false;
-        continue;
-      }
+    const message = data?.error?.message ?? `Anthropic API error ${r.status}`;
 
-      const retryable = r.status === 429 || r.status >= 500;
-      last = {
-        error: message,
-        code: r.status === 401 || r.status === 403 ? "auth" : r.status === 429 ? "rate_limit" : "upstream",
-        status: retryable ? 503 : 502,
-      };
-      if (!retryable) break;
-      const after = Number(r.headers.get("retry-after"));
-      if (attempt < ATTEMPTS) await sleep(after > 0 ? Math.min(after * 1000, 4000) : 500 * attempt);
+    if (r.status === 400 && onBadRequest?.(message)) {
+      console.error("retrying after a 400:", message);
       continue;
     }
 
-    // Safety classifiers can decline with a 200 — content is empty or partial.
-    if (data?.stop_reason === "refusal") {
-      return json({ error: "the model declined to read that content", code: "refusal" }, 422);
-    }
-
-    const text = (data?.content ?? [])
-      .filter((b: { type: string }) => b.type === "text")
-      .map((b: { text: string }) => b.text)
-      .join("\n")
-      .trim();
-
-    if (!text) {
-      last = {
-        error: data?.stop_reason === "max_tokens"
-          ? "the reply was cut off before any JSON was produced"
-          : "the model returned no text",
-        code: "empty",
-        status: 502,
-      };
-      if (attempt < ATTEMPTS) continue;
-      break;
-    }
-
-    return json({ text });
+    const retryable = r.status === 429 || r.status >= 500;
+    last = {
+      error: message,
+      code: r.status === 401 || r.status === 403 ? "auth" : r.status === 429 ? "rate_limit" : "upstream",
+      status: retryable ? 503 : 502,
+    };
+    if (!retryable) break;
+    const after = Number(r.headers.get("retry-after"));
+    if (attempt < ATTEMPTS) await sleep(after > 0 ? Math.min(after * 1000, 4000) : 500 * attempt);
   }
 
-  console.error("extract failed:", last);
-  return json({ error: last.error, code: last.code }, last.status);
+  return { failure: last };
+}
+
+/* ---------------- agent turn: tools in, content blocks out ---------------- */
+
+async function agentTurn(
+  apiKey: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const { messages, system, tools, max_tokens } = body;
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return json({ error: "messages must be a non-empty array", code: "bad_request" }, 400);
+  }
+  if (tools !== undefined && !Array.isArray(tools)) {
+    return json({ error: "tools must be an array", code: "bad_request" }, 400);
+  }
+
+  const maxTokens = Math.min(Math.max(Number(max_tokens) || 2048, 512), 8192);
+
+  const payload = () => ({
+    model: AGENT_MODEL,
+    max_tokens: maxTokens,
+    ...(typeof system === "string" && system ? { system } : {}),
+    ...(Array.isArray(tools) && tools.length ? { tools } : {}),
+    messages,
+  });
+
+  const out = await callAnthropic(apiKey, payload);
+  if ("failure" in out) {
+    console.error("agent turn failed:", out.failure);
+    return json({ error: out.failure.error, code: out.failure.code }, out.failure.status);
+  }
+
+  const { data } = out;
+  if (data?.stop_reason === "refusal") {
+    return json({ error: "the model declined to answer that", code: "refusal" }, 422);
+  }
+
+  const content = Array.isArray(data?.content) ? data.content : [];
+  if (!content.length) {
+    return json({ error: "the model returned nothing", code: "empty" }, 502);
+  }
+
+  return json({ content, stop_reason: data?.stop_reason ?? "end_turn" });
+}
+
+/* ---------------- extraction turn: one read, JSON text out ---------------- */
+
+async function extractTurn(
+  apiKey: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const { content, max_tokens, schema } = body;
+
+  if (!Array.isArray(content) || content.length === 0) {
+    return json({ error: "content must be a non-empty array of blocks", code: "bad_request" }, 400);
+  }
+
+  // Keep a modest floor so a tight caller cap can't truncate JSON mid-object.
+  const maxTokens = Math.min(Math.max(Number(max_tokens) || 1024, 1024), 8192);
+
+  // Structured outputs: when the caller hands us a schema, the response is
+  // guaranteed to match it instead of merely asked to.
+  let useSchema = !!schema;
+
+  const payload = () => ({
+    model: EXTRACT_MODEL,
+    max_tokens: maxTokens,
+    ...(useSchema
+      ? { output_config: { format: { type: "json_schema", schema } } }
+      : {}),
+    messages: [{ role: "user", content }],
+  });
+
+  // If this deployment's model doesn't accept the structured-output shape, drop
+  // it and let the prompt carry the format instead of failing outright.
+  const salvage = (message: string) => {
+    if (!useSchema || !/output_config|json_schema|schema|format/i.test(message)) return false;
+    useSchema = false;
+    return true;
+  };
+
+  const out = await callAnthropic(apiKey, payload, salvage);
+  if ("failure" in out) {
+    console.error("extract failed:", out.failure);
+    return json({ error: out.failure.error, code: out.failure.code }, out.failure.status);
+  }
+
+  const { data } = out;
+
+  // Safety classifiers can decline with a 200 — content is empty or partial.
+  if (data?.stop_reason === "refusal") {
+    return json({ error: "the model declined to read that content", code: "refusal" }, 422);
+  }
+
+  const text = ((data?.content ?? []) as Array<{ type: string; text: string }>)
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+
+  if (!text) {
+    return json({
+      error: data?.stop_reason === "max_tokens"
+        ? "the reply was cut off before any JSON was produced"
+        : "the model returned no text",
+      code: "empty",
+    }, 502);
+  }
+
+  return json({ text });
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: cors });
+  }
+
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) {
+    return json({ error: "ANTHROPIC_API_KEY is not set on the extract function", code: "no_key" }, 500);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "request body must be JSON", code: "bad_request" }, 400);
+  }
+
+  return body?.messages ? agentTurn(apiKey, body ?? {}) : extractTurn(apiKey, body ?? {});
 });

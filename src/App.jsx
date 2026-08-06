@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
-  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote
+  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -10,6 +11,10 @@ import * as bank from "./lib/bank";
 import { jsPDF } from "jspdf";
 import { askClaude, friendlyError } from "./lib/extract";
 import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
+import { addInterval, occurrencesBetween } from "./lib/analysis";
+import { proposeMatches, explainDelta, clearedIndex } from "./lib/reconcile";
+import { runAgent, trimHistory } from "./lib/agent";
+import { computeInsights } from "./lib/insights";
 
 /* ================= palettes: midnight & daylight ledger ================= */
 const PALETTES = {
@@ -231,15 +236,8 @@ function SubPicker({ data, type, category, value, onChange, addSub, compact }) {
 const FREQS = [["weekly", "Weekly"], ["biweekly", "Every 2 weeks"], ["monthly", "Monthly"], ["quarterly", "Quarterly"], ["yearly", "Yearly"]];
 const freqLabel = (f) => (FREQS.find(([k]) => k === f) || [null, "Recurring"])[1];
 const kindLabel = (k) => (k === "personal" ? "Personal Ledger" : "Business Ledger");
-const addInterval = (dateStr, freq) => {
-  const d = new Date(dateStr + "T00:00:00");
-  if (freq === "weekly") d.setDate(d.getDate() + 7);
-  else if (freq === "biweekly") d.setDate(d.getDate() + 14);
-  else if (freq === "quarterly") d.setMonth(d.getMonth() + 3);
-  else if (freq === "yearly") d.setFullYear(d.getFullYear() + 1);
-  else d.setMonth(d.getMonth() + 1); // monthly default
-  return d.toISOString().slice(0, 10);
-};
+// addInterval + occurrencesBetween live in lib/analysis.js so the agent's cash
+// forecast and the Calendar tab project scheduled items identically.
 
 /* credits: remaining = initial + credit-denominated income − credit-denominated spend */
 const creditRemaining = (data, creditId) => {
@@ -606,6 +604,7 @@ function Ledger({ onSignOut }) {
   const [theme, setThemeState] = useState("dark");
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
   const [reconciling, setReconciling] = useState(false);
   const [importing, setImporting] = useState(false);
   const [ledgers, setLedgers] = useState(null);          // null = loading list
@@ -613,7 +612,8 @@ function Ledger({ onSignOut }) {
   const [fatal, setFatal] = useState(null);              // "migration" | null
   const [newLedgerOpen, setNewLedgerOpen] = useState(false);
   const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
-  const [bankReview, setBankReview] = useState(null); // rows from a Plaid sync awaiting review
+  const [bankTxns, setBankTxns] = useState([]); // every line Plaid has sent, with its match state
+  const [matchOpen, setMatchOpen] = useState(false); // the two-column reconcile view
   const [bankConns, setBankConns] = useState([]); // Plaid connections for this ledger (balances)
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -652,7 +652,8 @@ function Ledger({ onSignOut }) {
     if (!currentLedger) return;
     setData(null);
     setBankConns([]);
-    setBankReview(null);
+    setBankTxns([]);
+    setMatchOpen(false);
     window.localStorage.setItem("ledger:last", currentLedger.id);
     (async () => {
       try {
@@ -677,8 +678,21 @@ function Ledger({ onSignOut }) {
       }
       try { setBankConns(await bank.listConnections(currentLedger.id)); }
       catch { setBankConns([]); }
+      // Missing table (migration not run yet) must not break the ledger — the
+      // app simply falls back to anchor-only reconciliation.
+      try { setBankTxns(await bank.listBankTransactions(currentLedger.id)); }
+      catch (e) { console.error("bank transactions:", e); setBankTxns([]); }
     })();
   }, [currentLedger]);
+
+  const refreshBankTxns = async () => {
+    if (!currentLedger) return [];
+    try {
+      const list = await bank.listBankTransactions(currentLedger.id);
+      setBankTxns(list);
+      return list;
+    } catch (e) { console.error("bank transactions:", e); return []; }
+  };
 
   const createLedgerAndSwitch = async ({ name, kind, startingBalance, anchorDate }) => {
     try {
@@ -750,6 +764,22 @@ function Ledger({ onSignOut }) {
       ap: data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0),
     };
   }, [data]);
+  // What the agent would tell you if you asked — worked out locally, for free,
+  // before you ask. Tapping one hands the question to the agent, which then
+  // goes and gets the entries behind it.
+  // The delta broken into named lines. This is what makes "bank and books
+  // disagree" actionable instead of just true.
+  const recon = useMemo(
+    () => (data ? explainDelta(bankTxns, data.transactions, { balance }) : null),
+    [data, bankTxns, balance],
+  );
+  const cleared = useMemo(() => clearedIndex(bankTxns), [bankTxns]);
+  const insights = useMemo(
+    () => (data ? computeInsights(data, { balance, month, bankConns, recon }) : []),
+    [data, balance, month, bankConns, recon],
+  );
+  // A question queued for the chat panel by something else in the app.
+  const askAgent = (question) => { setChatSeed({ question, at: Date.now() }); setChatOpen(true); };
 
   if (fatal === "migration")
     return (
@@ -791,16 +821,28 @@ function Ledger({ onSignOut }) {
     if (tx.date) setMonth(tx.date.slice(0, 7));
     dbTry(() => db.insertTransaction(rec));
   };
+  // Deleting an entry dissolves any bank match pointing at it. The database
+  // does this itself (FK + trigger); this keeps the on-screen copy in step so
+  // the line reappears as unmatched without a reload.
+  const dropMatchesFor = (ids) =>
+    setBankTxns((rows) => rows.map((b) =>
+      b.matchedTxId && ids.includes(b.matchedTxId)
+        ? { ...b, status: "unmatched", matchedTxId: null, matchSource: null }
+        : b));
+
   const delTx = (id) => {
     const t = data.transactions.find((x) => x.id === id);
     if (t?.transferId) {
       if (!window.confirm("This entry is one side of an inter-ledger transfer. Removing it deletes BOTH sides (here and in the other ledger). Continue?")) return;
+      const gone = data.transactions.filter((x) => x.transferId === t.transferId).map((x) => x.id);
       setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.transferId !== t.transferId) }));
+      dropMatchesFor(gone);
       dbTry(() => db.deleteTransfer(t.transferId));
       return;
     }
     if (t?.attachmentId) deleteAttachment(t.attachmentId);
     setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.id !== id) }));
+    dropMatchesFor([id]);
     dbTry(() => db.deleteTransaction(id));
   };
 
@@ -976,6 +1018,7 @@ function Ledger({ onSignOut }) {
       [kind]: d[kind].filter((x) => x.id !== item.id),
       transactions: killedTxId ? d.transactions.filter((t) => t.id !== killedTxId) : d.transactions,
     }));
+    if (killedTxId) dropMatchesFor([killedTxId]);
     dbTry(async () => {
       await db.deleteObligation(item.id);
       if (killedTxId) await db.deleteTransaction(killedTxId);
@@ -999,6 +1042,70 @@ function Ledger({ onSignOut }) {
     if (latest) setMonth(latest.slice(0, 7));
     setImporting(false);
     setBankReview(null);
+  };
+
+  /* ---- reconciliation: bank line ↔ ledger entry ---- */
+
+  // Optimistic on the client, written behind it, same as every other mutation.
+  const patchBankTxn = (id, patch) =>
+    setBankTxns((rows) => rows.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+
+  const matchBankTxn = (bankId, txId, source = "manual") => {
+    patchBankTxn(bankId, { status: "matched", matchedTxId: txId, matchSource: source, reviewReason: null });
+    dbTry(() => bank.matchBankTxn(bankId, txId, source));
+  };
+
+  const unmatchBankTxn = (bankId) => {
+    patchBankTxn(bankId, { status: "unmatched", matchedTxId: null, matchSource: null });
+    dbTry(() => bank.unmatchBankTxn(bankId));
+  };
+
+  const ignoreBankTxn = (bankId) => {
+    patchBankTxn(bankId, { status: "ignored", matchedTxId: null, matchSource: null });
+    dbTry(() => bank.setBankTxnStatus(bankId, "ignored"));
+  };
+
+  const unignoreBankTxn = (bankId) => {
+    patchBankTxn(bankId, { status: "unmatched" });
+    dbTry(() => bank.setBankTxnStatus(bankId, "unmatched"));
+  };
+
+  const dismissReviewFlag = (bankId) => {
+    patchBankTxn(bankId, { reviewReason: null });
+    dbTry(() => bank.clearReviewFlag(bankId));
+  };
+
+  const applyAutoMatches = (pairs) => {
+    if (!pairs.length) return;
+    setBankTxns((rows) => rows.map((b) => {
+      const hit = pairs.find((p) => p.bankId === b.id);
+      return hit ? { ...b, status: "matched", matchedTxId: hit.txId, matchSource: "auto" } : b;
+    }));
+    dbTry(() => bank.matchMany(pairs.map((p) => ({ bankId: p.bankId, txId: p.txId })), "auto"));
+    setToast(`${pairs.length} bank ${pairs.length === 1 ? "line" : "lines"} matched automatically.`);
+  };
+
+  // Turn a bank line the books never recorded into a real entry, already linked
+  // to the line that proves it happened.
+  const createFromBankTxn = (bankTxn, { category, subcategory, account }) => {
+    const tx = {
+      id: crypto.randomUUID(),
+      date: bankTxn.date,
+      amount: Math.abs(Number(bankTxn.amount)) || 0,
+      type: bankTxn.direction === "credit" ? "income" : "expense",
+      category,
+      subcategory: subcategory || "",
+      description: bankTxn.description || "Bank transaction",
+      account: account || (data.ledger.kind === "personal" ? "personal" : "business"),
+      recurrence: "once",
+    };
+    setData((d) => ({ ...d, transactions: [tx, ...d.transactions] }));
+    patchBankTxn(bankTxn.id, { status: "matched", matchedTxId: tx.id, matchSource: "created", reviewReason: null });
+    dbTry(async () => {
+      await db.insertTransaction(tx);
+      await bank.matchBankTxn(bankTxn.id, tx.id, "created");
+    });
+    return tx;
   };
 
   const setAnchor = (amount, date, source = "manual") => {
@@ -1125,7 +1232,7 @@ function Ledger({ onSignOut }) {
           openBooks={openBooks}
           creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null}
           onCredits={() => setTab("credits")}
-          onReconcile={() => setReconciling(true)}
+          onReconcile={() => (balance.source === "bank" ? setMatchOpen(true) : setReconciling(true))}
         />
 
         {/* ===== tabs ===== */}
@@ -1144,7 +1251,7 @@ function Ledger({ onSignOut }) {
         {balance.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01 && (
           <button
             type="button"
-            onClick={() => setReconciling(true)}
+            onClick={() => setMatchOpen(true)}
             style={{ border: `1px solid ${P.debit}`, color: P.debit, background: "transparent" }}
             className="rounded p-2 text-sm mb-4 w-full text-left"
           >
@@ -1153,7 +1260,9 @@ function Ledger({ onSignOut }) {
               {balance.balanceAsOf ? ` as of ${String(balance.balanceAsOf).slice(0, 10)}` : ""}
             </span>
             <span className="block text-xs mt-0.5" style={{ color: P.muted }}>
-              Books and bank disagree — tap to re-anchor books to the bank, or sync/import the missing lines.
+              {recon && (recon.bankOnly.count || recon.bookOnly.count)
+                ? `${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} in the books, ${recon.bookOnly.count} ${recon.bookOnly.count === 1 ? "entry hasn't" : "entries haven't"} cleared — tap to pair them up.`
+                : "Books and bank disagree — tap to reconcile line by line."}
             </span>
           </button>
         )}
@@ -1165,14 +1274,14 @@ function Ledger({ onSignOut }) {
           }} />
         )}
         <div key={tab} className="tab-enter">
-        {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} />}
+        {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} insights={insights} onAsk={askAgent} />}
         {/* subcategory-aware forms need addSub */}
-        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} />}
+        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
-        {tab === "integrations" && <IntegrationsTab data={data} openBankReview={(rows) => setBankReview(rows)} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
+        {tab === "integrations" && <IntegrationsTab data={data} onSynced={async () => { await refreshBankTxns(); setMatchOpen(true); }} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
           setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
@@ -1202,9 +1311,19 @@ function Ledger({ onSignOut }) {
               month={month}
               balance={balance}
               openBooks={openBooks}
-              bankReview={bankReview}
-              onReconcile={() => { setChatOpen(false); setReconciling(true); }}
-              onOpenBank={() => { setChatOpen(false); setTab("integrations"); }}
+              recon={recon}
+              bankConns={bankConns}
+              insights={insights}
+              seed={chatSeed}
+              onSeedUsed={() => setChatSeed(null)}
+              apply={{ addTx, addAR, settleAR, setPlanned, setAnchor }}
+              onGo={(view) => {
+                setChatOpen(false);
+                if (view === "reconcile") return setMatchOpen(true);
+                if (view === "anchor") return setReconciling(true);
+                if (view === "import") return setImporting(true);
+                setTab(view === "bank" ? "integrations" : view);
+              }}
               embedded
             />
           </div>
@@ -1250,14 +1369,23 @@ function Ledger({ onSignOut }) {
       <PreviewModal preview={preview} onClose={closePreview} />
       {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll} ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />}
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
-      {bankReview && (
-        <ImportModal
+      {matchOpen && (
+        <MatchView
           data={data}
-          addSub={addSub}
-          initialRows={bankReview}
-          sourceLabel="bank sync"
-          onImport={importStatement}
-          onClose={() => setBankReview(null)}
+          bankTxns={bankTxns}
+          balance={balance}
+          recon={recon}
+          actions={{
+            match: matchBankTxn,
+            unmatch: unmatchBankTxn,
+            ignore: ignoreBankTxn,
+            unignore: unignoreBankTxn,
+            dismissFlag: dismissReviewFlag,
+            applyAuto: applyAutoMatches,
+            createFrom: createFromBankTxn,
+          }}
+          onAnchorInstead={() => { setMatchOpen(false); setReconciling(true); }}
+          onClose={() => setMatchOpen(false)}
         />
       )}
       {transferOpen && (
@@ -1417,9 +1545,322 @@ function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate,
   );
 }
 
+/* ================= line-by-line reconciliation: bank ↔ books ================= */
+
+const BankLine = ({ b, selected, onSelect, right }) => (
+  <div
+    onClick={onSelect}
+    style={{
+      background: selected ? P.surface2 : "transparent",
+      border: `1px solid ${selected ? P.brass : P.line}`,
+    }}
+    className="rounded p-2 flex items-center gap-2 cursor-pointer"
+  >
+    <div className="flex-1 min-w-0">
+      <div className="text-sm truncate">{b.description}</div>
+      <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+        {b.date}{b.pending ? " · pending" : ""}
+      </div>
+    </div>
+    <div style={{ fontFamily: MONO, color: b.direction === "credit" ? P.credit : P.debit }} className="text-sm tabular-nums shrink-0">
+      {b.direction === "credit" ? "+" : "−"}{fmt(b.amount)}
+    </div>
+    {right}
+  </div>
+);
+
+const BookLine = ({ t, selected, onSelect }) => (
+  <div
+    onClick={onSelect}
+    style={{
+      background: selected ? P.surface2 : "transparent",
+      border: `1px solid ${selected ? P.brass : P.line}`,
+    }}
+    className="rounded p-2 flex items-center gap-2 cursor-pointer"
+  >
+    <div className="flex-1 min-w-0">
+      <div className="text-sm truncate">{t.description || t.category}</div>
+      <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+        {t.date} · {t.category}
+      </div>
+    </div>
+    <div style={{ fontFamily: MONO, color: t.type === "income" ? P.credit : P.debit }} className="text-sm tabular-nums shrink-0">
+      {t.type === "income" ? "+" : "−"}{fmt(t.amount)}
+    </div>
+  </div>
+);
+
+/**
+ * The reconcile workbench. Everything here is a link between a bank line and a
+ * ledger entry — nothing rewrites the balance. Re-anchoring is still available
+ * behind a link, but it's the escape hatch, not the front door: anchoring sets
+ * the gap to zero without explaining a cent of it.
+ */
+function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, onClose }) {
+  const [pickedBank, setPickedBank] = useState(null);
+  const [pickedTx, setPickedTx] = useState(null);
+  const [adding, setAdding] = useState(null);   // bank line being turned into an entry
+  const [showMatched, setShowMatched] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const proposal = useMemo(
+    () => proposeMatches(bankTxns, data.transactions, { anchorDate: balance.anchorDate }),
+    [bankTxns, data.transactions, balance.anchorDate],
+  );
+  const flagged = bankTxns.filter((b) => b.reviewReason);
+  const matched = bankTxns.filter((b) => b.status === "matched");
+  const ignored = bankTxns.filter((b) => b.status === "ignored");
+  const txById = useMemo(() => new Map(data.transactions.map((t) => [t.id, t])), [data.transactions]);
+
+  const pairSelected = () => {
+    if (!pickedBank || !pickedTx) return;
+    actions.match(pickedBank, pickedTx, "manual");
+    setPickedBank(null);
+    setPickedTx(null);
+  };
+
+  const connected = balance.source === "bank" && balance.bank != null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 overflow-y-auto" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-4xl p-5 my-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <h3 style={{ fontFamily: SERIF }} className="text-lg">Reconcile</h3>
+          <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+        </div>
+
+        {/* ---- the gap, and what it's made of ---- */}
+        {connected ? (
+          <>
+            <div style={{ fontFamily: MONO }} className="text-sm tabular-nums mb-1">
+              Bank {fmt(balance.bank)} · books {fmt(balance.book)} ·{" "}
+              <span style={{ color: Math.abs(balance.delta) < 0.01 ? P.credit : P.debit }}>Δ {fmt(balance.delta)}</span>
+            </div>
+            <p style={{ color: P.muted }} className="text-sm mb-4">{recon?.reading}</p>
+          </>
+        ) : (
+          <p style={{ color: P.muted }} className="text-sm mb-4">
+            No bank balance yet — connect a bank on Connectors, or sync an existing connection, and the lines land here.
+          </p>
+        )}
+
+        {/* ---- the bank changed something we'd already settled ---- */}
+        {flagged.length > 0 && (
+          <div style={{ border: `1px solid ${P.debit}` }} className="rounded p-3 mb-4">
+            <div style={{ color: P.debit, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
+              <AlertTriangle size={12} className="inline mb-0.5" /> Changed after matching
+            </div>
+            <div className="space-y-2">
+              {flagged.map((b) => (
+                <div key={b.id} className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate">{b.description}</div>
+                    <div style={{ color: P.faint }} className="text-xs">{b.date} · {b.reviewReason}</div>
+                  </div>
+                  <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(b.amount)}</div>
+                  {b.matchedTxId && (
+                    <Btn tone="ghost" onClick={() => actions.unmatch(b.id)}>Unmatch</Btn>
+                  )}
+                  <Btn tone="ghost" onClick={() => actions.dismissFlag(b.id)}>Dismiss</Btn>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ---- confident pairs ---- */}
+        {proposal.auto.length > 0 && (
+          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded p-3 mb-4">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div>
+                <div className="text-sm">{proposal.auto.length} {proposal.auto.length === 1 ? "pair matches" : "pairs match"} exactly</div>
+                <div style={{ color: P.faint }} className="text-xs">Same amount and direction, within a day or two, and nothing else competes for them.</div>
+              </div>
+              <Btn onClick={() => actions.applyAuto(proposal.auto.map((p) => ({ bankId: p.bankId, txId: p.txId })))}>
+                <Check size={13} /> Match all
+              </Btn>
+            </div>
+            <div className="space-y-1">
+              {proposal.auto.slice(0, 6).map((p) => (
+                <div key={p.bankId} style={{ fontFamily: MONO, color: P.faint }} className="text-xs truncate">
+                  {p.bank.date} {p.bank.description} → {p.tx.description || p.tx.category} · {fmt(p.bank.amount)}
+                </div>
+              ))}
+              {proposal.auto.length > 6 && (
+                <div style={{ color: P.faint }} className="text-xs">and {proposal.auto.length - 6} more</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ---- pairs that need a human ---- */}
+        {proposal.suggested.length > 0 && (
+          <div className="mb-4">
+            <Label>Probably the same thing</Label>
+            <div className="space-y-2">
+              {proposal.suggested.slice(0, 12).map((p) => (
+                <div key={p.bankId} style={{ border: `1px solid ${P.line}` }} className="rounded p-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm truncate">{p.bank.description}</div>
+                      <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">
+                        {p.bank.date} → {p.tx.date} · {p.tx.description || p.tx.category}
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(p.bank.amount)}</div>
+                    <Btn tone="ghost" onClick={() => actions.match(p.bankId, p.txId, "manual")}><Check size={13} /> Match</Btn>
+                  </div>
+                  <div style={{ color: P.faint }} className="text-xs mt-1">
+                    {p.ambiguous
+                      ? "Another entry fits this line just as well — check which one before matching."
+                      : `${p.gap === 0 ? "Same day" : `${p.gap} ${p.gap === 1 ? "day" : "days"} apart`}, descriptions ${p.text >= 0.5 ? "line up" : "don't line up"}.`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ---- the two sides ---- */}
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <Label>On the bank, not in the books ({proposal.unmatchedBank.length})</Label>
+            <div className="space-y-2">
+              {proposal.unmatchedBank.length === 0 && (
+                <p style={{ color: P.faint }} className="text-sm py-3">Every bank line is accounted for.</p>
+              )}
+              {proposal.unmatchedBank.map((b) => (
+                <div key={b.id}>
+                  <BankLine b={b} selected={pickedBank === b.id} onSelect={() => setPickedBank(pickedBank === b.id ? null : b.id)} />
+                  <div className="flex gap-2 mt-1 mb-2">
+                    <button onClick={() => setAdding(adding?.id === b.id ? null : b)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                      add to books
+                    </button>
+                    <button onClick={() => actions.ignore(b.id)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                      ignore
+                    </button>
+                  </div>
+                  {adding?.id === b.id && (
+                    <AddFromBank
+                      bankTxn={b}
+                      data={data}
+                      onCancel={() => setAdding(null)}
+                      onAdd={(opts) => { actions.createFrom(b, opts); setAdding(null); }}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <Label>In the books, not on the bank ({proposal.unmatchedBook.length})</Label>
+            <div className="space-y-2">
+              {proposal.unmatchedBook.length === 0 && (
+                <p style={{ color: P.faint }} className="text-sm py-3">Every entry has cleared.</p>
+              )}
+              {proposal.unmatchedBook.slice(0, 60).map((t) => (
+                <BookLine key={t.id} t={t} selected={pickedTx === t.id} onSelect={() => setPickedTx(pickedTx === t.id ? null : t.id)} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {(pickedBank || pickedTx) && (
+          <div style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded p-2 mb-4 flex items-center gap-3">
+            <span style={{ color: P.muted }} className="text-xs flex-1">
+              {pickedBank && pickedTx
+                ? "Pair these two — the amounts don't have to agree, but check that they should."
+                : "Now pick the other side."}
+            </span>
+            <Btn disabled={!pickedBank || !pickedTx} onClick={pairSelected}><Check size={13} /> Match these</Btn>
+            <button onClick={() => { setPickedBank(null); setPickedTx(null); }} style={{ color: P.faint }} className="text-xs">clear</button>
+          </div>
+        )}
+
+        {/* ---- already reconciled ---- */}
+        {(matched.length > 0 || ignored.length > 0) && (
+          <div className="mb-4">
+            <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+              {showMatched ? "hide" : "show"} {matched.length} matched, {ignored.length} ignored →
+            </button>
+            {showMatched && (
+              <div className="space-y-1 mt-2">
+                {matched.map((b) => (
+                  <div key={b.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
+                    <Check size={11} style={{ color: P.credit }} className="shrink-0" />
+                    <span className="flex-1 truncate">{b.date} {b.description} → {txById.get(b.matchedTxId)?.description || "entry"}</span>
+                    <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
+                    <button onClick={() => actions.unmatch(b.id)} style={{ color: P.brass }}>unmatch</button>
+                  </div>
+                ))}
+                {ignored.map((b) => (
+                  <div key={b.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
+                    <X size={11} className="shrink-0" />
+                    <span className="flex-1 truncate">{b.date} {b.description}</span>
+                    <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
+                    <button onClick={() => actions.unignore(b.id)} style={{ color: P.brass }}>restore</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="w-full text-center text-xs underline decoration-dotted underline-offset-2">
+          or force the books to the bank balance — sets the gap to zero without explaining it →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Inline form to turn a bank line into a ledger entry. Amount, date and
+ *  description come from the bank; only the coding is a decision. */
+function AddFromBank({ bankTxn, data, onAdd, onCancel }) {
+  const type = bankTxn.direction === "credit" ? "income" : "expense";
+  const cats = data.categories[type] || [];
+  const [category, setCategory] = useState(cats[0]?.name || "Other");
+  const [subcategory, setSubcategory] = useState("");
+  const subs = cats.find((c) => c.name === category)?.subs || [];
+
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded p-2 mb-2">
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div>
+          <Label>Category</Label>
+          <Select value={category} onChange={(e) => { setCategory(e.target.value); setSubcategory(""); }}>
+            {cats.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+          </Select>
+        </div>
+        <div>
+          <Label>Subcategory</Label>
+          <Select value={subcategory} onChange={(e) => setSubcategory(e.target.value)} disabled={!subs.length}>
+            <option value="">{subs.length ? "—" : "none"}</option>
+            {subs.map((s) => <option key={s} value={s}>{s}</option>)}
+          </Select>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Btn onClick={() => onAdd({ category, subcategory })}>
+          <Plus size={13} /> Add {fmt(bankTxn.amount)} {type === "income" ? "in" : "out"}
+        </Btn>
+        <Btn tone="ghost" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+
 /* ================= statement import & reconciliation ================= */
-function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel }) {
-  const [step, setStep] = useState(initialRows ? "review" : "input"); // input | review
+// Pasted / uploaded statements only. Bank-feed lines no longer come through
+// here — they are stored as bank_transactions and reconciled in MatchView.
+function ImportModal({ data, addSub, onImport, onClose }) {
+  const [step, setStep] = useState("input"); // input | review
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1448,26 +1889,6 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
       return { ...r, dup, checked: !dup };
     });
   };
-
-  // rows arriving from a bank sync skip the AI step entirely
-  useEffect(() => {
-    if (!initialRows) return;
-    const defaults = initialRows.map((t) => ({
-      date: t.date,
-      amount: Math.abs(Number(t.amount)) || 0,
-      direction: t.direction === "credit" ? "credit" : "debit",
-      description: t.description || "·",
-      category: t.direction === "credit"
-        ? (data.categories.income[0]?.name || "Other")
-        : (data.categories.expense[0]?.name || "Other"),
-      subcategory: "",
-      account: data.ledger.kind === "personal" ? "personal" : "business",
-      recurrence: "once",
-    })).filter((t) => t.amount > 0 && t.date);
-    setRows(markDuplicates(defaults));
-    setStep("review");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const runParse = async (content) => {
     setBusy(true);
@@ -1563,7 +1984,7 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
-          <h3 style={{ fontFamily: SERIF }} className="text-lg">{sourceLabel === "bank sync" ? "Review bank sync" : "Import a statement"}</h3>
+          <h3 style={{ fontFamily: SERIF }} className="text-lg">Import a statement</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
 
@@ -1665,25 +2086,12 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
             </div>
             <div className="px-5 py-3 flex items-center gap-3" style={{ borderTop: `1px solid ${P.line}` }}>
               <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex-1">
-                {selected.length === 0 && sourceLabel === "bank sync"
-                  ? (dupCount > 0 ? "all lines look like duplicates · nothing to import" : "nothing selected")
-                  : <>importing {selected.length} · net <span style={{ color: netSelected >= 0 ? P.credit : P.debit }}>{fmt(netSelected)}</span></>}
+                importing {selected.length} · net <span style={{ color: netSelected >= 0 ? P.credit : P.debit }}>{fmt(netSelected)}</span>
               </div>
-              {sourceLabel === "bank sync" && selected.length === 0 ? (
-                <>
-                  <Btn tone="ghost" onClick={onClose}>Back</Btn>
-                  <Btn onClick={onClose}>
-                    <Check size={14} /> Done — nothing to import
-                  </Btn>
-                </>
-              ) : (
-                <>
-                  <Btn tone="ghost" onClick={() => { if (sourceLabel === "bank sync") onClose(); else { setStep("input"); setErr(""); } }}>Back</Btn>
-                  <Btn onClick={doImport} disabled={selected.length === 0 && !(anchorToo && ending)}>
-                    <Check size={14} /> Import{anchorToo && ending ? " & anchor" : ""}
-                  </Btn>
-                </>
-              )}
+              <Btn tone="ghost" onClick={() => { setStep("input"); setErr(""); }}>Back</Btn>
+              <Btn onClick={doImport} disabled={selected.length === 0 && !(anchorToo && ending)}>
+                <Check size={14} /> Import{anchorToo && ending ? " & anchor" : ""}
+              </Btn>
             </div>
           </>
         )}
@@ -1758,7 +2166,7 @@ const Stat = ({ label, value, color }) => (
 );
 
 /* ================= Overview ================= */
-function Overview({ data, monthTx, sums, setPlanned, month }) {
+function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk }) {
   const [drill, setDrill] = useState(null); // { type, category }
   const rows = (type) =>
     data.categories[type].map((c) => {
@@ -1770,11 +2178,91 @@ function Overview({ data, monthTx, sums, setPlanned, month }) {
   const zeroExp = rows("expense").filter((r) => !r.planned && !r.actual);
 
   return (
-    <div className="grid md:grid-cols-2 gap-6">
-      <BudgetTable title="Expenses" rows={expRows} extra={zeroExp} type="expense" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "expense", category: cat })} />
-      <BudgetTable title="Income" rows={incRows} extra={[]} type="income" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "income", category: cat })} />
-      {drill && <CategoryDrill drill={drill} monthTx={monthTx} month={month} onClose={() => setDrill(null)} />}
-    </div>
+    <>
+      <InsightsStrip insights={insights} onAsk={onAsk} />
+      <div className="grid md:grid-cols-2 gap-6">
+        <BudgetTable title="Expenses" rows={expRows} extra={zeroExp} type="expense" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "expense", category: cat })} />
+        <BudgetTable title="Income" rows={incRows} extra={[]} type="income" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "income", category: cat })} />
+        {drill && <CategoryDrill drill={drill} monthTx={monthTx} month={month} onClose={() => setDrill(null)} />}
+      </div>
+    </>
+  );
+}
+
+/* ---- what the agent noticed without being asked ----
+   Computed locally on every render of the ledger (see lib/insights.js), so it
+   costs nothing and is never stale. Tapping one hands that exact question to
+   the agent, which goes and gets the entries behind it. */
+function InsightsStrip({ insights = [], onAsk }) {
+  const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(() => {
+    try { return JSON.parse(window.sessionStorage.getItem("insights:dismissed") || "[]"); }
+    catch { return []; }
+  });
+  const live = insights.filter((i) => !dismissed.includes(i.id));
+  if (!live.length) return null;
+
+  const drop = (id) => {
+    const next = [...dismissed, id];
+    setDismissed(next);
+    try { window.sessionStorage.setItem("insights:dismissed", JSON.stringify(next)); } catch { /* private mode */ }
+  };
+
+  const shown = open ? live : live.slice(0, 2);
+  const TONE = {
+    alert: { color: P.debit, Icon: AlertTriangle },
+    warn: { color: P.brass, Icon: AlertTriangle },
+    info: { color: P.faint, Icon: Info },
+  };
+
+  return (
+    <section className="mb-6">
+      <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs uppercase tracking-widest mb-2 flex items-center gap-1.5">
+        <Sparkles size={11} style={{ color: P.brass }} /> Worth a look
+      </div>
+      <div className="space-y-2">
+        {shown.map((i) => {
+          const { color, Icon } = TONE[i.severity] || TONE.info;
+          return (
+            <div
+              key={i.id}
+              style={{ background: P.surface, border: `1px solid ${i.severity === "alert" ? color + "66" : P.line}` }}
+              className="rounded-lg p-3 flex items-start gap-2.5"
+            >
+              <Icon size={14} style={{ color, flexShrink: 0, marginTop: 2 }} />
+              <div className="flex-1 min-w-0">
+                <div style={{ color: P.text }} className="text-sm">{i.title}</div>
+                <p style={{ color: P.muted }} className="text-xs mt-0.5">{i.detail}</p>
+                <div className="flex gap-1.5 mt-2">
+                  <Btn tone="ghost" onClick={() => onAsk?.(i.ask)}>
+                    <MessageSquare size={12} /> Look into it
+                  </Btn>
+                  <button
+                    type="button"
+                    onClick={() => drop(i.id)}
+                    style={{ color: P.faint, fontFamily: MONO }}
+                    className="text-xs px-2"
+                  >
+                    dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {live.length > 2 && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          style={{ color: P.faint, fontFamily: MONO }}
+          className="text-xs mt-2 inline-flex items-center gap-1"
+        >
+          <ChevronRight size={11} style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform .2s" }} />
+          {open ? "show less" : `${live.length - 2} more`}
+        </button>
+      )}
+    </section>
   );
 }
 
@@ -1963,12 +2451,46 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
   );
 }
 
-/* ================= Brasstally chat (capture + ledger help) ================= */
-function Capture({ data, addTx, addAR, addSub, month, embedded, balance, openBooks, bankReview, onReconcile, onOpenBank }) {
+/* ================= Brasstally chat (capture + the finance agent) =================
+   Two modes share one transcript. Capture reads a receipt into a draft entry.
+   Ask runs the agent in lib/agent.js, which works the ledger with tools and can
+   propose changes — never make them. */
+
+// What each tool is doing, in words, for the activity line under a question.
+const TOOL_LABEL = {
+  ledger_overview: "reading the ledger",
+  list_transactions: "searching transactions",
+  category_variance: "checking budget variance",
+  monthly_trend: "comparing months",
+  category_shifts: "looking for what changed",
+  obligations: "checking AR / AP",
+  balance_breakdown: "breaking down the balance",
+  find_duplicates: "scanning for duplicates",
+  recurring_costs: "listing recurring costs",
+  cash_forecast: "projecting cash forward",
+  data_quality: "checking for bookkeeping gaps",
+  propose_transaction: "drafting an entry",
+  propose_obligation: "drafting a receivable / payable",
+  propose_settle: "drafting a settlement",
+  propose_budget: "drafting a budget",
+  propose_anchor: "drafting a re-anchor",
+  open_view: "finding the right screen",
+};
+
+const DEFAULT_ASKS = [
+  "Where did my money go this month?",
+  "What's my cash position over the next 60 days?",
+  "Is anything in my books off?",
+];
+
+function Capture({
+  data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, bankConns,
+  insights = [], seed, onSeedUsed, apply, onGo,
+}) {
   const drift = balance?.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01;
   const opener = drift
-    ? `Bank is ${fmt(balance.bank)}, books are ${fmt(balance.book)} (Δ ${fmt(balance.delta)}). Want to walk through it? You can also drop a receipt or type a quick entry anytime.`
-    : "Drop a receipt screenshot or an invoice PDF, or just type something like “paid Vercel $70 today”. Ask about balance, duplicates, or bank sync and I'll help. Files are filed with the entry for tax time.";
+    ? `Bank is ${fmt(balance.bank)}, books are ${fmt(balance.book)} (Δ ${fmt(balance.delta)}). Ask me to walk through it — I'll go through the entries. You can also drop a receipt or type an entry anytime.`
+    : "Drop a receipt or invoice, type something like “paid Vercel $70 today”, or ask me about the books — I can dig through your transactions, budgets, AR/AP, and cash to answer.";
   const [mode, setMode] = useState(drift ? "help" : "capture"); // capture | help
   const [msgs, setMsgs] = useState([{ role: "assistant", text: opener }]);
   const [input, setInput] = useState("");
@@ -1976,6 +2498,9 @@ function Capture({ data, addTx, addAR, addSub, month, embedded, balance, openBoo
   const fileRef = useRef(null);
   const endRef = useRef(null);
   const greetedDrift = useRef(false);
+  // The agent's own message history, in Anthropic shape. Separate from `msgs`,
+  // which is what the panel draws — tool traffic belongs in one and not the other.
+  const convo = useRef([]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
 
   // Surface a fresh drift notice once when balances first disagree after mount
@@ -1987,21 +2512,60 @@ function Capture({ data, addTx, addAR, addSub, month, embedded, balance, openBoo
 
   const push = (m) => setMsgs((prev) => [...prev, m]);
 
-  const ledgerContext = () => {
-    const review = Array.isArray(bankReview) ? bankReview : [];
-    const dupHint = review.length
-      ? `Pending bank-sync review: ${review.length} lines awaiting import decision.`
-      : "No bank-sync review open right now.";
-    return [
-      `Ledger: ${data.ledger.name} (${data.ledger.kind}). Month view: ${month}.`,
-      balance?.source === "bank"
-        ? `Bank balance (Balance to date): ${fmt(balance.bank)}. Books (anchor + cash txs): ${fmt(balance.book)}. Delta bank−books: ${fmt(balance.delta)}.`
-        : `Manual ledger. Balance to date (books): ${fmt(balance?.book ?? balance?.value ?? 0)}. Anchor ${fmt(balance?.anchorAmount)} on ${balance?.anchorDate}.`,
-      `Open AR (owed to you): ${fmt(openBooks?.ar || 0)}. Open AP (you owe): ${fmt(openBooks?.ap || 0)}.`,
-      dupHint,
-      "Open AR/AP do not move cash balance until settled. Help the user find why books drift from the bank, review possible duplicates, and suggest syncing or re-anchoring — never invent transactions as fact.",
-    ].join("\n");
+  // Tool calls collapse into a single activity line rather than one bubble each.
+  const pushStep = (name) =>
+    setMsgs((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.steps) return [...prev.slice(0, -1), { ...last, steps: [...last.steps, name] }];
+      return [...prev, { role: "assistant", steps: [name] }];
+    });
+
+  const runTurn = async (question) => {
+    setMode("help");
+    setBusy(true);
+    const before = convo.current;
+    const history = trimHistory([...before, { role: "user", content: question }]);
+    try {
+      const { text, messages } = await runAgent({
+        history,
+        // Rebuilt every turn from live state, so the agent reads what's on screen.
+        ctx: { data, balance, month, bankConns, recon },
+        onEvent: (ev) => {
+          if (ev.type === "tool") pushStep(ev.name);
+          else if (ev.type === "text") push({ role: "assistant", text: ev.text });
+          else if (ev.type === "proposal") push({ role: "assistant", proposal: ev.proposal });
+          else if (ev.type === "link") push({ role: "assistant", link: ev.link });
+        },
+      });
+      convo.current = trimHistory(messages);
+      if (text) push({ role: "assistant", text });
+    } catch (e) {
+      convo.current = before; // drop the failed turn so the next one isn't malformed
+      push({
+        role: "assistant",
+        text: `${friendlyError(e)}. From what's on screen: ${
+          balance?.source === "bank"
+            ? `bank ${fmt(balance.bank)} vs books ${fmt(balance.book)} (Δ ${fmt(balance.delta)})`
+            : `balance ${fmt(balance?.book ?? 0)}`
+        }, ${fmt(openBooks?.ar || 0)} owed to you, ${fmt(openBooks?.ap || 0)} owed out.`,
+        link: drift ? { view: "reconcile", label: "Open reconcile" } : null,
+      });
+    }
+    setBusy(false);
   };
+
+  const ask = (question) => {
+    push({ role: "user", text: question });
+    runTurn(question);
+  };
+
+  // A question handed over from an insight card on the Overview tab.
+  useEffect(() => {
+    if (!seed?.question) return;
+    onSeedUsed?.();
+    if (busy) return;
+    ask(seed.question);
+  }, [seed?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFile = async (file) => {
     if (!file) return;
@@ -2041,64 +2605,20 @@ function Capture({ data, addTx, addAR, addSub, month, embedded, balance, openBoo
     setBusy(false);
   };
 
-  const looksLikeEntry = (text) => /\$?\d/.test(text) && /\b(paid|pay|spent|received|got|invoice|receipt|bought|charge|deposit)\b/i.test(text);
-
-  const handleHelp = async (text) => {
-    setBusy(true);
-    try {
-      const raw = await askClaude(
-        [{
-          type: "text",
-          text: `You are Brasstally, a concise bookkeeping assistant for a Canadian ledger app.
-Answer in plain language (2–5 short sentences). Ask one concrete clarifying question when useful.
-If the user should re-anchor books to the bank, say they can tap "Balance to date" or ask you to open reconcile.
-If they should sync the bank, suggest opening Connectors / bank feed.
-Do not claim you already changed the ledger.
-
-LEDGER CONTEXT:
-${ledgerContext()}
-
-User: ${text}
-
-Respond as JSON: { "reply": string, "actions": string[] }
-actions may include zero or more of: "reconcile", "bank", "capture"`,
-        }],
-        {
-          schema: {
-            type: "object",
-            properties: {
-              reply: { type: "string" },
-              actions: { type: "array", items: { type: "string" } },
-            },
-            required: ["reply"],
-          },
-        }
-      );
-      const actions = Array.isArray(raw.actions) ? raw.actions : [];
-      push({
-        role: "assistant",
-        text: raw.reply || "I can help with balance drift, duplicates, or a quick entry — what should we look at?",
-        helpActions: actions.filter((a) => a === "reconcile" || a === "bank" || a === "capture"),
-      });
-    } catch (e) {
-      push({
-        role: "assistant",
-        text: `${friendlyError(e)}. Quick read: ${balance?.source === "bank" ? `bank ${fmt(balance.bank)} vs books ${fmt(balance.book)} (Δ ${fmt(balance.delta)})` : `books ${fmt(balance?.book ?? 0)}`}. Tap Balance to date to re-anchor, or Connectors to sync.`,
-        helpActions: drift ? ["reconcile", "bank"] : ["bank"],
-      });
-    }
-    setBusy(false);
-  };
+  // Capture mode files what you type; Ask mode answers it. The one crossover
+  // that matters is a question typed into Capture — "did I already pay Vercel?"
+  // should never become a $0 draft entry.
+  const looksLikeQuestion = (text) =>
+    /\?/.test(text) ||
+    /^\s*(why|how|what|when|which|where|who|should|can|could|would|do i|did i|am i|is my|are my|show|list|tell|explain|compare|find|check|help)\b/i.test(text);
 
   const handleText = async () => {
     const text = input.trim();
     if (!text) return;
     setInput("");
     push({ role: "user", text });
-    const useHelp = mode === "help" || (!looksLikeEntry(text) && /\b(balance|reconcil|drift|duplicate|bank|sync|plaid|owe|owed|anchor|gap|delta)\b/i.test(text));
-    if (useHelp) {
-      setMode("help");
-      await handleHelp(text);
+    if (mode === "help" || looksLikeQuestion(text)) {
+      await runTurn(text);
       return;
     }
     setMode("capture");
@@ -2167,7 +2687,7 @@ actions may include zero or more of: "reconcile", "bank", "capture"`,
       <div className="flex gap-1 px-3 pt-2">
         {[
           ["capture", "Capture"],
-          ["help", "Ledger help"],
+          ["help", "Ask"],
         ].map(([id, label]) => (
           <button
             key={id}
@@ -2202,27 +2722,48 @@ actions may include zero or more of: "reconcile", "bank", "capture"`,
                   <FileText size={13} style={{ color: P.brass }} /> {m.pdfName}
                 </div>
               )}
-              {m.text && <p style={{ color: m.role === "assistant" ? P.muted : P.text }}>{m.text}</p>}
+              {m.text && <p style={{ color: m.role === "assistant" ? P.muted : P.text }} className="whitespace-pre-wrap">{m.text}</p>}
+              {m.steps && (
+                <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs space-y-0.5">
+                  {m.steps.map((name, k) => (
+                    <div key={k} className="flex items-center gap-1.5">
+                      <Search size={10} style={{ color: P.brass, flexShrink: 0 }} />
+                      {TOOL_LABEL[name] || name.replace(/_/g, " ")}
+                    </div>
+                  ))}
+                </div>
+              )}
               {m.draft && <DraftCard draft={m.draft} att={m.att} data={data} addSub={addSub} onSave={saveDraft} />}
-              {m.helpActions?.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {m.helpActions.includes("reconcile") && onReconcile && (
-                    <Btn tone="ghost" onClick={onReconcile}>Open reconcile</Btn>
-                  )}
-                  {m.helpActions.includes("bank") && onOpenBank && (
-                    <Btn tone="ghost" onClick={onOpenBank}>Open bank feed</Btn>
-                  )}
-                  {m.helpActions.includes("capture") && (
-                    <Btn tone="ghost" onClick={() => setMode("capture")}>Switch to capture</Btn>
-                  )}
+              {m.proposal && <ProposalCard proposal={m.proposal} data={data} apply={apply} />}
+              {m.link && (
+                <div className="mt-2">
+                  <Btn tone="ghost" onClick={() => onGo?.(m.link.view)}>{m.link.label || "Open"}</Btn>
                 </div>
               )}
             </div>
           </div>
         ))}
+        {/* Openers, drawn from what the local insight pass already found. */}
+        {msgs.length === 1 && !busy && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {[...insights.slice(0, 2).map((i) => i.ask), ...DEFAULT_ASKS]
+              .slice(0, 3)
+              .map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => ask(q)}
+                  style={{ border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
+                  className="rounded-full px-2.5 py-1 text-xs text-left"
+                >
+                  {q}
+                </button>
+              ))}
+          </div>
+        )}
         {busy && (
           <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex items-center gap-2">
-            <Loader2 size={12} className="animate-spin" /> {mode === "help" ? "thinking…" : "reading…"}
+            <Loader2 size={12} className="animate-spin" /> {mode === "help" ? "working through the ledger…" : "reading…"}
           </div>
         )}
         <div ref={endRef} />
@@ -2233,7 +2774,7 @@ actions may include zero or more of: "reconcile", "bank", "capture"`,
           <Camera size={16} />
         </Btn>
         <Input
-          placeholder={mode === "help" ? "Message Brasstally…" : "e.g. paid Vercel $70 today…"}
+          placeholder={mode === "help" ? "Ask about your books…" : "e.g. paid Vercel $70 today…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !busy && handleText()}
@@ -2297,6 +2838,145 @@ function DraftCard({ draft, att, data, addSub, onSave }) {
             {d.type === "income" ? "Owed to me" : "I owe this"}
           </Btn>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= agent proposals =================
+   The agent can't write. It draws one of these instead, and nothing reaches the
+   ledger until it's tapped. The money fields stay editable — the agent read
+   your books to build this, but it didn't live them. */
+function ProposalCard({ proposal, data, apply }) {
+  const { kind, input } = proposal;
+  const [v, setV] = useState(() => ({
+    ...input,
+    // One date field on the card, but the tools name it per what it means:
+    // a due date on an obligation, a settlement or entry date elsewhere.
+    date: input.date || input.dueDate || todayStr(),
+    amount: input.amount != null ? String(input.amount) : "",
+    planned: input.planned != null ? String(input.planned) : "",
+  }));
+  const [state, setState] = useState("open"); // open | applied | dismissed
+  const set = (k, val) => setV((p) => ({ ...p, [k]: val }));
+  const amount = Number(v.amount) || 0;
+  const account = data.ledger.kind === "personal" ? "personal" : "business";
+
+  if (state === "dismissed")
+    return <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-1">dismissed</div>;
+  if (state === "applied")
+    return <div style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-1">✓ applied</div>;
+
+  const SPECS = {
+    propose_transaction: {
+      title: v.type === "income" ? "Log money in" : "Log money out",
+      confirm: "Save entry",
+      tone: v.type === "income" ? "credit" : "brass",
+      run: () => apply.addTx({
+        date: v.date, amount, type: v.type === "income" ? "income" : "expense",
+        category: v.category, subcategory: v.subcategory || undefined,
+        description: v.description || "", account,
+        recurrence: v.recurrence === "recurring" ? "recurring" : "once",
+      }),
+    },
+    propose_obligation: {
+      title: v.kind === "receivables" ? "Add a receivable" : "Add a payable",
+      confirm: "Add it",
+      tone: v.kind === "receivables" ? "credit" : "brass",
+      run: () => apply.addAR(v.kind === "receivables" ? "receivables" : "payables", {
+        party: v.party, description: v.description || "", amount,
+        dueDate: v.date, account,
+        recurrence: v.recurrence === "recurring" ? "recurring" : "once",
+        frequency: v.frequency || undefined,
+      }),
+    },
+    propose_settle: {
+      title: proposal.item
+        ? `Settle ${proposal.item.party} · ${fmt(proposal.item.amount)}`
+        : "Settle",
+      confirm: v.kind === "receivables" ? "Mark received" : "Mark paid",
+      tone: v.kind === "receivables" ? "credit" : "brass",
+      note: "Marks it settled and writes the matching transaction.",
+      run: () => apply.settleAR(v.kind, v.id, { date: v.date, amount: amount || undefined }),
+    },
+    propose_budget: {
+      title: `Budget ${v.category}`,
+      confirm: "Set budget",
+      tone: "brass",
+      run: () => apply.setPlanned(v.type === "income" ? "income" : "expense", v.category, Number(v.planned) || 0),
+    },
+    propose_anchor: {
+      title: "Re-anchor the balance",
+      confirm: "Re-anchor",
+      tone: "brass",
+      note: "Sets the balance as of that date. Entries on or before it stop counting toward it.",
+      run: () => apply.setAnchor(amount, v.date, "agent"),
+    },
+  };
+  const spec = SPECS[kind];
+  if (!spec || !apply) return null;
+
+  const money = kind === "propose_budget"
+    ? { label: "Planned per month", key: "planned", value: v.planned }
+    : { label: kind === "propose_anchor" ? "True balance" : "Amount", key: "amount", value: v.amount };
+  const dateLabel = kind === "propose_obligation" ? "Due" : kind === "propose_anchor" ? "As of" : "Date";
+
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P.brass}55` }} className="rounded-lg p-3 mt-2 space-y-2 w-72 max-w-full">
+      <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest flex items-center gap-1.5">
+        <Sparkles size={11} /> {spec.title}
+      </div>
+      {(input.reason || spec.note) && (
+        <p style={{ color: P.faint }} className="text-xs">{input.reason || spec.note}</p>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label>{money.label}</Label>
+          <Input type="number" value={money.value} onChange={(e) => set(money.key, e.target.value)} style={{ fontFamily: MONO }} />
+        </div>
+        {kind !== "propose_budget" && (
+          <div>
+            <Label>{dateLabel}</Label>
+            <Input type="date" value={v.date} onChange={(e) => set("date", e.target.value)} />
+          </div>
+        )}
+      </div>
+
+      {kind === "propose_transaction" && (
+        <>
+          <div>
+            <Label>Description</Label>
+            <Input value={v.description || ""} onChange={(e) => set("description", e.target.value)} />
+          </div>
+          <div>
+            <Label>Category</Label>
+            <Select value={v.category} onChange={(e) => set("category", e.target.value)}>
+              {data.categories[v.type === "income" ? "income" : "expense"].map((c) => (
+                <option key={c.name}>{c.name}</option>
+              ))}
+            </Select>
+          </div>
+        </>
+      )}
+      {kind === "propose_obligation" && (
+        <>
+          <div>
+            <Label>{v.kind === "receivables" ? "Who owes you" : "Who you owe"}</Label>
+            <Input value={v.party || ""} onChange={(e) => set("party", e.target.value)} />
+          </div>
+          <div>
+            <Label>For</Label>
+            <Input value={v.description || ""} onChange={(e) => set("description", e.target.value)} />
+          </div>
+        </>
+      )}
+
+      <div className="flex gap-1 pt-0.5">
+        <Btn tone={spec.tone} className="flex-1 justify-center" onClick={() => { spec.run(); setState("applied"); }}>
+          <Check size={14} /> {spec.confirm}
+        </Btn>
+        <Btn tone="ghost" onClick={() => setState("dismissed")}>Not now</Btn>
       </div>
     </div>
   );
@@ -2408,7 +3088,7 @@ function TxEditor({ tx, data, addSub, addCredit, onSave, onCancel }) {
   );
 }
 
-function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, openTransfer, addSub, addCredit, month }) {
+function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, openTransfer, addSub, addCredit, month, cleared }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
@@ -2540,6 +3220,11 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 {isCredits(t) && (
                   <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1 shrink-0" title="Paid with credits, doesn't affect cash balance">
                     {creditName(data, t.creditId)}
+                  </span>
+                )}
+                {cleared?.has(t.id) && (
+                  <span style={{ color: P.credit }} className="shrink-0" title={`Cleared the bank on ${cleared.get(t.id).date}`}>
+                    <Check size={13} />
                   </span>
                 )}
                 <TxAttachment tx={t} setTxAttachment={setTxAttachment} openPreview={openPreview} />
@@ -3306,33 +3991,6 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
 }
 
 /* ================= cash calendar: list + month-grid views ================= */
-function occurrencesBetween(data, startDate, endDate, today) {
-  const out = [];
-  for (const kind of ["receivables", "payables"]) {
-    for (const item of data[kind]) {
-      if (item.status !== "open") continue;
-      let due = item.dueDate || today;
-      // overdue base occurrence (shown regardless of window start)
-      if (due < today) out.push({ ...item, kind, due, overdue: true });
-      if (item.recurrence === "recurring") {
-        while (due < today) due = addInterval(due, item.frequency || "monthly");
-      } else if ((item.dueDate || today) < startDate || (item.dueDate || today) > endDate) {
-        continue;
-      }
-      let guard = 0;
-      while (due <= endDate && guard < 36) {
-        if (due >= today && due >= startDate) {
-          out.push({ ...item, kind, due, overdue: false, projected: guard > 0 || (item.dueDate || today) < today });
-        }
-        if (item.recurrence !== "recurring") break;
-        due = addInterval(due, item.frequency || "monthly");
-        guard += 1;
-      }
-    }
-  }
-  return out;
-}
-
 function CashCalendar({ data }) {
   const [view, setView] = useState("list"); // list | grid
   const [span, setSpan] = useState(30);
@@ -3781,7 +4439,7 @@ const addMonths = (dateStr, m) => {
   return d.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
 };
 
-function IntegrationsTab({ data, updateLedgerMeta, openBankReview, onConnectionsChange }) {
+function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
   const fye = data.ledger.fye || "12-31";
@@ -3867,7 +4525,7 @@ function IntegrationsTab({ data, updateLedgerMeta, openBankReview, onConnections
 
   return (
     <div className="space-y-6">
-      <BankFeedCard data={data} openBankReview={openBankReview} onConnectionsChange={onConnectionsChange} />
+      <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} />
 
       {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
       {!isBiz ? <PersonalTaxCard data={data} /> : (
@@ -4112,7 +4770,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
 
 /* ================= live bank feed (Plaid) ================= */
-function BankFeedCard({ data, openBankReview, onConnectionsChange }) {
+function BankFeedCard({ data, onSynced, onConnectionsChange }) {
   const [conns, setConns] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(null);
@@ -4261,10 +4919,28 @@ function BankFeedCard({ data, openBankReview, onConnectionsChange }) {
   const sync = async (id) => {
     setErr(""); setNotice(""); setSyncing(id);
     try {
-      const { transactions } = await bank.plaid("sync", { connection_id: id });
+      const res = await bank.plaid("sync", { connection_id: id });
       await refreshConns();
-      if (!transactions.length) setNotice("Up to date. Nothing new since the last sync.");
-      else openBankReview(transactions);
+      // The old function returned { transactions } and stored nothing. If it's
+      // still deployed, its cursor has already moved past these lines — say so
+      // loudly rather than reporting "up to date" over lost transactions.
+      if (typeof res.added !== "number") {
+        setErr("This bank feed is running an older sync function that doesn't store lines. Redeploy the `plaid` Edge Function (and run migration-bank-transactions.sql) before syncing again.");
+        setSyncing(null);
+        return;
+      }
+      const { added = 0, modified = 0, removed = 0 } = res;
+      // Lines are already stored server-side by now, so opening the reconcile
+      // view is a convenience — closing it doesn't lose anything.
+      if (!added && !modified && !removed) setNotice("Up to date. Nothing new since the last sync.");
+      else {
+        const parts = [];
+        if (added) parts.push(`${added} new`);
+        if (modified) parts.push(`${modified} updated`);
+        if (removed) parts.push(`${removed} reversed`);
+        setNotice(`${parts.join(", ")} — opening reconcile.`);
+        await onSynced?.();
+      }
     } catch (e) { setErr(String(e.message || e)); }
     setSyncing(null);
   };

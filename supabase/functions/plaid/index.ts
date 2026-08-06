@@ -118,22 +118,73 @@ Deno.serve(async (req) => {
     if (action === "sync") {
       const { data: conn, error } = await supabase.from("bank_connections").select("*").eq("id", body.connection_id).single();
       if (error || !conn) throw new Error("Connection not found");
+
+      // Drain every page first, holding the new cursor locally. Nothing is
+      // committed until the rows below are stored: if a write fails we throw
+      // with the OLD cursor still on the connection, and the next sync replays
+      // the same lines. The (connection_id, plaid_txn_id) unique key makes that
+      // replay idempotent.
       let cursor = conn.cursor || undefined;
-      let added: any[] = [];
+      const added: any[] = [], modified: any[] = [], removed: any[] = [];
       let hasMore = true, guard = 0;
-      while (hasMore && guard < 10) {
+      while (hasMore && guard < 20) {
         const d = await plaid("/transactions/sync", { access_token: conn.access_token, cursor, count: 250 });
-        added = added.concat(d.added || []);
+        added.push(...(d.added || []));
+        modified.push(...(d.modified || []));
+        removed.push(...(d.removed || []));
         cursor = d.next_cursor; hasMore = d.has_more; guard += 1;
       }
-      await supabase.from("bank_connections").update({ cursor, last_synced: new Date().toISOString() }).eq("id", conn.id);
+
+      const now = new Date().toISOString();
       // Plaid convention: positive amount = money leaving the account
-      const transactions = added.map((t) => ({
+      const toRow = (t: any) => ({
+        ledger_id: conn.ledger_id,
+        connection_id: conn.id,
+        plaid_txn_id: t.transaction_id,
+        account_id: t.account_id || null,
         date: t.date,
-        amount: Math.abs(t.amount),
-        direction: t.amount > 0 ? "debit" : "credit",
+        amount: Math.abs(Number(t.amount)),
+        direction: Number(t.amount) > 0 ? "debit" : "credit",
         description: t.merchant_name || t.name || "Bank transaction",
-      }));
+        pending: Boolean(t.pending),
+        updated_at: now,
+      });
+
+      // Upserting only these columns leaves status/matched_tx_id untouched, so a
+      // line the user already reconciled survives the bank restating it.
+      const rows = [...added, ...modified]
+        .filter((t) => t?.transaction_id && t?.date)
+        .map(toRow);
+      for (let i = 0; i < rows.length; i += 200) {
+        const { error: upErr } = await supabase
+          .from("bank_transactions")
+          .upsert(rows.slice(i, i + 200), { onConflict: "connection_id,plaid_txn_id" });
+        if (upErr) throw upErr;
+      }
+
+      // A restated or reversed line that was already matched is the one case
+      // where a settled reconciliation silently goes wrong. Flag those.
+      const modifiedIds = modified.map((t) => t?.transaction_id).filter(Boolean);
+      if (modifiedIds.length) {
+        const { error: modErr } = await supabase.from("bank_transactions")
+          .update({ review_reason: "the bank restated this line after it was matched" })
+          .eq("connection_id", conn.id).eq("status", "matched").in("plaid_txn_id", modifiedIds);
+        if (modErr) throw modErr;
+      }
+
+      const removedIds = removed.map((t) => t?.transaction_id).filter(Boolean);
+      if (removedIds.length) {
+        const { error: remErr } = await supabase.from("bank_transactions")
+          .update({ removed_at: now, review_reason: "the bank reversed or withdrew this line" })
+          .eq("connection_id", conn.id).in("plaid_txn_id", removedIds);
+        if (remErr) throw remErr;
+      }
+
+      // Everything is durable — only now is it safe to move the cursor past it.
+      const { error: curErr } = await supabase.from("bank_connections")
+        .update({ cursor, last_synced: now }).eq("id", conn.id);
+      if (curErr) throw curErr;
+
       let snap = { balances: [] as ReturnType<typeof snapshotBalances>["balances"], current_balance: null as number | null, balance_as_of: null as string | null };
       try {
         snap = await fetchAndStoreBalances(conn.id, conn.access_token);
@@ -141,7 +192,9 @@ Deno.serve(async (req) => {
         console.error("balances after sync:", e);
       }
       return json({
-        transactions,
+        added: added.length,
+        modified: modified.length,
+        removed: removed.length,
         balances: snap.balances,
         current_balance: snap.current_balance,
         balance_as_of: snap.balance_as_of,

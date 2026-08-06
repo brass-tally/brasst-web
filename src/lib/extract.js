@@ -75,21 +75,37 @@ export async function askClaude(content, options = {}) {
   const { maxTokens = 1024, schema = null } =
     typeof options === "number" ? { maxTokens: options } : options;
 
+  const data = await invokeExtract({ content, max_tokens: maxTokens, ...(schema ? { schema } : {}) });
+  return parseModelJson(data?.text);
+}
+
+/**
+ * One turn of a tool-using conversation. Returns the assistant's raw content
+ * blocks so the caller can run tools and come back — the loop itself lives in
+ * lib/agent.js, next to the ledger it reads.
+ */
+export async function askClaudeAgent({ system, messages, tools, maxTokens = 2048 }) {
+  const data = await invokeExtract({ system, messages, tools, max_tokens: maxTokens });
+  if (!Array.isArray(data?.content)) throw new ExtractError("the reply had no content", "empty");
+  return { content: data.content, stop_reason: data.stop_reason || "end_turn" };
+}
+
+// Shared transport: one retry for the failures that are worth retrying, and a
+// typed error for the ones that aren't.
+async function invokeExtract(body) {
   let last;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const { data, error } = await supabase.functions.invoke("extract", {
-      body: { content, max_tokens: maxTokens, ...(schema ? { schema } : {}) },
-    });
+    const { data, error } = await supabase.functions.invoke("extract", { body });
 
     if (error) {
       // supabase-js surfaces non-2xx as a FunctionsHttpError whose body carries
       // our own { error, code }. Read it so the UI can say something useful.
-      const body = await error.context?.json?.().catch(() => null);
-      last = new ExtractError(body?.error || error.message || "request failed", body?.code || "network");
+      const payload = await error.context?.json?.().catch(() => null);
+      last = new ExtractError(payload?.error || error.message || "request failed", payload?.code || "network");
     } else if (data?.error) {
       last = new ExtractError(data.error, data.code || "upstream");
     } else {
-      return parseModelJson(data?.text);
+      return data;
     }
 
     console.error("extract failed:", last);

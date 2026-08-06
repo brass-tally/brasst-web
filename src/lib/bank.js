@@ -44,6 +44,86 @@ export function sumBankBalance(connections) {
   return any ? total : null;
 }
 
+/* ---------------- bank transactions & matching ---------------- */
+
+const BANK_TXN_COLS =
+  "id, connection_id, plaid_txn_id, date, amount, direction, description, pending," +
+  " status, matched_tx_id, match_source, review_reason, removed_at";
+
+const rowToBankTxn = (r) => ({
+  id: r.id,
+  connectionId: r.connection_id,
+  plaidTxnId: r.plaid_txn_id,
+  date: r.date,
+  amount: Number(r.amount),
+  direction: r.direction === "credit" ? "credit" : "debit",
+  description: r.description || "",
+  pending: Boolean(r.pending),
+  // A deleted ledger entry nulls matched_tx_id; the DB trigger resets status
+  // with it, but normalize here too so a stale read can't show a match that
+  // points at nothing.
+  status: r.matched_tx_id ? r.status : r.status === "matched" ? "unmatched" : r.status,
+  matchedTxId: r.matched_tx_id || null,
+  matchSource: r.match_source || null,
+  reviewReason: r.review_reason || null,
+  removedAt: r.removed_at || null,
+});
+
+export async function listBankTransactions(ledgerId) {
+  const { data, error } = await supabase
+    .from("bank_transactions")
+    .select(BANK_TXN_COLS)
+    .eq("ledger_id", ledgerId)
+    .order("date", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(rowToBankTxn);
+}
+
+/** Link a bank line to the ledger entry that accounts for it. */
+export async function matchBankTxn(id, txId, source = "manual") {
+  const { error } = await supabase.from("bank_transactions").update({
+    matched_tx_id: txId,
+    status: "matched",
+    matched_at: new Date().toISOString(),
+    match_source: source,
+    review_reason: null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function matchMany(pairs, source = "auto") {
+  // Individual updates: an upsert would have to re-supply every NOT NULL column
+  // just to set two fields. Auto-match batches are tens of rows, not thousands.
+  await Promise.all(pairs.map((p) => matchBankTxn(p.bankId, p.txId, source)));
+}
+
+export async function unmatchBankTxn(id) {
+  const { error } = await supabase.from("bank_transactions").update({
+    matched_tx_id: null,
+    status: "unmatched",
+    matched_at: null,
+    match_source: null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", id);
+  if (error) throw error;
+}
+
+/** "ignored" is for lines that will never have a ledger entry — internal
+ *  transfers between two connected accounts, or a reversal pair that nets out. */
+export async function setBankTxnStatus(id, status) {
+  const patch = { status, updated_at: new Date().toISOString() };
+  if (status !== "matched") { patch.matched_tx_id = null; patch.matched_at = null; patch.match_source = null; }
+  const { error } = await supabase.from("bank_transactions").update(patch).eq("id", id);
+  if (error) throw error;
+}
+
+export async function clearReviewFlag(id) {
+  const { error } = await supabase.from("bank_transactions")
+    .update({ review_reason: null, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw error;
+}
+
 /** Newest balance_as_of across connections, or null. */
 export function latestBalanceAsOf(connections) {
   let best = null;

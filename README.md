@@ -4,6 +4,8 @@
 >
 > 1. **Database**: Supabase dashboard → SQL Editor → New query → paste all of `supabase/schema.sql` → Run.
 >    (Already ran an older schema? Run `supabase/migration-balance-anchor.sql` instead.)
+>    Then run `supabase/migration-bank-transactions.sql` — bank reconciliation needs it, and
+>    redeploying the `plaid` function without it will make **Sync now** fail.
 > 2. **AI function**: dashboard → Edge Functions → **Deploy a new function → Via Editor** → name it exactly `extract`,
 >    paste the contents of `supabase/functions/extract/index.ts`, Deploy.
 > 3. **API key secret**: Edge Functions → **Secrets** → add `ANTHROPIC_API_KEY` = your key. (Never put this in the code or repo.)
@@ -86,6 +88,35 @@ Open the Vercel URL on your phone, sign in, and run the loop: snap a receipt in 
 
 ---
 
+## The finance agent
+
+The chat bubble has two modes. **Capture** reads a receipt or a typed line into a draft entry.
+**Ask** runs an agent over your actual books.
+
+It isn't given a summary of your ledger and asked to guess — it has tools, and it uses them:
+searching transactions, budget variance, month-over-month trend, AR/AP aging, a duplicate scan,
+a breakdown of where the balance comes from, recurring costs, a cash forecast, and a bookkeeping-gap
+check. Ask "why is my bank $412 above my books" and it goes looking, then tells you which entries
+account for it.
+
+**It cannot write to your ledger.** When it wants to change something — log an entry, settle a
+payable, set a budget, re-anchor the balance — it draws a confirmation card in the chat with the
+fields still editable. Nothing reaches the database until you tap it.
+
+Above the Overview tab, **Worth a look** shows what the agent would have told you if you'd asked:
+overdue invoices, budget overruns, likely duplicates, subscriptions that quietly went up, runway
+getting short. Those are computed locally on every render — no API call, no cost, never stale.
+Tapping one hands that question to the agent, which then goes and finds the entries behind it.
+
+> **Redeploy `extract` after pulling this.** The agent runs through the same Edge Function as
+> receipt reading (one function, one deploy). Until you redeploy it, Capture keeps working and Ask
+> returns an error. Supabase dashboard → Edge Functions → `extract` → paste
+> `supabase/functions/extract/index.ts` → Deploy. No new secrets or migrations needed.
+
+Agent turns use a larger model than receipt reading and may make several tool calls per question, so
+a question costs more than a receipt — still cents, not dollars. The tools run in your browser
+against data already loaded, so only the slice a tool returns is ever sent to the API.
+
 ## How the pieces map
 
 | In the artifact | Now |
@@ -93,6 +124,7 @@ Open the Vercel URL on your phone, sign in, and run the loop: snap a receipt in 
 | window.storage JSON blob | Postgres tables with row-level security |
 | Attachments as base64 (3.5 MB cap) | Private Supabase Storage bucket (8 MB cap in-app) |
 | Anthropic call proxied by Claude.ai | `extract` Edge Function holding your API key |
+| No way to ask about the books | A tool-using agent over your real ledger, with proposals you confirm |
 | No sign-in | Email magic-link auth; every row scoped to your user |
 
 ## Notes
