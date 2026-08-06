@@ -12,6 +12,9 @@ create table if not exists public.bank_connections (
   institution text,
   cursor text,
   last_synced timestamptz,
+  current_balance numeric,
+  balance_as_of timestamptz,
+  accounts jsonb,
   created_at timestamptz not null default now()
 );
 

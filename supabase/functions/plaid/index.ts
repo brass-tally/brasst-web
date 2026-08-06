@@ -9,6 +9,26 @@ const cors = {
 const json = (o: unknown, s = 200) =>
   new Response(JSON.stringify(o), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 
+/** Snapshot depository balances; credit cards are excluded from the cash total. */
+function snapshotBalances(accounts: any[]) {
+  const balances = (accounts || []).map((a) => ({
+    account_id: a.account_id,
+    name: a.name || a.official_name || "Account",
+    mask: a.mask || null,
+    type: a.type || null,
+    subtype: a.subtype || null,
+    current: a.balances?.current ?? null,
+    available: a.balances?.available ?? null,
+  }));
+  const depository = balances.filter(
+    (b) => b.type === "depository" && b.current != null && !Number.isNaN(Number(b.current)),
+  );
+  const current_balance = depository.length
+    ? depository.reduce((s, b) => s + Number(b.current), 0)
+    : null;
+  return { balances, current_balance, balance_as_of: new Date().toISOString() };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -35,6 +55,17 @@ Deno.serve(async (req) => {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error_message || d.error_code || "Plaid error");
       return d;
+    };
+
+    const fetchAndStoreBalances = async (connectionId: string, accessToken: string) => {
+      const acct = await plaid("/accounts/get", { access_token: accessToken });
+      const snap = snapshotBalances(acct.accounts || []);
+      await supabase.from("bank_connections").update({
+        current_balance: snap.current_balance,
+        balance_as_of: snap.balance_as_of,
+        accounts: snap.balances,
+      }).eq("id", connectionId);
+      return snap;
     };
 
     if (action === "create_link_token") {
@@ -69,12 +100,19 @@ Deno.serve(async (req) => {
 
     if (action === "exchange") {
       const d = await plaid("/item/public_token/exchange", { public_token: body.public_token });
-      const { error } = await supabase.from("bank_connections").insert({
+      const { data: inserted, error } = await supabase.from("bank_connections").insert({
         ledger_id: body.ledger_id, item_id: d.item_id, access_token: d.access_token,
         institution: body.institution || "Bank",
-      });
+      }).select("id").single();
       if (error) throw error;
-      return json({ ok: true });
+      let snap = { balances: [] as ReturnType<typeof snapshotBalances>["balances"], current_balance: null as number | null, balance_as_of: null as string | null };
+      try {
+        snap = await fetchAndStoreBalances(inserted.id, d.access_token);
+      } catch (e) {
+        // Connection is saved; balances can refresh on the next sync
+        console.error("balances after exchange:", e);
+      }
+      return json({ ok: true, balances: snap.balances, current_balance: snap.current_balance });
     }
 
     if (action === "sync") {
@@ -96,7 +134,18 @@ Deno.serve(async (req) => {
         direction: t.amount > 0 ? "debit" : "credit",
         description: t.merchant_name || t.name || "Bank transaction",
       }));
-      return json({ transactions });
+      let snap = { balances: [] as ReturnType<typeof snapshotBalances>["balances"], current_balance: null as number | null, balance_as_of: null as string | null };
+      try {
+        snap = await fetchAndStoreBalances(conn.id, conn.access_token);
+      } catch (e) {
+        console.error("balances after sync:", e);
+      }
+      return json({
+        transactions,
+        balances: snap.balances,
+        current_balance: snap.current_balance,
+        balance_as_of: snap.balance_as_of,
+      });
     }
 
     if (action === "disconnect") {

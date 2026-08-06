@@ -24,11 +24,34 @@ export async function plaid(action, body = {}) {
 export async function listConnections(ledgerId) {
   const { data, error } = await supabase
     .from("bank_connections")
-    .select("id, institution, last_synced")
+    .select("id, institution, last_synced, current_balance, balance_as_of, accounts")
     .eq("ledger_id", ledgerId)
     .order("created_at");
   if (error) throw error;
   return data || [];
+}
+
+/** Sum of depository balances across connections (null if none reported yet). */
+export function sumBankBalance(connections) {
+  if (!connections?.length) return null;
+  let total = 0;
+  let any = false;
+  for (const c of connections) {
+    if (c.current_balance == null || Number.isNaN(Number(c.current_balance))) continue;
+    total += Number(c.current_balance);
+    any = true;
+  }
+  return any ? total : null;
+}
+
+/** Newest balance_as_of across connections, or null. */
+export function latestBalanceAsOf(connections) {
+  let best = null;
+  for (const c of connections || []) {
+    if (!c.balance_as_of) continue;
+    if (!best || String(c.balance_as_of) > String(best)) best = c.balance_as_of;
+  }
+  return best;
 }
 
 let linkPromise = null;

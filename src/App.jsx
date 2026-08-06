@@ -614,6 +614,7 @@ function Ledger({ onSignOut }) {
   const [newLedgerOpen, setNewLedgerOpen] = useState(false);
   const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
   const [bankReview, setBankReview] = useState(null); // rows from a Plaid sync awaiting review
+  const [bankConns, setBankConns] = useState([]); // Plaid connections for this ledger (balances)
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState("");
   const inFlight = useRef(new Set()); // synchronous double-tap lock for settle/remove
@@ -650,6 +651,8 @@ function Ledger({ onSignOut }) {
   useEffect(() => {
     if (!currentLedger) return;
     setData(null);
+    setBankConns([]);
+    setBankReview(null);
     window.localStorage.setItem("ledger:last", currentLedger.id);
     (async () => {
       try {
@@ -672,6 +675,8 @@ function Ledger({ onSignOut }) {
         });
         if (bank.oauthReturnUri()) setTab("integrations");
       }
+      try { setBankConns(await bank.listConnections(currentLedger.id)); }
+      catch { setBankConns([]); }
     })();
   }, [currentLedger]);
 
@@ -707,16 +712,37 @@ function Ledger({ onSignOut }) {
   }, [monthTx]);
   // Balance anchoring: "balance was $X as of anchorDate". Only transactions AFTER the
   // anchor count toward the balance, so untracked earlier months can't distort it.
+  // Connected ledgers show the bank figure as Balance to date; books stay for delta.
   const balance = useMemo(() => {
-    if (!data) return { value: 0, beforeAnchor: false, anchorAmount: 0, anchorDate: "" };
+    if (!data) {
+      return {
+        value: 0, book: 0, bank: null, delta: null, source: "books",
+        beforeAnchor: false, anchorAmount: 0, anchorDate: "", balanceAsOf: null,
+      };
+    }
     const anchorDate = data.settings.anchorDate || "1970-01-01";
     const anchorAmount = data.settings.startingBalance;
     const beforeAnchor = month < anchorDate.slice(0, 7); // viewing a month that ends before the anchor
     const cum = data.transactions
       .filter((t) => t.date && t.date > anchorDate && t.date.slice(0, 7) <= month && !isCredits(t))
       .reduce((s, t) => s + (t.type === "income" ? t.amount : -t.amount), 0);
-    return { value: anchorAmount + cum, beforeAnchor, anchorAmount, anchorDate };
-  }, [data, month]);
+    const book = anchorAmount + cum;
+    const bankTotal = bank.sumBankBalance(bankConns);
+    const balanceAsOf = bank.latestBalanceAsOf(bankConns);
+    const connected = bankTotal != null;
+    const delta = connected ? bankTotal - book : null;
+    return {
+      value: connected ? bankTotal : book,
+      book,
+      bank: bankTotal,
+      delta,
+      source: connected ? "bank" : "books",
+      beforeAnchor: connected ? false : beforeAnchor,
+      anchorAmount,
+      anchorDate,
+      balanceAsOf,
+    };
+  }, [data, month, bankConns]);
   const openBooks = useMemo(() => {
     if (!data) return { ar: 0, ap: 0 };
     return {
@@ -972,6 +998,7 @@ function Ledger({ onSignOut }) {
     const latest = recs.reduce((m, t) => (t.date && t.date > m ? t.date : m), "");
     if (latest) setMonth(latest.slice(0, 7));
     setImporting(false);
+    setBankReview(null);
   };
 
   const setAnchor = (amount, date, source = "manual") => {
@@ -1092,7 +1119,14 @@ function Ledger({ onSignOut }) {
         </header>
 
         {/* ===== signature ledger line ===== */}
-        <LedgerLine sums={sums} balance={balance} openBooks={openBooks} creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null} onCredits={() => setTab("credits")} onReconcile={() => setReconciling(true)} />
+        <LedgerLine
+          sums={sums}
+          balance={balance}
+          openBooks={openBooks}
+          creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null}
+          onCredits={() => setTab("credits")}
+          onReconcile={() => setReconciling(true)}
+        />
 
         {/* ===== tabs ===== */}
         <div className="mt-6 mb-6">
@@ -1105,6 +1139,23 @@ function Ledger({ onSignOut }) {
           <div style={{ border: `1px solid ${P.debit}`, color: P.debit }} className="rounded p-2 text-sm mb-4">
             Couldn't reach the database, the last change shows on screen but may not have saved. Check your connection and retry.
           </div>
+        )}
+
+        {balance.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01 && (
+          <button
+            type="button"
+            onClick={() => setReconciling(true)}
+            style={{ border: `1px solid ${P.debit}`, color: P.debit, background: "transparent" }}
+            className="rounded p-2 text-sm mb-4 w-full text-left"
+          >
+            <span style={{ fontFamily: MONO }} className="text-xs">
+              Bank {fmt(balance.bank)} · books {fmt(balance.book)} · Δ {fmt(balance.delta)}
+              {balance.balanceAsOf ? ` as of ${String(balance.balanceAsOf).slice(0, 10)}` : ""}
+            </span>
+            <span className="block text-xs mt-0.5" style={{ color: P.muted }}>
+              Books and bank disagree — tap to re-anchor books to the bank, or sync/import the missing lines.
+            </span>
+          </button>
         )}
 
         {!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`) && (
@@ -1121,7 +1172,7 @@ function Ledger({ onSignOut }) {
         {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
-        {tab === "integrations" && <IntegrationsTab data={data} openBankReview={(rows) => setBankReview(rows)} updateLedgerMeta={(patch) => {
+        {tab === "integrations" && <IntegrationsTab data={data} openBankReview={(rows) => setBankReview(rows)} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
           setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
@@ -1129,7 +1180,7 @@ function Ledger({ onSignOut }) {
         </div>
       </div>
 
-      {/* ===== floating capture chat (stays mounted so the conversation survives closing) ===== */}
+      {/* ===== floating Brasstally chat (stays mounted so the conversation survives closing) ===== */}
       {/* capture panel floats above the dock */}
       <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(24rem, calc(100vw - 24px))", pointerEvents: chatOpen ? "auto" : "none" }}>
         <div className={"capture-pop " + (chatOpen ? "open" : "")}>
@@ -1139,10 +1190,23 @@ function Ledger({ onSignOut }) {
           >
             <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: `1px solid ${P.line}` }}>
               <MessageSquare size={14} style={{ color: P.brass }} />
-              <div style={{ fontFamily: MONO }} className="text-xs uppercase tracking-widest flex-1">Capture</div>
+              <div style={{ fontFamily: MONO }} className="text-xs uppercase tracking-widest flex-1">Brasstally</div>
               <button onClick={() => setChatOpen(false)} style={{ color: P.muted }} className="p-1"><X size={15} /></button>
             </div>
-            <Capture key={data.ledger.id} data={data} addTx={addTx} addAR={addAR} addSub={addSub} month={month} embedded />
+            <Capture
+              key={data.ledger.id}
+              data={data}
+              addTx={addTx}
+              addAR={addAR}
+              addSub={addSub}
+              month={month}
+              balance={balance}
+              openBooks={openBooks}
+              bankReview={bankReview}
+              onReconcile={() => { setChatOpen(false); setReconciling(true); }}
+              onOpenBank={() => { setChatOpen(false); setTab("integrations"); }}
+              embedded
+            />
           </div>
         </div>
       </div>
@@ -1163,8 +1227,8 @@ function Ledger({ onSignOut }) {
           {/* capture button, frosted brass, on the right */}
           <button
             onClick={() => setChatOpen(!chatOpen)}
-            title={chatOpen ? "Close capture" : "Capture a receipt, invoice, or quick entry"}
-            aria-label="Capture"
+            title={chatOpen ? "Close Brasstally" : "Message Brasstally — capture a receipt or ask about the ledger"}
+            aria-label="Brasstally"
             className="dock-capture rounded-full flex items-center justify-center shrink-0"
             style={{ background: theme === "dark" ? "rgba(201,162,75,0.22)" : "rgba(150,118,31,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(201,162,75,0.5)" : "rgba(150,118,31,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
           >
@@ -1208,7 +1272,8 @@ function Ledger({ onSignOut }) {
       )}
       {reconciling && (
         <ReconcileModal
-          currentValue={balance.beforeAnchor ? null : balance.value}
+          currentValue={balance.beforeAnchor ? null : balance.book}
+          initialAmount={balance.source === "bank" && balance.bank != null ? balance.bank : null}
           anchorAmount={balance.anchorAmount}
           anchorDate={balance.anchorDate}
           onSave={setAnchor}
@@ -1280,8 +1345,10 @@ function PreviewModal({ preview, onClose }) {
 }
 
 /* ================= balance reconciliation ================= */
-function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory = [], onSave, onImportInstead, onClose }) {
-  const [amount, setAmount] = useState("");
+function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate, anchorHistory = [], onSave, onImportInstead, onClose }) {
+  const [amount, setAmount] = useState(
+    initialAmount != null && !Number.isNaN(Number(initialAmount)) ? String(Number(initialAmount)) : ""
+  );
   const [date, setDate] = useState(todayStr());
 
   useEffect(() => {
@@ -1302,8 +1369,9 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
         <p style={{ color: P.muted }} className="text-sm mb-4">
-          Check your real accounts and enter the combined total. The ledger anchors to that number on that date ,
-          months you never tracked before it stop affecting the balance, and only entries you log after it count.
+          {initialAmount != null
+            ? "Prefilled from your bank feed. Anchoring aligns the ledger books to that number on this date — it does not invent missing transactions."
+            : "Check your real accounts and enter the combined total. The ledger anchors to that number on that date , months you never tracked before it stop affecting the balance, and only entries you log after it count."}
         </p>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
@@ -1318,12 +1386,12 @@ function ReconcileModal({ currentValue, anchorAmount, anchorDate, anchorHistory 
         </div>
         {drift !== null && Math.abs(drift) > 0.005 && (
           <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3">
-            That's {fmt(Math.abs(drift))} {drift > 0 ? "more" : "less"} than the ledger currently shows, the gap is what went untracked.
+            That's {fmt(Math.abs(drift))} {drift > 0 ? "more" : "less"} than the books currently show ({fmt(currentValue)}), the gap is what went untracked.
           </p>
         )}
         <p style={{ color: P.faint }} className="text-xs mb-4">
           Currently anchored: {fmt(anchorAmount)} on {anchorDate}. Entries dated on or before the anchor stay in your
-          P&L and history, they just don't feed the balance.
+          P&L and history, they just don't feed the books balance.
         </p>
         {anchorHistory.length > 0 && (
           <div className="mb-4">
@@ -1597,12 +1665,25 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
             </div>
             <div className="px-5 py-3 flex items-center gap-3" style={{ borderTop: `1px solid ${P.line}` }}>
               <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex-1">
-                importing {selected.length} · net <span style={{ color: netSelected >= 0 ? P.credit : P.debit }}>{fmt(netSelected)}</span>
+                {selected.length === 0 && sourceLabel === "bank sync"
+                  ? (dupCount > 0 ? "all lines look like duplicates · nothing to import" : "nothing selected")
+                  : <>importing {selected.length} · net <span style={{ color: netSelected >= 0 ? P.credit : P.debit }}>{fmt(netSelected)}</span></>}
               </div>
-              <Btn tone="ghost" onClick={() => { setStep("input"); setErr(""); }}>Back</Btn>
-              <Btn onClick={doImport} disabled={selected.length === 0 && !(anchorToo && ending)}>
-                <Check size={14} /> Import{anchorToo && ending ? " & anchor" : ""}
-              </Btn>
+              {sourceLabel === "bank sync" && selected.length === 0 ? (
+                <>
+                  <Btn tone="ghost" onClick={onClose}>Back</Btn>
+                  <Btn onClick={onClose}>
+                    <Check size={14} /> Done — nothing to import
+                  </Btn>
+                </>
+              ) : (
+                <>
+                  <Btn tone="ghost" onClick={() => { if (sourceLabel === "bank sync") onClose(); else { setStep("input"); setErr(""); } }}>Back</Btn>
+                  <Btn onClick={doImport} disabled={selected.length === 0 && !(anchorToo && ending)}>
+                    <Check size={14} /> Import{anchorToo && ending ? " & anchor" : ""}
+                  </Btn>
+                </>
+              )}
             </div>
           </>
         )}
@@ -1614,16 +1695,17 @@ function ImportModal({ data, addSub, onImport, onClose, initialRows, sourceLabel
 /* ================= signature: the ledger line ================= */
 function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconcile }) {
   const max = Math.max(sums.inc, sums.exp, 1);
+  const fromBank = balance.source === "bank";
   return (
     <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
       <div className="flex flex-wrap justify-between gap-4 mb-3">
         <Stat label="Money in" value={fmt(sums.inc)} color={P.credit} />
         <Stat label="Money out" value={fmt(sums.exp)} color={P.debit} />
         <Stat label="Net this month" value={fmt(sums.net)} color={sums.net >= 0 ? P.credit : P.debit} />
-        <button onClick={onReconcile} className="text-left" title="Set or correct the balance against your real accounts">
-          <Label>Balance to date · fix</Label>
+        <button onClick={onReconcile} className="text-left" title={fromBank ? "Bank balance · tap to align books" : "Set or correct the balance against your real accounts"}>
+          <Label>{fromBank ? "Balance to date · bank" : "Balance to date · fix"}</Label>
           <div style={{ fontFamily: MONO, color: P.brass }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
-            {balance.beforeAnchor ? "," : fmt(balance.value)}
+            {balance.beforeAnchor ? "—" : fmt(balance.value)}
           </div>
         </button>
         {creditsLeft !== null && (
@@ -1658,9 +1740,11 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
         </div>
       )}
       <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs mt-2">
-        {balance.beforeAnchor
-          ? `this month ends before your balance anchor (${balance.anchorDate}), no balance shown`
-          : `anchored: ${fmt(balance.anchorAmount)} on ${balance.anchorDate} · tap the balance to correct it`}
+        {fromBank
+          ? `Bank as of ${balance.balanceAsOf ? String(balance.balanceAsOf).slice(0, 10) : "today"} · books ${fmt(balance.book)}${balance.delta != null && Math.abs(balance.delta) >= 0.01 ? ` · Δ ${fmt(balance.delta)}` : " · matched"} · tap to re-anchor`
+          : balance.beforeAnchor
+            ? `this month ends before your balance anchor (${balance.anchorDate}), no balance shown`
+            : `anchored: ${fmt(balance.anchorAmount)} on ${balance.anchorDate} · tap the balance to correct it`}
       </div>
     </div>
   );
@@ -1879,24 +1963,49 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
   );
 }
 
-/* ================= Capture (chat) ================= */
-function Capture({ data, addTx, addAR, addSub, month, embedded }) {
-  const [msgs, setMsgs] = useState([
-    {
-      role: "assistant",
-      text: "Drop a receipt screenshot or an invoice PDF, or just type something like “paid Vercel $70 today”. I'll read it and pre-fill everything; you confirm the category, personal vs. business, one-time vs. recurring, and whether it's paid or owed. Files are filed with the entry for tax time.",
-    },
-  ]);
+/* ================= Brasstally chat (capture + ledger help) ================= */
+function Capture({ data, addTx, addAR, addSub, month, embedded, balance, openBooks, bankReview, onReconcile, onOpenBank }) {
+  const drift = balance?.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01;
+  const opener = drift
+    ? `Bank is ${fmt(balance.bank)}, books are ${fmt(balance.book)} (Δ ${fmt(balance.delta)}). Want to walk through it? You can also drop a receipt or type a quick entry anytime.`
+    : "Drop a receipt screenshot or an invoice PDF, or just type something like “paid Vercel $70 today”. Ask about balance, duplicates, or bank sync and I'll help. Files are filed with the entry for tax time.";
+  const [mode, setMode] = useState(drift ? "help" : "capture"); // capture | help
+  const [msgs, setMsgs] = useState([{ role: "assistant", text: opener }]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
   const endRef = useRef(null);
+  const greetedDrift = useRef(false);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
+
+  // Surface a fresh drift notice once when balances first disagree after mount
+  useEffect(() => {
+    if (!drift || greetedDrift.current) return;
+    greetedDrift.current = true;
+    setMode("help");
+  }, [drift]);
 
   const push = (m) => setMsgs((prev) => [...prev, m]);
 
+  const ledgerContext = () => {
+    const review = Array.isArray(bankReview) ? bankReview : [];
+    const dupHint = review.length
+      ? `Pending bank-sync review: ${review.length} lines awaiting import decision.`
+      : "No bank-sync review open right now.";
+    return [
+      `Ledger: ${data.ledger.name} (${data.ledger.kind}). Month view: ${month}.`,
+      balance?.source === "bank"
+        ? `Bank balance (Balance to date): ${fmt(balance.bank)}. Books (anchor + cash txs): ${fmt(balance.book)}. Delta bank−books: ${fmt(balance.delta)}.`
+        : `Manual ledger. Balance to date (books): ${fmt(balance?.book ?? balance?.value ?? 0)}. Anchor ${fmt(balance?.anchorAmount)} on ${balance?.anchorDate}.`,
+      `Open AR (owed to you): ${fmt(openBooks?.ar || 0)}. Open AP (you owe): ${fmt(openBooks?.ap || 0)}.`,
+      dupHint,
+      "Open AR/AP do not move cash balance until settled. Help the user find why books drift from the bank, review possible duplicates, and suggest syncing or re-anchoring — never invent transactions as fact.",
+    ].join("\n");
+  };
+
   const handleFile = async (file) => {
     if (!file) return;
+    setMode("capture");
     const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
     if (file.size > MAX_FILE_BYTES) {
       push({ role: "assistant", text: `That file is ${(file.size / 1048576).toFixed(1)} MB, I can file attachments up to 8 MB. Try exporting a smaller PDF or a screenshot of it.` });
@@ -1932,11 +2041,67 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
     setBusy(false);
   };
 
+  const looksLikeEntry = (text) => /\$?\d/.test(text) && /\b(paid|pay|spent|received|got|invoice|receipt|bought|charge|deposit)\b/i.test(text);
+
+  const handleHelp = async (text) => {
+    setBusy(true);
+    try {
+      const raw = await askClaude(
+        [{
+          type: "text",
+          text: `You are Brasstally, a concise bookkeeping assistant for a Canadian ledger app.
+Answer in plain language (2–5 short sentences). Ask one concrete clarifying question when useful.
+If the user should re-anchor books to the bank, say they can tap "Balance to date" or ask you to open reconcile.
+If they should sync the bank, suggest opening Connectors / bank feed.
+Do not claim you already changed the ledger.
+
+LEDGER CONTEXT:
+${ledgerContext()}
+
+User: ${text}
+
+Respond as JSON: { "reply": string, "actions": string[] }
+actions may include zero or more of: "reconcile", "bank", "capture"`,
+        }],
+        {
+          schema: {
+            type: "object",
+            properties: {
+              reply: { type: "string" },
+              actions: { type: "array", items: { type: "string" } },
+            },
+            required: ["reply"],
+          },
+        }
+      );
+      const actions = Array.isArray(raw.actions) ? raw.actions : [];
+      push({
+        role: "assistant",
+        text: raw.reply || "I can help with balance drift, duplicates, or a quick entry — what should we look at?",
+        helpActions: actions.filter((a) => a === "reconcile" || a === "bank" || a === "capture"),
+      });
+    } catch (e) {
+      push({
+        role: "assistant",
+        text: `${friendlyError(e)}. Quick read: ${balance?.source === "bank" ? `bank ${fmt(balance.bank)} vs books ${fmt(balance.book)} (Δ ${fmt(balance.delta)})` : `books ${fmt(balance?.book ?? 0)}`}. Tap Balance to date to re-anchor, or Connectors to sync.`,
+        helpActions: drift ? ["reconcile", "bank"] : ["bank"],
+      });
+    }
+    setBusy(false);
+  };
+
   const handleText = async () => {
     const text = input.trim();
     if (!text) return;
     setInput("");
     push({ role: "user", text });
+    const useHelp = mode === "help" || (!looksLikeEntry(text) && /\b(balance|reconcil|drift|duplicate|bank|sync|plaid|owe|owed|anchor|gap|delta)\b/i.test(text));
+    if (useHelp) {
+      setMode("help");
+      await handleHelp(text);
+      return;
+    }
+    setMode("capture");
     setBusy(true);
     // Parsed on-device first. It costs nothing, and it's the draft we fall back
     // to when the reader is unreachable — a typed line with an amount in it
@@ -1959,12 +2124,12 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
     setBusy(false);
   };
 
-  const saveDraft = async (draft, mode, att) => {
+  const saveDraft = async (draft, modeSave, att) => {
     let attachmentId = null;
     if (att) attachmentId = await storeAttachment(att);
     const filed = att ? (attachmentId ? ` ${att.name} is filed with it.` : " (Heads up: the file itself couldn't be saved to storage, but the entry went through.)") : "";
     const recurrence = draft.recurrence === "recurring" ? "recurring" : "once";
-    if (mode === "paid") {
+    if (modeSave === "paid") {
       addTx({
         date: draft.date || todayStr(),
         amount: Number(draft.amount) || 0,
@@ -1999,6 +2164,27 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
       style={embedded ? {} : { background: P.surface, border: `1px solid ${P.line}` }}
       className={(embedded ? "" : "rounded-lg ") + "flex flex-col"}
     >
+      <div className="flex gap-1 px-3 pt-2">
+        {[
+          ["capture", "Capture"],
+          ["help", "Ledger help"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setMode(id)}
+            style={{
+              fontFamily: MONO,
+              color: mode === id ? P.brass : P.faint,
+              border: `1px solid ${mode === id ? P.brass : P.line}`,
+              background: mode === id ? (P.brass + "18") : "transparent",
+            }}
+            className="rounded-full px-2.5 py-0.5 text-xs"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: embedded ? "45vh" : "55vh", minHeight: embedded ? 240 : 320 }}>
         {msgs.map((m, i) => (
           <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
@@ -2018,12 +2204,25 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
               )}
               {m.text && <p style={{ color: m.role === "assistant" ? P.muted : P.text }}>{m.text}</p>}
               {m.draft && <DraftCard draft={m.draft} att={m.att} data={data} addSub={addSub} onSave={saveDraft} />}
+              {m.helpActions?.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {m.helpActions.includes("reconcile") && onReconcile && (
+                    <Btn tone="ghost" onClick={onReconcile}>Open reconcile</Btn>
+                  )}
+                  {m.helpActions.includes("bank") && onOpenBank && (
+                    <Btn tone="ghost" onClick={onOpenBank}>Open bank feed</Btn>
+                  )}
+                  {m.helpActions.includes("capture") && (
+                    <Btn tone="ghost" onClick={() => setMode("capture")}>Switch to capture</Btn>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}
         {busy && (
           <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex items-center gap-2">
-            <Loader2 size={12} className="animate-spin" /> reading…
+            <Loader2 size={12} className="animate-spin" /> {mode === "help" ? "thinking…" : "reading…"}
           </div>
         )}
         <div ref={endRef} />
@@ -2034,7 +2233,7 @@ function Capture({ data, addTx, addAR, addSub, month, embedded }) {
           <Camera size={16} />
         </Btn>
         <Input
-          placeholder="e.g. paid Vercel $70 today…"
+          placeholder={mode === "help" ? "Message Brasstally…" : "e.g. paid Vercel $70 today…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !busy && handleText()}
@@ -3368,7 +3567,7 @@ function DockBtn({ label, active, onClick, children }) {
 
 /* ================= first-visit tutorials ================= */
 const TOUR_COPY = {
-  overview: ["Your month at a glance", "Planned versus actual, per category. Tap a planned amount to set a budget, tap a category name to see the entries behind it, and use the small arrow to expand subcategories. The chat bubble in the corner captures receipts anywhere in the app."],
+  overview: ["Your month at a glance", "Planned versus actual, per category. Tap a planned amount to set a budget, tap a category name to see the entries behind it, and use the Brasstally bubble in the corner to capture receipts or ask about balance drift."],
   transactions: ["Every entry lives here", "Add one manually, import a whole bank statement, or use Transfer to move money between your ledgers. Tap the pencil on any row to edit it, and the paperclip to file its receipt."],
   pl: ["Your profit and loss", "Switch between business, personal, and combined scope. Owner draws are excluded, credit-paid costs get their own line, and Export produces a CSV your accountant can use as is."],
   arap: ["Who owes you, who you owe", "Upload an invoice and the fields fill themselves. Recurring items queue their next occurrence automatically when you settle them. Tap any open item to edit everything about it."],
@@ -3582,7 +3781,7 @@ const addMonths = (dateStr, m) => {
   return d.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
 };
 
-function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
+function IntegrationsTab({ data, updateLedgerMeta, openBankReview, onConnectionsChange }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
   const fye = data.ledger.fye || "12-31";
@@ -3668,7 +3867,7 @@ function IntegrationsTab({ data, updateLedgerMeta, openBankReview }) {
 
   return (
     <div className="space-y-6">
-      <BankFeedCard data={data} openBankReview={openBankReview} />
+      <BankFeedCard data={data} openBankReview={openBankReview} onConnectionsChange={onConnectionsChange} />
 
       {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
       {!isBiz ? <PersonalTaxCard data={data} /> : (
@@ -3913,7 +4112,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
 
 /* ================= live bank feed (Plaid) ================= */
-function BankFeedCard({ data, openBankReview }) {
+function BankFeedCard({ data, openBankReview, onConnectionsChange }) {
   const [conns, setConns] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(null);
@@ -3923,6 +4122,13 @@ function BankFeedCard({ data, openBankReview }) {
   const [resumable, setResumable] = useState(false);
   const oauthHandled = useRef(false);
 
+  const refreshConns = async () => {
+    const list = await bank.listConnections(data.ledger.id);
+    setConns(list);
+    onConnectionsChange?.(list);
+    return list;
+  };
+
   const finishConnect = async (public_token, metadata, ledgerId) => {
     await bank.plaid("exchange", {
       public_token,
@@ -3930,7 +4136,7 @@ function BankFeedCard({ data, openBankReview }) {
       institution: metadata?.institution?.name || "Bank",
     });
     setResumable(false);
-    setConns(await bank.listConnections(data.ledger.id));
+    await refreshConns();
     setNotice("Bank connected. Tap Sync now to pull transactions into review.");
   };
 
@@ -3948,8 +4154,8 @@ function BankFeedCard({ data, openBankReview }) {
 
   useEffect(() => {
     (async () => {
-      try { setConns(await bank.listConnections(data.ledger.id)); }
-      catch { setConns([]); setShowSetup(true); }
+      try { await refreshConns(); }
+      catch { setConns([]); setShowSetup(true); onConnectionsChange?.([]); }
     })();
   }, [data.ledger.id]);
 
@@ -4044,11 +4250,19 @@ function BankFeedCard({ data, openBankReview }) {
     setBusy(false);
   };
 
+  const startOver = async () => {
+    bank.clearLinkSession();
+    setResumable(false);
+    setErr("");
+    setNotice("Starting a fresh bank connection…");
+    await connect();
+  };
+
   const sync = async (id) => {
     setErr(""); setNotice(""); setSyncing(id);
     try {
       const { transactions } = await bank.plaid("sync", { connection_id: id });
-      setConns(await bank.listConnections(data.ledger.id));
+      await refreshConns();
       if (!transactions.length) setNotice("Up to date. Nothing new since the last sync.");
       else openBankReview(transactions);
     } catch (e) { setErr(String(e.message || e)); }
@@ -4059,7 +4273,9 @@ function BankFeedCard({ data, openBankReview }) {
     if (!window.confirm("Disconnect this bank? Entries you already imported stay in the ledger.")) return;
     try {
       await bank.plaid("disconnect", { connection_id: id });
-      setConns((c) => (c || []).filter((x) => x.id !== id));
+      const next = (conns || []).filter((x) => x.id !== id);
+      setConns(next);
+      onConnectionsChange?.(next);
     } catch (e) { setErr(String(e.message || e)); }
   };
 
@@ -4082,6 +4298,7 @@ function BankFeedCard({ data, openBankReview }) {
               <div className="flex-1 min-w-0">
                 <div className="text-sm truncate">{c.institution || "Bank"}</div>
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+                  {c.current_balance != null ? `${fmt(Number(c.current_balance))} · ` : ""}
                   {c.last_synced ? `last synced ${String(c.last_synced).slice(0, 10)}` : "never synced"}
                 </div>
               </div>
@@ -4099,9 +4316,14 @@ function BankFeedCard({ data, openBankReview }) {
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Connect a bank
         </Btn>
         {resumable && (
-          <Btn tone="ghost" onClick={resume} disabled={busy}>
-            <RotateCcw size={13} /> Resume bank sign-in
-          </Btn>
+          <>
+            <Btn tone="ghost" onClick={resume} disabled={busy}>
+              <RotateCcw size={13} /> Resume bank sign-in
+            </Btn>
+            <Btn tone="ghost" onClick={startOver} disabled={busy} title="Clear the saved session and create a fresh link token">
+              Start over
+            </Btn>
+          </>
         )}
         <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">no signup needed · you sign in with your own bank · Brasstally never sees the password</span>
       </div>
@@ -4114,7 +4336,7 @@ function BankFeedCard({ data, openBankReview }) {
       {showSetup && (
         <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-2 space-y-1.5">
           {[
-            ["1", "Run supabase/migration-bank-connections.sql in the SQL Editor"],
+            ["1", "Run supabase/migration-bank-connections.sql and supabase/migration-bank-balances.sql in the SQL Editor"],
             ["2", "Edge Functions: add secrets PLAID_CLIENT_ID, PLAID_SECRET, and PLAID_ENV (sandbox to test, production when approved)"],
             ["3", "Deploy the function: Edge Functions, New function, name it exactly \"plaid\", paste supabase/functions/plaid/index.ts, Deploy"],
             ["4", `In the Plaid Dashboard → Team Settings → API, add Allowed redirect URI: ${typeof window !== "undefined" ? window.location.origin + "/" : "https://your-site/"}`],
