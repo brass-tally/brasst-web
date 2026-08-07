@@ -137,6 +137,7 @@ export function explainDelta(bankTxns, txs, { balance } = {}) {
   const delta = balance?.delta;
 
   const { auto, suggested, unmatchedBank, unmatchedBook } = proposeMatches(bankTxns, txs, { anchorDate });
+  const flagged = (bankTxns || []).filter((b) => b.reviewReason);
 
   // Money the bank has seen and the books haven't.
   const bankOnly = unmatchedBank.map((b) => ({
@@ -181,7 +182,29 @@ export function explainDelta(bankTxns, txs, { balance } = {}) {
     },
     readyToMatch: auto.length,
     needsAChoice: suggested.length,
-    needsReview: (bankTxns || []).filter((b) => b.reviewReason).length,
+    needsReview: flagged.length,
+    // Fingerprint of everything still open. Two reads of the same untouched
+    // ledger produce the same string; a new bank line, a new or edited entry,
+    // or a move in the bank's own balance produces a different one. This is
+    // what lets the app stop asking once the work has actually been done.
+    //
+    // Deliberately built from ids and amounts rather than from the delta: the
+    // book balance is computed up to the month on screen, so a delta-based
+    // fingerprint would change every time someone paged back a month and the
+    // app would start asking all over again.
+    openSignature: signatureOf([
+      // Every bank line still open, including the ones a proposed pair has
+      // spoken for — a pending suggestion is work that hasn't been done yet.
+      [...unmatchedBank, ...auto.map((p) => p.bank), ...suggested.map((p) => p.bank)]
+        .map((b) => `${b.id}:${round2(b.amount).toFixed(2)}:${b.date}:${b.pending ? "p" : ""}`).sort().join(","),
+      [...unmatchedBook, ...auto.map((p) => p.tx), ...suggested.map((p) => p.tx)]
+        .map((t) => `${t.id}:${round2(t.amount).toFixed(2)}:${t.date}`).sort().join(","),
+      flagged.map((b) => `${b.id}:${b.reviewReason}`).sort().join(","),
+      // Month-independent, unlike the delta: the bank's own figure, and the
+      // anchor the books count from.
+      balance?.bank == null ? "na" : round2(balance.bank).toFixed(2),
+      `${round2(balance?.anchorAmount ?? 0).toFixed(2)}@${anchorDate}`,
+    ]),
     reading: delta == null
       ? "No bank connected — the book balance is the only figure."
       : Math.abs(delta) < 0.01
@@ -194,6 +217,174 @@ export function explainDelta(bankTxns, txs, { balance } = {}) {
 
 const plural = (n, one, many) => (n === 1 ? one : many || `${one}s`);
 const fmtish = (n) => `${n < 0 ? "-" : ""}$${Math.abs(Number(n) || 0).toFixed(2)}`;
+
+/* ---------------- signatures ---------------- */
+
+/**
+ * Short stable hash of whatever parts describe "what's still open". Used to
+ * decide whether a reconciliation the user already finished still applies, so
+ * switching ledgers or reloading doesn't ask for the same work twice. FNV-1a:
+ * no crypto needed, it only has to change when the input changes.
+ */
+export function signatureOf(parts) {
+  const s = (parts || []).map((p) => String(p ?? "")).join("|");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/* ---------------- duplicates ---------------- */
+
+// Same amount, same direction, within a few days, and the description agrees:
+// that's one event written down twice, not two events that happen to rhyme.
+const DUP_WINDOW_DAYS = 3;
+const DUP_TEXT = 0.8;
+
+/**
+ * Groups of ledger entries that look like the same event recorded more than
+ * once. Each group names one entry to keep and the extras that can go.
+ *
+ * Two rules keep this from eating real data:
+ *   · An entry a bank line has matched is proof the money moved, so it's always
+ *     the keeper — and if two members are both bank-matched the bank saw two
+ *     separate events, so the group isn't a duplicate at all and is dropped.
+ *   · Transfers are two linked halves by design and are never candidates.
+ *
+ * Nothing here deletes anything; the caller decides, group by group.
+ */
+export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WINDOW_DAYS, minAmount = 0.01 } = {}) {
+  const matchedIds = new Set(
+    (bankTxns || []).filter((b) => b.status === "matched" && b.matchedTxId).map((b) => b.matchedTxId),
+  );
+  const rows = (txs || []).filter((t) => t.id && t.date && !t.transferId && Number(t.amount) >= minAmount);
+
+  const buckets = new Map();
+  for (const t of rows) {
+    const key = `${t.type}|${round2(t.amount).toFixed(2)}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(t);
+  }
+
+  const groups = [];
+  for (const bucket of buckets.values()) {
+    if (bucket.length < 2) continue;
+    const sorted = [...bucket].sort((a, b) => (a.date === b.date ? String(a.id).localeCompare(String(b.id)) : a.date < b.date ? -1 : 1));
+    const used = new Set();
+
+    for (let i = 0; i < sorted.length; i++) {
+      if (used.has(sorted[i].id)) continue;
+      const members = [sorted[i]];
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (used.has(sorted[j].id)) continue;
+        // sorted by date, so once we're past the window everything after is too
+        if (Math.abs(daysBetween(sorted[i].date, sorted[j].date)) > windowDays) break;
+        if (similarity(sorted[i].description, sorted[j].description) < DUP_TEXT) continue;
+        members.push(sorted[j]);
+      }
+      if (members.length < 2) continue;
+      for (const m of members) used.add(m.id);
+
+      // Both halves cleared the bank → two real events that look alike.
+      if (members.filter((m) => matchedIds.has(m.id)).length > 1) continue;
+
+      const score = (t) => (matchedIds.has(t.id) ? 4 : 0) + (t.attachmentId ? 2 : 0) + (t.subcategory ? 1 : 0);
+      const keep = [...members].sort((a, b) => score(b) - score(a) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))[0];
+      const extras = members.filter((m) => m.id !== keep.id);
+      const identical = extras.every((e) => e.date === keep.date && similarity(e.description, keep.description) >= 0.999);
+
+      groups.push({
+        id: `dup-${keep.id}`,
+        type: keep.type,
+        amount: round2(keep.amount),
+        date: keep.date,
+        description: keep.description,
+        confidence: identical ? "high" : "medium",
+        keep,
+        extras,
+        extraTotal: round2(extras.reduce((s, e) => s + Number(e.amount || 0), 0)),
+        reason: matchedIds.has(keep.id)
+          ? "one copy is matched to a bank line, the others aren't backed by anything"
+          : identical
+            ? `${members.length} identical copies on ${keep.date} — usually a statement imported twice`
+            : "same amount within a few days and the descriptions agree",
+      });
+    }
+  }
+
+  return groups.sort((a, b) => b.extraTotal - a.extraTotal);
+}
+
+/**
+ * The same bank line delivered twice — an account linked through two
+ * connections, or a re-sync that landed under a fresh Plaid id. Extras get
+ * ignored rather than deleted: the rows are the durable record of what the bank
+ * sent, and deleting one just invites the next sync to re-create it.
+ */
+export function findDuplicateBankLines(bankTxns) {
+  const live = (bankTxns || []).filter((b) => !b.removedAt && b.status !== "ignored");
+  const buckets = new Map();
+  for (const b of live) {
+    const key = `${b.date}|${round2(b.amount).toFixed(2)}|${b.direction}|${String(b.description || "").trim().toLowerCase()}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(b);
+  }
+
+  const groups = [];
+  for (const members of buckets.values()) {
+    if (members.length < 2) continue;
+    // Two lines the same bank sent under one connection with different ids are
+    // two real charges (think two identical coffees). Only cross-connection
+    // repeats, or a pending line re-delivered as posted, are duplicates.
+    const connections = new Set(members.map((m) => m.connectionId));
+    const pendingSplit = new Set(members.map((m) => Boolean(m.pending))).size > 1;
+    if (connections.size < 2 && !pendingSplit) continue;
+
+    const score = (b) => (b.status === "matched" ? 4 : 0) + (b.pending ? 0 : 1);
+    const keep = [...members].sort((a, b) => score(b) - score(a))[0];
+    const extras = members.filter((m) => m.id !== keep.id);
+    groups.push({
+      id: `dupbank-${keep.id}`,
+      date: keep.date,
+      amount: round2(keep.amount),
+      direction: keep.direction,
+      description: keep.description,
+      keep,
+      extras,
+      reason: connections.size > 1
+        ? "the same line arrived from two connections — the account is probably linked twice"
+        : "a pending line was re-delivered after it posted",
+    });
+  }
+  return groups.sort((a, b) => b.amount - a.amount);
+}
+
+/**
+ * Is this bank line probably already in the books, just dated further out than
+ * the matcher's window? Answering before an entry gets created is the whole
+ * point: adding it anyway is how a ledger grows duplicates.
+ */
+export function likelyAlreadyInBooks(bankTxn, txs, bankTxns, { windowDays = 21 } = {}) {
+  const claimed = new Set((bankTxns || []).map((b) => b.matchedTxId).filter(Boolean));
+  const type = TYPE_FOR[bankTxn.direction];
+  let best = null;
+  for (const t of txs || []) {
+    if (t.type !== type || claimed.has(t.id) || !t.date) continue;
+    if (Math.abs(Number(t.amount) - Number(bankTxn.amount)) > CENT) continue;
+    const gap = Math.abs(daysBetween(bankTxn.date, t.date));
+    if (gap > windowDays) continue;
+    const text = similarity(bankTxn.description, t.description);
+    const score = text + (1 - gap / (windowDays + 1));
+    if (!best || score > best.score) best = { tx: t, gap, text: round2(text), score };
+  }
+  // A same-amount entry three weeks out is only interesting if the description
+  // backs it up; closer than a week, the amount alone is enough of a warning.
+  if (!best) return null;
+  if (best.gap > 7 && best.text < 0.4) return null;
+  return best;
+}
 
 /* ---------------- reconciliation status of a single entry ---------------- */
 

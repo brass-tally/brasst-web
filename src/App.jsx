@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, Copy, History
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -12,7 +12,10 @@ import { jsPDF } from "jspdf";
 import { askClaude, friendlyError } from "./lib/extract";
 import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
 import { addInterval, occurrencesBetween } from "./lib/analysis";
-import { proposeMatches, explainDelta, clearedIndex } from "./lib/reconcile";
+import {
+  proposeMatches, explainDelta, clearedIndex,
+  findDuplicateEntries, findDuplicateBankLines, likelyAlreadyInBooks, signatureOf,
+} from "./lib/reconcile";
 import { runAgent, trimHistory } from "./lib/agent";
 import { computeInsights } from "./lib/insights";
 
@@ -65,6 +68,18 @@ const fmt0 = (n) =>
 const monthLabel = (ym) => {
   const [y, m] = ym.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-CA", { month: "long", year: "numeric" });
+};
+// "today" / "yesterday" / a date. For history lines, where the point is how
+// long ago something happened rather than the exact stamp.
+const relDay = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  const days = Math.round((new Date(todayLocal() + "T00:00:00") - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  return d.toLocaleDateString("en-CA", { month: "short", day: "numeric" });
 };
 const shiftMonth = (ym, d) => {
   const [y, m] = ym.split("-").map(Number);
@@ -774,9 +789,33 @@ function Ledger({ onSignOut }) {
     [data, bankTxns, balance],
   );
   const cleared = useMemo(() => clearedIndex(bankTxns), [bankTxns]);
+  // Entries recorded twice, and bank lines delivered twice. Both inflate the
+  // gap and both are found before anything is matched, so a reconciliation
+  // never pairs a bank line against a copy.
+  const duplicates = useMemo(
+    () => (data ? findDuplicateEntries(data.transactions, { bankTxns }) : []),
+    [data, bankTxns],
+  );
+  const dupBankLines = useMemo(() => findDuplicateBankLines(bankTxns), [bankTxns]);
+  /* ---- have we already done this exact piece of work? ----
+     Matching a bank line to an entry explains the gap without closing it, so
+     "bank ≠ books" stays true forever and can't be the thing that decides
+     whether to ask. What can decide it is whether anything has moved since the
+     last finished run: same open lines, same residue, same duplicates → the
+     work is done, stay quiet. Anything new → ask again. */
+  const consolidation = useMemo(() => {
+    const signature = signatureOf([
+      recon?.openSignature || "none",
+      duplicates.flatMap((g) => g.extras.map((e) => e.id)).sort().join(","),
+      dupBankLines.flatMap((g) => g.extras.map((e) => e.id)).sort().join(","),
+    ]);
+    const history = data?.consolidations || [];
+    const last = history.find((c) => c.signature) || null;
+    return { signature, history, last, settled: Boolean(last && last.signature === signature) };
+  }, [recon, duplicates, dupBankLines, data]);
   const insights = useMemo(
-    () => (data ? computeInsights(data, { balance, month, bankConns, recon }) : []),
-    [data, balance, month, bankConns, recon],
+    () => (data ? computeInsights(data, { balance, month, bankConns, recon, consolidation, duplicates }) : []),
+    [data, balance, month, bankConns, recon, consolidation, duplicates],
   );
   // A question queued for the chat panel by something else in the app.
   const askAgent = (question) => { setChatSeed({ question, at: Date.now() }); setChatOpen(true); };
@@ -1042,6 +1081,23 @@ function Ledger({ onSignOut }) {
     if (latest) setMonth(latest.slice(0, 7));
     setImporting(false);
     setBankReview(null);
+    // An import folds outside lines into the books, so it belongs in the same
+    // history as a reconciliation — it's the other way the books change without
+    // anyone typing an entry.
+    if (recs.length) {
+      recordConsolidation({
+        kind: "import",
+        createdCount: recs.length,
+        deltaBefore: balance.delta,
+        unexplainedBefore: recon?.unexplained ?? null,
+        note: anchor ? `statement import, anchored to ${fmt(anchor.amount)} on ${anchor.date}` : "statement import",
+        items: recs.slice(0, 200).map((t) => ({
+          kind: "created", date: t.date, amount: t.amount,
+          description: t.description || t.category,
+          detail: `${t.type === "income" ? "+" : "−"}${fmt(t.amount)} · ${t.category}`,
+        })),
+      });
+    }
   };
 
   /* ---- reconciliation: bank line ↔ ledger entry ---- */
@@ -1106,6 +1162,58 @@ function Ledger({ onSignOut }) {
       await bank.matchBankTxn(bankTxn.id, tx.id, "created");
     });
     return tx;
+  };
+
+  /* ---- duplicates ---- */
+
+  // Drops the extra copies of one group and keeps the entry the group named.
+  // Returns what went, so the consolidation log can say what it removed.
+  const removeDuplicateGroup = (group) => {
+    const ids = group.extras.map((e) => e.id);
+    if (!ids.length) return [];
+    const gone = data.transactions.filter((t) => ids.includes(t.id));
+    for (const t of gone) if (t.attachmentId) deleteAttachment(t.attachmentId);
+    setData((d) => ({ ...d, transactions: d.transactions.filter((t) => !ids.includes(t.id)) }));
+    dropMatchesFor(ids);
+    dbTry(() => db.deleteTransactions(ids));
+    return gone;
+  };
+
+  // The bank's own copies are never deleted — the rows are the record of what
+  // it sent, and the next sync would only bring them back. Ignoring takes them
+  // out of the gap and leaves the audit trail intact.
+  const ignoreDuplicateBankLines = (group) => {
+    const ids = group.extras.map((e) => e.id);
+    if (!ids.length) return [];
+    setBankTxns((rows) => rows.map((b) => (ids.includes(b.id) ? { ...b, status: "ignored", matchedTxId: null, matchSource: null } : b)));
+    dbTry(() => Promise.all(ids.map((id) => bank.setBankTxnStatus(id, "ignored"))));
+    return group.extras;
+  };
+
+  /* ---- consolidation history ---- */
+
+  // One row per finished run: what it matched, what it created, what it
+  // removed, and the fingerprint of what was still open when it ended.
+  const recordConsolidation = (run) => {
+    const row = {
+      ...run,
+      signature: run.kind === "import" ? null : consolidation.signature,
+      openBank: recon?.bankOnly.count || 0,
+      openBooks: recon?.bookOnly.count || 0,
+      deltaAfter: balance.delta,
+      unexplainedAfter: recon?.unexplained ?? null,
+    };
+    setData((d) => ({
+      ...d,
+      consolidations: [{ ...row, id: crypto.randomUUID(), createdAt: new Date().toISOString(), items: row.items || [] }, ...(d.consolidations || [])],
+    }));
+    // A failed write here is worth naming precisely: the run still shows as
+    // done on screen, but nothing will remember it after a reload — which is
+    // the exact complaint this whole record exists to fix.
+    db.logConsolidation(data.ledger.id, row).catch((e) => {
+      console.error("consolidation log failed:", e);
+      setToast("This consolidation was applied but couldn't be filed. Run supabase/migration-consolidations.sql so it's remembered next time.");
+    });
   };
 
   const setAnchor = (amount, date, source = "manual") => {
@@ -1248,21 +1356,33 @@ function Ledger({ onSignOut }) {
           </div>
         )}
 
+        {/* The gap is worth shouting about until it's been worked through, and
+            no longer once it has. A finished consolidation stays finished
+            across ledger switches and reloads — until the bank or the books
+            move, at which point this turns loud again by itself. */}
         {balance.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01 && (
           <button
             type="button"
             onClick={() => setMatchOpen(true)}
-            style={{ border: `1px solid ${P.debit}`, color: P.debit, background: "transparent" }}
+            style={{
+              border: `1px solid ${consolidation.settled ? P.line : P.debit}`,
+              color: consolidation.settled ? P.muted : P.debit,
+              background: "transparent",
+            }}
             className="rounded p-2 text-sm mb-4 w-full text-left"
           >
             <span style={{ fontFamily: MONO }} className="text-xs">
               Bank {fmt(balance.bank)} · books {fmt(balance.book)} · Δ {fmt(balance.delta)}
               {balance.balanceAsOf ? ` as of ${String(balance.balanceAsOf).slice(0, 10)}` : ""}
             </span>
-            <span className="block text-xs mt-0.5" style={{ color: P.muted }}>
-              {recon && (recon.bankOnly.count || recon.bookOnly.count)
-                ? `${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} in the books, ${recon.bookOnly.count} ${recon.bookOnly.count === 1 ? "entry hasn't" : "entries haven't"} cleared — tap to pair them up.`
-                : "Books and bank disagree — tap to reconcile line by line."}
+            <span className="block text-xs mt-0.5" style={{ color: consolidation.settled ? P.faint : P.muted }}>
+              {consolidation.settled
+                ? `Consolidated ${relDay(consolidation.last.createdAt)} — the gap is ${recon?.unexplained != null && Math.abs(recon.unexplained) >= 0.01 ? "as explained as it can be" : "fully accounted for"} by ${recon?.bankOnly.count || 0} bank ${(recon?.bankOnly.count || 0) === 1 ? "line" : "lines"} and ${recon?.bookOnly.count || 0} ${(recon?.bookOnly.count || 0) === 1 ? "entry" : "entries"} still open. Tap to review.`
+                : duplicates.length
+                  ? `${duplicates.length} possible ${duplicates.length === 1 ? "duplicate" : "duplicates"} in the books${recon ? `, ${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} recorded` : ""} — tap to consolidate.`
+                  : recon && (recon.bankOnly.count || recon.bookOnly.count)
+                    ? `${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} in the books, ${recon.bookOnly.count} ${recon.bookOnly.count === 1 ? "entry hasn't" : "entries haven't"} cleared — tap to pair them up.`
+                    : "Books and bank disagree — tap to consolidate line by line."}
             </span>
           </button>
         )}
@@ -1312,6 +1432,7 @@ function Ledger({ onSignOut }) {
               balance={balance}
               openBooks={openBooks}
               recon={recon}
+              consolidation={consolidation}
               bankConns={bankConns}
               insights={insights}
               seed={chatSeed}
@@ -1375,6 +1496,9 @@ function Ledger({ onSignOut }) {
           bankTxns={bankTxns}
           balance={balance}
           recon={recon}
+          duplicates={duplicates}
+          dupBankLines={dupBankLines}
+          consolidation={consolidation}
           actions={{
             match: matchBankTxn,
             unmatch: unmatchBankTxn,
@@ -1383,6 +1507,9 @@ function Ledger({ onSignOut }) {
             dismissFlag: dismissReviewFlag,
             applyAuto: applyAutoMatches,
             createFrom: createFromBankTxn,
+            removeDuplicates: removeDuplicateGroup,
+            ignoreDupBank: ignoreDuplicateBankLines,
+            record: recordConsolidation,
           }}
           onAnchorInstead={() => { setMatchOpen(false); setReconciling(true); }}
           onClose={() => setMatchOpen(false)}
@@ -1591,22 +1718,38 @@ const BookLine = ({ t, selected, onSelect }) => (
 );
 
 /**
- * The reconcile workbench. Everything here is a link between a bank line and a
- * ledger entry — nothing rewrites the balance. Re-anchoring is still available
- * behind a link, but it's the escape hatch, not the front door: anchoring sets
- * the gap to zero without explaining a cent of it.
+ * The consolidation workbench, in the order the work actually has to happen:
+ * throw out the copies, pair what's left, add what was never recorded, then
+ * record the run. Nothing here rewrites the balance — re-anchoring is still
+ * available behind a link, but it's the escape hatch, not the front door:
+ * anchoring sets the gap to zero without explaining a cent of it.
+ *
+ * Recording the run is what stops the app asking again. Matching explains the
+ * gap without closing it, so the delta alone can never tell anyone whether the
+ * work is done; the run stores a fingerprint of what was still open when it
+ * finished, and the ask only comes back when that changes.
  */
-function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, onClose }) {
+function MatchView({
+  data, bankTxns, balance, recon, duplicates = [], dupBankLines = [], consolidation,
+  actions, onAnchorInstead, onClose,
+}) {
   const [pickedBank, setPickedBank] = useState(null);
   const [pickedTx, setPickedTx] = useState(null);
   const [adding, setAdding] = useState(null);   // bank line being turned into an entry
   const [showMatched, setShowMatched] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [openRun, setOpenRun] = useState(null); // history row expanded to its items
+  const [openDup, setOpenDup] = useState(null); // duplicate group expanded to its copies
+  // Everything this session did, in order. It becomes the history record on the
+  // way out, so a consolidation can be read back line by line months later.
+  const [log, setLog] = useState([]);
+  const opened = useRef({ delta: balance.delta, unexplained: recon?.unexplained ?? null });
 
   useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose();
+    const onKey = (e) => e.key === "Escape" && closeRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   const proposal = useMemo(
     () => proposeMatches(bankTxns, data.transactions, { anchorDate: balance.anchorDate }),
@@ -1617,21 +1760,127 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
   const ignored = bankTxns.filter((b) => b.status === "ignored");
   const txById = useMemo(() => new Map(data.transactions.map((t) => [t.id, t])), [data.transactions]);
 
+  /* ---- every action goes through here, so nothing happens off the record ---- */
+  const note = (entry) => setLog((l) => [...l, { at: new Date().toISOString(), ...entry }]);
+
+  const doMatch = (bankId, txId, source = "manual") => {
+    const b = bankTxns.find((x) => x.id === bankId);
+    const t = txById.get(txId);
+    actions.match(bankId, txId, source);
+    note({
+      kind: "matched", date: b?.date, amount: b?.amount,
+      description: b?.description || "bank line",
+      detail: `matched to ${t?.description || t?.category || "an entry"}${t?.date && t.date !== b?.date ? ` (${t.date})` : ""}`,
+    });
+  };
+
+  const doApplyAuto = (pairs) => {
+    actions.applyAuto(pairs);
+    for (const p of pairs) {
+      const b = bankTxns.find((x) => x.id === p.bankId);
+      const t = txById.get(p.txId);
+      note({
+        kind: "matched", date: b?.date, amount: b?.amount,
+        description: b?.description || "bank line",
+        detail: `auto-matched to ${t?.description || t?.category || "an entry"}`,
+      });
+    }
+  };
+
+  const doUnmatch = (bankId) => {
+    const b = bankTxns.find((x) => x.id === bankId);
+    actions.unmatch(bankId);
+    note({ kind: "unmatched", date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "match undone" });
+  };
+
+  const doIgnore = (bankId) => {
+    const b = bankTxns.find((x) => x.id === bankId);
+    actions.ignore(bankId);
+    note({ kind: "ignored", date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "set aside, will never have an entry" });
+  };
+
+  const doCreate = (b, opts) => {
+    const t = actions.createFrom(b, opts);
+    note({
+      kind: "created", date: b.date, amount: b.amount,
+      description: b.description || "bank line",
+      detail: `added to the books as ${opts.category}${opts.subcategory ? ` / ${opts.subcategory}` : ""}`,
+    });
+    return t;
+  };
+
+  const doRemoveDup = (g) => {
+    const gone = actions.removeDuplicates(g);
+    if (!gone.length) return;
+    note({
+      kind: "duplicate", date: g.date, amount: g.extraTotal,
+      description: g.description || g.keep.category,
+      detail: `${gone.length} duplicate ${gone.length === 1 ? "copy" : "copies"} removed, kept ${g.keep.date} ${g.keep.description || g.keep.category}`,
+    });
+  };
+
+  const doIgnoreDupBank = (g) => {
+    const gone = actions.ignoreDupBank(g);
+    if (!gone.length) return;
+    note({
+      kind: "duplicate", date: g.date, amount: 0,
+      description: g.description || "bank line",
+      detail: `${gone.length} duplicate bank ${gone.length === 1 ? "line" : "lines"} set aside — ${g.reason}`,
+    });
+  };
+
   const pairSelected = () => {
     if (!pickedBank || !pickedTx) return;
-    actions.match(pickedBank, pickedTx, "manual");
+    doMatch(pickedBank, pickedTx, "manual");
     setPickedBank(null);
     setPickedTx(null);
   };
 
+  /* ---- finishing ---- */
+  const count = (kind) => log.filter((l) => l.kind === kind).length;
+  const dupExtras = duplicates.reduce((s, g) => s + g.extras.length, 0);
+  const dupTotal = duplicates.reduce((s, g) => s + g.extraTotal, 0);
+  const highDups = duplicates.filter((g) => g.confidence === "high");
+
+  const record = () => actions.record({
+    kind: log.length ? "reconcile" : "reviewed",
+    matchedCount: count("matched"),
+    createdCount: count("created"),
+    ignoredCount: count("ignored"),
+    unmatchedCount: count("unmatched"),
+    duplicatesRemoved: log.filter((l) => l.kind === "duplicate").length,
+    duplicateAmount: log.filter((l) => l.kind === "duplicate").reduce((s, l) => s + (Number(l.amount) || 0), 0),
+    deltaBefore: opened.current.delta,
+    unexplainedBefore: opened.current.unexplained,
+    items: log.slice(0, 300),
+    note: log.length ? null : "reviewed, nothing needed changing",
+  });
+
+  const finish = () => { record(); onClose(); };
+  // Work that was actually done is never lost to a stray Escape or a tap on the
+  // backdrop — otherwise the app would ask for it again, which is the whole
+  // thing this is here to stop. Leaving without touching anything records
+  // nothing: that's a look, not a decision.
+  const closeView = () => { if (log.length) record(); onClose(); };
+  const closeRef = useRef(closeView);
+  closeRef.current = closeView;
+
   const connected = balance.source === "bank" && balance.bank != null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 overflow-y-auto" style={{ background: P.overlay }} onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 overflow-y-auto" style={{ background: P.overlay }} onClick={closeView}>
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-4xl p-5 my-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-1">
-          <h3 style={{ fontFamily: SERIF }} className="text-lg">Reconcile</h3>
-          <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+          <div>
+            <h3 style={{ fontFamily: SERIF }} className="text-lg">Consolidate</h3>
+            {consolidation?.last && (
+              <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs">
+                last run {relDay(consolidation.last.createdAt)} · {runSummary(consolidation.last)}
+                {consolidation.settled ? " · nothing has changed since" : ""}
+              </div>
+            )}
+          </div>
+          <button onClick={closeView} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
 
         {/* ---- the gap, and what it's made of ---- */}
@@ -1664,9 +1913,100 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
                   </div>
                   <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(b.amount)}</div>
                   {b.matchedTxId && (
-                    <Btn tone="ghost" onClick={() => actions.unmatch(b.id)}>Unmatch</Btn>
+                    <Btn tone="ghost" onClick={() => doUnmatch(b.id)}>Unmatch</Btn>
                   )}
                   <Btn tone="ghost" onClick={() => actions.dismissFlag(b.id)}>Dismiss</Btn>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ---- the same thing written down twice ----
+             Deliberately above matching: a duplicate that survives into the
+             matching step can be paired with a bank line, which makes the copy
+             look reconciled and hides the real problem. */}
+        {duplicates.length > 0 && (
+          <div style={{ border: `1px solid ${P.brass}` }} className="rounded p-3 mb-4">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div>
+                <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-1">
+                  <Copy size={12} className="inline mb-0.5" /> Recorded more than once
+                </div>
+                <div className="text-sm">
+                  {duplicates.length} {duplicates.length === 1 ? "group" : "groups"} · {dupExtras} extra {dupExtras === 1 ? "copy" : "copies"} worth {fmt(dupTotal)}
+                </div>
+                <div style={{ color: P.faint }} className="text-xs mt-0.5">
+                  A copy is counted twice everywhere it lands — the P&amp;L, the budget, and the gap against the bank. One of each is kept: the one a bank line has already matched, or the one with a receipt.
+                </div>
+              </div>
+              {highDups.length > 1 && (
+                <Btn onClick={() => highDups.forEach(doRemoveDup)}>
+                  <Trash2 size={13} /> Remove {highDups.reduce((s, g) => s + g.extras.length, 0)} exact
+                </Btn>
+              )}
+            </div>
+            <div className="space-y-2">
+              {duplicates.slice(0, 12).map((g) => (
+                <div key={g.id} style={{ border: `1px solid ${P.line}` }} className="rounded p-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm truncate">{g.description || g.keep.category}</div>
+                      <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">
+                        {g.extras.length + 1} copies · {g.reason}
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(g.amount)}</div>
+                    <Btn tone="ghost" onClick={() => doRemoveDup(g)}>
+                      <Trash2 size={13} /> Remove {g.extras.length}
+                    </Btn>
+                  </div>
+                  <button
+                    onClick={() => setOpenDup(openDup === g.id ? null : g.id)}
+                    style={{ color: P.brass, fontFamily: MONO }}
+                    className="text-xs mt-1 underline decoration-dotted underline-offset-2"
+                  >
+                    {openDup === g.id ? "hide" : "show"} the copies →
+                  </button>
+                  {openDup === g.id && (
+                    <div className="mt-2 space-y-1">
+                      {[g.keep, ...g.extras].map((t, i) => (
+                        <div key={t.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: i === 0 ? P.text : P.faint }}>
+                          <span className="shrink-0" style={{ color: i === 0 ? P.credit : P.debit }}>{i === 0 ? "keep" : "drop"}</span>
+                          <span className="flex-1 truncate">{t.date} · {t.description || t.category}{t.subcategory ? ` / ${t.subcategory}` : ""}</span>
+                          {t.attachmentId && <Paperclip size={11} className="shrink-0" />}
+                          <span className="tabular-nums shrink-0">{fmt(t.amount)}</span>
+                        </div>
+                      ))}
+                      <div style={{ color: P.faint }} className="text-xs">
+                        Keeping the wrong one? Remove the other from Transactions instead — nothing here touches the entry it keeps.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {duplicates.length > 12 && (
+                <div style={{ color: P.faint }} className="text-xs">and {duplicates.length - 12} more groups</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ---- the same bank line delivered twice ---- */}
+        {dupBankLines.length > 0 && (
+          <div style={{ border: `1px solid ${P.line}` }} className="rounded p-3 mb-4">
+            <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
+              <Copy size={12} className="inline mb-0.5" /> Duplicate bank lines
+            </div>
+            <div className="space-y-2">
+              {dupBankLines.slice(0, 8).map((g) => (
+                <div key={g.id} className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate">{g.description}</div>
+                    <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">{g.date} · {g.extras.length + 1} copies · {g.reason}</div>
+                  </div>
+                  <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(g.amount)}</div>
+                  <Btn tone="ghost" onClick={() => doIgnoreDupBank(g)}>Set {g.extras.length} aside</Btn>
                 </div>
               ))}
             </div>
@@ -1681,7 +2021,7 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
                 <div className="text-sm">{proposal.auto.length} {proposal.auto.length === 1 ? "pair matches" : "pairs match"} exactly</div>
                 <div style={{ color: P.faint }} className="text-xs">Same amount and direction, within a day or two, and nothing else competes for them.</div>
               </div>
-              <Btn onClick={() => actions.applyAuto(proposal.auto.map((p) => ({ bankId: p.bankId, txId: p.txId })))}>
+              <Btn onClick={() => doApplyAuto(proposal.auto.map((p) => ({ bankId: p.bankId, txId: p.txId })))}>
                 <Check size={13} /> Match all
               </Btn>
             </div>
@@ -1713,7 +2053,7 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
                       </div>
                     </div>
                     <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(p.bank.amount)}</div>
-                    <Btn tone="ghost" onClick={() => actions.match(p.bankId, p.txId, "manual")}><Check size={13} /> Match</Btn>
+                    <Btn tone="ghost" onClick={() => doMatch(p.bankId, p.txId, "manual")}><Check size={13} /> Match</Btn>
                   </div>
                   <div style={{ color: P.faint }} className="text-xs mt-1">
                     {p.ambiguous
@@ -1741,7 +2081,7 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
                     <button onClick={() => setAdding(adding?.id === b.id ? null : b)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
                       add to books
                     </button>
-                    <button onClick={() => actions.ignore(b.id)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                    <button onClick={() => doIgnore(b.id)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
                       ignore
                     </button>
                   </div>
@@ -1749,8 +2089,10 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
                     <AddFromBank
                       bankTxn={b}
                       data={data}
+                      bankTxns={bankTxns}
+                      onMatchInstead={(txId) => { doMatch(b.id, txId, "manual"); setAdding(null); }}
                       onCancel={() => setAdding(null)}
-                      onAdd={(opts) => { actions.createFrom(b, opts); setAdding(null); }}
+                      onAdd={(opts) => { doCreate(b, opts); setAdding(null); }}
                     />
                   )}
                 </div>
@@ -1796,7 +2138,7 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
                     <Check size={11} style={{ color: P.credit }} className="shrink-0" />
                     <span className="flex-1 truncate">{b.date} {b.description} → {txById.get(b.matchedTxId)?.description || "entry"}</span>
                     <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
-                    <button onClick={() => actions.unmatch(b.id)} style={{ color: P.brass }}>unmatch</button>
+                    <button onClick={() => doUnmatch(b.id)} style={{ color: P.brass }}>unmatch</button>
                   </div>
                 ))}
                 {ignored.map((b) => (
@@ -1812,7 +2154,77 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
           </div>
         )}
 
-        <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="w-full text-center text-xs underline decoration-dotted underline-offset-2">
+        {/* ---- what past consolidations did ---- */}
+        {consolidation?.history?.length > 0 && (
+          <div className="mb-4">
+            <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+              <History size={11} className="inline mb-0.5" /> {showHistory ? "hide" : "show"} the last {Math.min(consolidation.history.length, 12)} {consolidation.history.length === 1 ? "consolidation" : "consolidations"} →
+            </button>
+            {showHistory && (
+              <div className="mt-2 space-y-1">
+                {consolidation.history.slice(0, 12).map((run) => (
+                  <div key={run.id} style={{ border: `1px solid ${P.line}` }} className="rounded p-2">
+                    <button onClick={() => setOpenRun(openRun === run.id ? null : run.id)} className="w-full text-left flex items-center gap-2">
+                      <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs shrink-0 w-24">
+                        {String(run.createdAt).slice(0, 10)}
+                      </span>
+                      <span className="text-xs flex-1 min-w-0 truncate" style={{ color: P.muted }}>{runSummary(run)}</span>
+                      {run.deltaBefore != null && run.deltaAfter != null && Math.abs(run.deltaBefore - run.deltaAfter) >= 0.01 && (
+                        <span style={{ fontFamily: MONO, color: P.credit }} className="text-xs tabular-nums shrink-0">
+                          Δ {fmt(run.deltaBefore)} → {fmt(run.deltaAfter)}
+                        </span>
+                      )}
+                      <ChevronRight size={13} style={{ color: P.faint, transform: openRun === run.id ? "rotate(90deg)" : "none", transition: "transform .15s" }} className="shrink-0" />
+                    </button>
+                    {openRun === run.id && (
+                      <div className="mt-2 space-y-1">
+                        {(run.items || []).length === 0 && (
+                          <div style={{ color: P.faint }} className="text-xs">{run.note || "Nothing was changed in this run."}</div>
+                        )}
+                        {(run.items || []).map((it, i) => (
+                          <div key={i} className="flex items-start gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
+                            <span className="shrink-0 w-16" style={{ color: RUN_ITEM_COLOR[it.kind] ? P[RUN_ITEM_COLOR[it.kind]] : P.faint }}>{it.kind}</span>
+                            <span className="flex-1 min-w-0">
+                              <span style={{ color: P.muted }}>{it.date} {it.description}</span>
+                              {it.detail ? <span> — {it.detail}</span> : null}
+                            </span>
+                            <span className="tabular-nums shrink-0">{it.amount ? fmt(it.amount) : ""}</span>
+                          </div>
+                        ))}
+                        <div style={{ color: P.faint }} className="text-xs pt-1">
+                          Left open afterwards: {run.openBank} bank {run.openBank === 1 ? "line" : "lines"}, {run.openBooks} {run.openBooks === 1 ? "entry" : "entries"}.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---- close the run ----
+             Matching explains the gap but never closes it, so "Δ is zero" can't
+             be what tells the app you're done. Recording the run is. Until the
+             bank or the books move, nothing asks you to do this again. */}
+        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-3 mt-1 flex items-center gap-3">
+          <div style={{ color: P.faint }} className="text-xs flex-1">
+            {log.length
+              ? `This run: ${runSummary({
+                  matchedCount: count("matched"), createdCount: count("created"),
+                  ignoredCount: count("ignored"), unmatchedCount: count("unmatched"),
+                  duplicatesRemoved: log.filter((l) => l.kind === "duplicate").length,
+                })}.`
+              : consolidation?.settled
+                ? "Already consolidated, and nothing has moved since."
+                : "Record this once you've been through the lines — the gap that's left gets filed as explained, and you won't be asked again until something changes."}
+          </div>
+          <Btn onClick={finish} disabled={!log.length && consolidation?.settled}>
+            <Check size={13} /> {log.length ? "Save this consolidation" : consolidation?.settled ? "Nothing to record" : "Mark consolidated"}
+          </Btn>
+        </div>
+
+        <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="w-full text-center text-xs underline decoration-dotted underline-offset-2 mt-3">
           or force the books to the bank balance — sets the gap to zero without explaining it →
         </button>
       </div>
@@ -1820,17 +2232,60 @@ function MatchView({ data, bankTxns, balance, recon, actions, onAnchorInstead, o
   );
 }
 
+const RUN_ITEM_COLOR = { matched: "credit", created: "brass", duplicate: "debit", ignored: "faint", unmatched: "muted" };
+
+/** One line describing what a consolidation run did. */
+function runSummary(run) {
+  if (run.kind === "import") {
+    return `statement imported, ${run.createdCount} ${run.createdCount === 1 ? "line" : "lines"} added to the books`;
+  }
+  const parts = [];
+  if (run.matchedCount) parts.push(`${run.matchedCount} matched`);
+  if (run.createdCount) parts.push(`${run.createdCount} added to the books`);
+  if (run.duplicatesRemoved) parts.push(`${run.duplicatesRemoved} duplicate ${run.duplicatesRemoved === 1 ? "group" : "groups"} removed`);
+  if (run.ignoredCount) parts.push(`${run.ignoredCount} set aside`);
+  if (run.unmatchedCount) parts.push(`${run.unmatchedCount} unmatched`);
+  if (!parts.length) return run.kind === "import" ? "statement imported" : "reviewed, nothing changed";
+  return parts.join(", ");
+}
+
 /** Inline form to turn a bank line into a ledger entry. Amount, date and
  *  description come from the bank; only the coding is a decision. */
-function AddFromBank({ bankTxn, data, onAdd, onCancel }) {
+function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCancel }) {
   const type = bankTxn.direction === "credit" ? "income" : "expense";
   const cats = data.categories[type] || [];
   const [category, setCategory] = useState(cats[0]?.name || "Other");
   const [subcategory, setSubcategory] = useState("");
   const subs = cats.find((c) => c.name === category)?.subs || [];
+  // The matcher only looks a few days out, so an entry dated a fortnight from
+  // the bank line never surfaces as a suggestion — and adding this line anyway
+  // is exactly how the books end up with two of everything.
+  const already = useMemo(
+    () => likelyAlreadyInBooks(bankTxn, data.transactions, bankTxns),
+    [bankTxn, data.transactions, bankTxns],
+  );
 
   return (
     <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded p-2 mb-2">
+      {already && (
+        <div style={{ border: `1px solid ${P.brass}` }} className="rounded p-2 mb-2">
+          <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-1">
+            <AlertTriangle size={11} className="inline mb-0.5" /> possibly already recorded
+          </div>
+          <div className="text-xs" style={{ color: P.muted }}>
+            {already.tx.date} · {already.tx.description || already.tx.category} · {fmt(already.tx.amount)}
+            {" — "}same amount {already.gap === 0 ? "on the same day" : `${already.gap} ${already.gap === 1 ? "day" : "days"} away`}.
+            Adding this line would record it twice.
+          </div>
+          {onMatchInstead && (
+            <div className="mt-2">
+              <Btn tone="ghost" onClick={() => onMatchInstead(already.tx.id)}>
+                <Check size={13} /> Match to it instead
+              </Btn>
+            </div>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div>
           <Label>Category</Label>
@@ -2466,6 +2921,7 @@ const TOOL_LABEL = {
   obligations: "checking AR / AP",
   balance_breakdown: "breaking down the balance",
   find_duplicates: "scanning for duplicates",
+  consolidation_history: "reading past consolidations",
   recurring_costs: "listing recurring costs",
   cash_forecast: "projecting cash forward",
   data_quality: "checking for bookkeeping gaps",
@@ -2484,10 +2940,13 @@ const DEFAULT_ASKS = [
 ];
 
 function Capture({
-  data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, bankConns,
+  data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, consolidation, bankConns,
   insights = [], seed, onSeedUsed, apply, onGo,
 }) {
-  const drift = balance?.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01;
+  // A gap that's already been consolidated isn't news — opening the panel on a
+  // ledger you reconciled yesterday should not greet you with it again.
+  const drift = balance?.source === "bank" && balance.delta != null
+    && Math.abs(balance.delta) >= 0.01 && !consolidation?.settled;
   const opener = drift
     ? `Bank is ${fmt(balance.bank)}, books are ${fmt(balance.book)} (Δ ${fmt(balance.delta)}). Ask me to walk through it — I'll go through the entries. You can also drop a receipt or type an entry anytime.`
     : "Drop a receipt or invoice, type something like “paid Vercel $70 today”, or ask me about the books — I can dig through your transactions, budgets, AR/AP, and cash to answer.";
@@ -2529,7 +2988,7 @@ function Capture({
       const { text, messages } = await runAgent({
         history,
         // Rebuilt every turn from live state, so the agent reads what's on screen.
-        ctx: { data, balance, month, bankConns, recon },
+        ctx: { data, balance, month, bankConns, recon, consolidation },
         onEvent: (ev) => {
           if (ev.type === "tool") pushStep(ev.name);
           else if (ev.type === "text") push({ role: "assistant", text: ev.text });
@@ -2548,7 +3007,7 @@ function Capture({
             ? `bank ${fmt(balance.bank)} vs books ${fmt(balance.book)} (Δ ${fmt(balance.delta)})`
             : `balance ${fmt(balance?.book ?? 0)}`
         }, ${fmt(openBooks?.ar || 0)} owed to you, ${fmt(openBooks?.ap || 0)} owed out.`,
-        link: drift ? { view: "reconcile", label: "Open reconcile" } : null,
+        link: drift ? { view: "reconcile", label: "Open consolidate" } : null,
       });
     }
     setBusy(false);
@@ -4938,7 +5397,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
         if (added) parts.push(`${added} new`);
         if (modified) parts.push(`${modified} updated`);
         if (removed) parts.push(`${removed} reversed`);
-        setNotice(`${parts.join(", ")} — opening reconcile.`);
+        setNotice(`${parts.join(", ")} — opening consolidate.`);
         await onSynced?.();
       }
     } catch (e) { setErr(String(e.message || e)); }

@@ -6,6 +6,8 @@
 >    (Already ran an older schema? Run `supabase/migration-balance-anchor.sql` instead.)
 >    Then run `supabase/migration-bank-transactions.sql` — bank reconciliation needs it, and
 >    redeploying the `plaid` function without it will make **Sync now** fail.
+>    Then run `supabase/migration-consolidations.sql` — without it the app can't remember that
+>    you've already consolidated a ledger, and will keep asking on every switch.
 > 2. **AI function**: dashboard → Edge Functions → **Deploy a new function → Via Editor** → name it exactly `extract`,
 >    paste the contents of `supabase/functions/extract/index.ts`, Deploy.
 > 3. **API key secret**: Edge Functions → **Secrets** → add `ANTHROPIC_API_KEY` = your key. (Never put this in the code or repo.)

@@ -26,18 +26,22 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
  * @returns {Array<{id,severity,title,detail,ask,weight}>} highest stakes first.
  *   severity: "alert" needs a decision · "warn" worth a look · "info" FYI
  */
-export function computeInsights(data, { balance, month, bankConns = [], recon = null } = {}) {
+export function computeInsights(data, { balance, month, bankConns = [], recon = null, consolidation = null, duplicates = [] } = {}) {
   const out = [];
   const today = todayStr();
   const m = month || monthOf(today);
   const add = (f) => out.push(f);
+  // A gap that's already been consolidated is a decision, not a finding. It
+  // comes back the moment the bank or the books move — see the signature in
+  // lib/reconcile.js — so silence here is never silence about something new.
+  const settled = Boolean(consolidation?.settled);
   // Categories already spoken for. One card per category, or the strip turns
   // into three ways of saying the same overspend.
   const covered = new Set();
 
   /* ---- bank vs books ---- */
   const delta = balance?.delta;
-  if (balance?.source === "bank" && delta != null && Math.abs(delta) >= 1) {
+  if (balance?.source === "bank" && delta != null && Math.abs(delta) >= 1 && !settled) {
     add({
       id: "drift",
       severity: Math.abs(delta) >= 250 ? "alert" : "warn",
@@ -75,7 +79,7 @@ export function computeInsights(data, { balance, month, bankConns = [], recon = 
   }
 
   /* ---- matches the reconciler is confident about ---- */
-  if (recon?.readyToMatch) {
+  if (recon?.readyToMatch && !settled) {
     add({
       id: "ready-to-match",
       severity: "info",
@@ -193,19 +197,40 @@ export function computeInsights(data, { balance, month, bankConns = [], recon = 
     });
   }
 
-  /* ---- likely duplicates ---- */
-  const dupes = findDuplicates(data, { windowDays: 6, minAmount: 10 });
-  const solid = dupes.pairs.filter((p) => p.confidence !== "low");
-  if (solid.length) {
-    const total = round2(solid.reduce((s, p) => s + p.amount, 0));
-    add({
-      id: "duplicates",
-      severity: total >= 200 ? "warn" : "info",
-      weight: total * 0.9,
-      title: `${plural(solid.length, "possible duplicate", "possible duplicates")}, ${money(total)}`,
-      detail: `${solid[0].a.description} at ${money(solid[0].amount)} appears twice ${solid[0].daysApart === 0 ? "on the same day" : `${plural(solid[0].daysApart, "day", "days")} apart`}. Duplicates inflate expenses and push books away from the bank.`,
-      ask: "Show me the entries that look like duplicates and tell me which one to remove.",
-    });
+  /* ---- likely duplicates ----
+     The consolidation flow's groups lead when it has them: they know which copy
+     a bank line has already vouched for, so they can say what to remove rather
+     than only that something looks doubled. */
+  if (!settled) {
+    // Small change doubled up is a tidy-up, not a finding worth a card.
+    const groups = (duplicates || []).filter((g) => g.extraTotal >= 10);
+    if (groups.length) {
+      const extras = groups.reduce((s, g) => s + g.extras.length, 0);
+      const total = round2(groups.reduce((s, g) => s + g.extraTotal, 0));
+      const top = groups[0];
+      add({
+        id: "duplicates",
+        severity: total >= 200 ? "warn" : "info",
+        weight: total * 0.9 + 100,
+        title: `${plural(extras, "duplicate entry", "duplicate entries")} inflating the books by ${money(total)}`,
+        detail: `${top.description || top.keep.category} at ${money(top.amount)} is recorded ${top.extras.length + 1} times — ${top.reason}. Consolidate keeps one copy of each and removes the rest.`,
+        ask: "Show me the entries that look like duplicates and tell me which one to remove.",
+      });
+    } else {
+      const dupes = findDuplicates(data, { windowDays: 6, minAmount: 10 });
+      const solid = dupes.pairs.filter((p) => p.confidence !== "low");
+      if (solid.length) {
+        const total = round2(solid.reduce((s, p) => s + p.amount, 0));
+        add({
+          id: "duplicates",
+          severity: total >= 200 ? "warn" : "info",
+          weight: total * 0.9,
+          title: `${plural(solid.length, "possible duplicate", "possible duplicates")}, ${money(total)}`,
+          detail: `${solid[0].a.description} at ${money(solid[0].amount)} appears twice ${solid[0].daysApart === 0 ? "on the same day" : `${plural(solid[0].daysApart, "day", "days")} apart`}. Duplicates inflate expenses and push books away from the bank.`,
+          ask: "Show me the entries that look like duplicates and tell me which one to remove.",
+        });
+      }
+    }
   }
 
   /* ---- runway / forward cash ---- */

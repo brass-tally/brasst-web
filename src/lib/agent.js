@@ -112,6 +112,15 @@ export const TOOLS = [
     },
   },
   {
+    name: "consolidation_history",
+    description:
+      "Past consolidation runs on this ledger: when each one ran, what it matched, what it added to the books, what it set aside, and which duplicates it removed — plus whether the gap showing right now has already been worked through. Use this before telling anyone to reconcile, and for any question about what was done to the books and when.",
+    input_schema: {
+      type: "object",
+      properties: { limit: { type: "number", description: "How many runs to return, newest first. Default 10." } },
+    },
+  },
+  {
     name: "recurring_costs",
     description:
       "Recurring spend grouped by merchant with price-change history, plus scheduled recurring AR/AP normalized to a monthly figure. Use for subscription audits and fixed-cost questions.",
@@ -270,6 +279,7 @@ WHAT YOU KNOW ABOUT THIS LEDGER
 - Entries paid from a credit pool are real spend but never move the bank balance.
 - Open receivables and payables are NOT in the balance. They only move cash when settled.
 - If a bank is connected, "Balance to date" is the bank's figure and the books are shown beside it. A delta is a bookkeeping gap to explain, not an error to paper over.
+- Matching a bank line to an entry explains the gap without closing it, so a delta can persist on books that are perfectly reconciled. Check consolidation_history before suggesting they reconcile: if the current gap is already consolidated, say what's still open and leave it there.
 
 CHANGING THINGS
 - You cannot write to the ledger. The propose_* tools draw a confirmation card the user must tap. After calling one, say what the card does and that it's waiting on them — never say you saved, logged, added, or updated anything.
@@ -282,6 +292,40 @@ You can explain how this ledger's own numbers map onto CRA concepts, and what a 
 }
 
 /* ================= tool executors ================= */
+
+/**
+ * The consolidation log, read back. `settled` is the honest answer to "do I
+ * need to reconcile again": it's true only while nothing has moved since the
+ * last finished run.
+ */
+function consolidationHistory(ctx, { limit = 10 } = {}) {
+  const runs = ctx.data?.consolidations || [];
+  const c = ctx.consolidation;
+  return {
+    settled: Boolean(c?.settled),
+    lastRunAt: c?.last?.createdAt || runs[0]?.createdAt || null,
+    totalRuns: runs.length,
+    stillOpen: {
+      bankLinesNotInBooks: ctx.recon?.bankOnly.count ?? null,
+      entriesNotCleared: ctx.recon?.bookOnly.count ?? null,
+      unexplained: ctx.recon?.unexplained ?? null,
+    },
+    runs: runs.slice(0, limit).map((r) => ({
+      at: r.createdAt,
+      kind: r.kind,
+      matched: r.matchedCount,
+      addedToBooks: r.createdCount,
+      setAside: r.ignoredCount,
+      duplicatesRemoved: r.duplicatesRemoved,
+      duplicateAmount: r.duplicateAmount,
+      deltaBefore: r.deltaBefore,
+      deltaAfter: r.deltaAfter,
+      leftOpen: { bank: r.openBank, books: r.openBooks },
+      did: (r.items || []).slice(0, 40).map((i) => `${i.date || ""} ${i.kind}: ${i.description}${i.detail ? ` — ${i.detail}` : ""}`),
+      note: r.note,
+    })),
+  };
+}
 
 // Every executor is a pure read over ctx.data. `ctx` is rebuilt each turn from
 // live React state, so the agent always sees what the user sees.
@@ -303,6 +347,8 @@ const READERS = {
     A.balanceBreakdown(ctx.data, { balance: ctx.balance, bankConns: ctx.bankConns, recon: ctx.recon }),
 
   find_duplicates: (input, ctx) => A.findDuplicates(ctx.data, input),
+
+  consolidation_history: (input, ctx) => consolidationHistory(ctx, input),
 
   recurring_costs: (input, ctx) => A.recurringCosts(ctx.data),
 

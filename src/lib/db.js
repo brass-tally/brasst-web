@@ -161,6 +161,10 @@ export async function loadAll(ledger) {
     }));
   } catch { /* optional */ }
 
+  // Missing table (migration not run) must not break the ledger — without it
+  // the app simply falls back to asking about the gap every time.
+  const consolidations = await listConsolidations(ledger.id);
+
   return {
     ledger,
     settings: {
@@ -177,8 +181,71 @@ export async function loadAll(ledger) {
     receivables: obs.data.filter((o) => o.kind === "receivable").map(rowToOb),
     payables: obs.data.filter((o) => o.kind === "payable").map(rowToOb),
     anchorHistory,
+    consolidations,
     credits,
   };
+}
+
+/* ---------------- consolidation history ---------------- */
+
+const rowToConsolidation = (r) => ({
+  id: r.id,
+  createdAt: r.created_at,
+  kind: r.kind || "reconcile",
+  signature: r.signature || null,
+  deltaBefore: r.delta_before == null ? null : Number(r.delta_before),
+  deltaAfter: r.delta_after == null ? null : Number(r.delta_after),
+  unexplainedBefore: r.unexplained_before == null ? null : Number(r.unexplained_before),
+  unexplainedAfter: r.unexplained_after == null ? null : Number(r.unexplained_after),
+  matchedCount: r.matched_count || 0,
+  createdCount: r.created_count || 0,
+  ignoredCount: r.ignored_count || 0,
+  unmatchedCount: r.unmatched_count || 0,
+  duplicatesRemoved: r.duplicates_removed || 0,
+  duplicateAmount: Number(r.duplicate_amount || 0),
+  openBank: r.open_bank || 0,
+  openBooks: r.open_books || 0,
+  items: Array.isArray(r.items) ? r.items : [],
+  note: r.note || null,
+});
+
+export async function listConsolidations(ledgerId, limit = 30) {
+  try {
+    const { data, error } = await supabase
+      .from("consolidations").select("*").eq("ledger_id", ledgerId)
+      .order("created_at", { ascending: false }).limit(limit);
+    if (error) throw error;
+    return (data || []).map(rowToConsolidation);
+  } catch (e) {
+    console.error("consolidations:", e);
+    return [];
+  }
+}
+
+/** Write one finished run. Throws if the table isn't there — the caller says so,
+ *  because a run nobody filed is a run the app will ask for again. */
+export async function logConsolidation(ledgerId, run) {
+  const { data, error } = await supabase.from("consolidations").insert({
+    ledger_id: ledgerId,
+    kind: run.kind || "reconcile",
+    signature: run.signature || null,
+    delta_before: run.deltaBefore ?? null,
+    delta_after: run.deltaAfter ?? null,
+    unexplained_before: run.unexplainedBefore ?? null,
+    unexplained_after: run.unexplainedAfter ?? null,
+    matched_count: run.matchedCount || 0,
+    created_count: run.createdCount || 0,
+    ignored_count: run.ignoredCount || 0,
+    unmatched_count: run.unmatchedCount || 0,
+    duplicates_removed: run.duplicatesRemoved || 0,
+    duplicate_amount: run.duplicateAmount || 0,
+    open_bank: run.openBank || 0,
+    open_books: run.openBooks || 0,
+    items: run.items || [],
+    note: run.note || null,
+  }).select("*").single();
+  if (error) throw error;
+  return rowToConsolidation(data);
 }
 
 /* ---------------- mutations (all scoped to the current ledger) ---------------- */
@@ -230,6 +297,14 @@ export async function deleteTransfer(transferId) {
 
 export async function deleteTransaction(id) {
   const { error } = await supabase.from("transactions").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/** Duplicate cleanup: one statement for the whole group, so a half-deleted
+ *  group can't be left behind if the connection drops mid-way. */
+export async function deleteTransactions(ids) {
+  if (!ids?.length) return;
+  const { error } = await supabase.from("transactions").delete().in("id", ids);
   if (error) throw error;
 }
 
