@@ -9,6 +9,14 @@ const cors = {
 const json = (o: unknown, s = 200) =>
   new Response(JSON.stringify(o), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 
+type PlaidError = Error & { code?: string | null };
+
+// Codes that no amount of retrying clears: the bank has dropped the session and
+// only the user signing in again through Link update mode can restore it.
+const NEEDS_REAUTH = ["ITEM_LOGIN_REQUIRED", "PENDING_EXPIRATION", "PENDING_DISCONNECT"];
+const statusFor = (code?: string | null) =>
+  !code ? "ok" : NEEDS_REAUTH.includes(code) ? "login_required" : "error";
+
 /** Snapshot depository balances; credit cards are excluded from the cash total. */
 function snapshotBalances(accounts: any[]) {
   const balances = (accounts || []).map((a) => ({
@@ -23,8 +31,10 @@ function snapshotBalances(accounts: any[]) {
   const depository = balances.filter(
     (b) => b.type === "depository" && b.current != null && !Number.isNaN(Number(b.current)),
   );
+  // Rounded: summing floats stores things like 274.48999999999995 into a
+  // numeric column, which then shows up as a phantom one-cent reconciliation gap.
   const current_balance = depository.length
-    ? depository.reduce((s, b) => s + Number(b.current), 0)
+    ? Math.round(depository.reduce((s, b) => s + Number(b.current), 0) * 100) / 100
     : null;
   return { balances, current_balance, balance_as_of: new Date().toISOString() };
 }
@@ -53,8 +63,24 @@ Deno.serve(async (req) => {
         body: JSON.stringify({ ...creds, ...payload }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.error_message || d.error_code || "Plaid error");
+      if (!r.ok) {
+        // The code, not just the message, is what tells "sign in again" apart
+        // from "the bank is down, try later" — callers branch on it.
+        const err = new Error(d.error_message || d.error_code || "Plaid error") as PlaidError;
+        err.code = d.error_code || null;
+        throw err;
+      }
       return d;
+    };
+
+    /** Record how an Item is doing, so the UI can say so before a sync fails. */
+    const markStatus = async (connectionId: string, code: string | null, message: string | null) => {
+      await supabase.from("bank_connections").update({
+        status: statusFor(code),
+        status_code: code,
+        status_error: message,
+        status_at: new Date().toISOString(),
+      }).eq("id", connectionId);
     };
 
     const fetchAndStoreBalances = async (connectionId: string, accessToken: string) => {
@@ -78,6 +104,18 @@ Deno.serve(async (req) => {
         country_codes: ["CA", "US"],
         language: "en",
       };
+
+      // Update mode: hand Link the existing access_token and it re-authenticates
+      // the Item the user already has instead of creating a rival one. Plaid
+      // rejects `products` here — the Item's products are already fixed.
+      if (body.connection_id) {
+        const { data: conn, error } = await supabase
+          .from("bank_connections").select("access_token")
+          .eq("id", body.connection_id).single();
+        if (error || !conn?.access_token) throw new Error("Connection not found");
+        payload.access_token = conn.access_token;
+        delete payload.products;
+      }
       if (typeof body.redirect_uri === "string" && body.redirect_uri) {
         payload.redirect_uri = body.redirect_uri;
       }
@@ -100,19 +138,80 @@ Deno.serve(async (req) => {
 
     if (action === "exchange") {
       const d = await plaid("/item/public_token/exchange", { public_token: body.public_token });
-      const { data: inserted, error } = await supabase.from("bank_connections").insert({
-        ledger_id: body.ledger_id, item_id: d.item_id, access_token: d.access_token,
-        institution: body.institution || "Bank",
-      }).select("id").single();
-      if (error) throw error;
+
+      // Same Item coming back (an update-mode reconnect, or the user linking the
+      // same bank twice) must repair the row we already have. A second row would
+      // double-count the balance in sumBankBalance() and, because bank_transactions
+      // is unique on (connection_id, plaid_txn_id), replay the whole history as
+      // new unmatched lines under the new id.
+      const { data: existing } = await supabase
+        .from("bank_connections").select("id, institution")
+        .eq("ledger_id", body.ledger_id).eq("item_id", d.item_id).maybeSingle();
+
+      const now = new Date().toISOString();
+      let connectionId: string;
+
+      if (existing) {
+        // `cursor` is deliberately absent: keeping it is what makes the next
+        // sync resume where it left off instead of re-importing everything.
+        // The institution name only moves if Link actually supplied one —
+        // update mode often omits it, and "Bank" is worse than what's stored.
+        const { error } = await supabase.from("bank_connections").update({
+          access_token: d.access_token,
+          institution: body.institution || existing.institution,
+          status: "ok", status_code: null, status_error: null, status_at: now,
+        }).eq("id", existing.id);
+        if (error) throw error;
+        connectionId = existing.id;
+      } else {
+        const { data: inserted, error } = await supabase.from("bank_connections").insert({
+          ledger_id: body.ledger_id, item_id: d.item_id, access_token: d.access_token,
+          institution: body.institution || "Bank",
+          status: "ok", status_at: now,
+        }).select("id").single();
+        if (error) throw error;
+        connectionId = inserted.id;
+      }
+
       let snap = { balances: [] as ReturnType<typeof snapshotBalances>["balances"], current_balance: null as number | null, balance_as_of: null as string | null };
       try {
-        snap = await fetchAndStoreBalances(inserted.id, d.access_token);
+        snap = await fetchAndStoreBalances(connectionId, d.access_token);
       } catch (e) {
         // Connection is saved; balances can refresh on the next sync
         console.error("balances after exchange:", e);
       }
-      return json({ ok: true, balances: snap.balances, current_balance: snap.current_balance });
+      return json({
+        ok: true,
+        connection_id: connectionId,
+        reconnected: Boolean(existing),
+        balances: snap.balances,
+        current_balance: snap.current_balance,
+      });
+    }
+
+    // Ask Plaid how each Item in this ledger is actually doing. Without this the
+    // app only discovers a dropped sign-in when a sync throws, which means the
+    // user finds out by pressing a button that then fails.
+    if (action === "check_status") {
+      const { data: conns, error } = await supabase
+        .from("bank_connections").select("id, access_token").eq("ledger_id", body.ledger_id);
+      if (error) throw error;
+
+      const out: Array<Record<string, unknown>> = [];
+      for (const c of conns || []) {
+        try {
+          const d = await plaid("/item/get", { access_token: c.access_token });
+          const itemErr = d.item?.error || null;
+          await markStatus(c.id, itemErr?.error_code || null, itemErr?.error_message || null);
+          out.push({ id: c.id, status: statusFor(itemErr?.error_code), code: itemErr?.error_code || null });
+        } catch (e) {
+          // One unreachable Item shouldn't blank the health of the others.
+          const code = (e as PlaidError).code || null;
+          await markStatus(c.id, code, String((e as Error).message || e));
+          out.push({ id: c.id, status: statusFor(code), code });
+        }
+      }
+      return json({ connections: out });
     }
 
     if (action === "sync") {
@@ -127,12 +226,21 @@ Deno.serve(async (req) => {
       let cursor = conn.cursor || undefined;
       const added: any[] = [], modified: any[] = [], removed: any[] = [];
       let hasMore = true, guard = 0;
-      while (hasMore && guard < 20) {
-        const d = await plaid("/transactions/sync", { access_token: conn.access_token, cursor, count: 250 });
-        added.push(...(d.added || []));
-        modified.push(...(d.modified || []));
-        removed.push(...(d.removed || []));
-        cursor = d.next_cursor; hasMore = d.has_more; guard += 1;
+      try {
+        while (hasMore && guard < 20) {
+          const d = await plaid("/transactions/sync", { access_token: conn.access_token, cursor, count: 250 });
+          added.push(...(d.added || []));
+          modified.push(...(d.modified || []));
+          removed.push(...(d.removed || []));
+          cursor = d.next_cursor; hasMore = d.has_more; guard += 1;
+        }
+      } catch (e) {
+        // Persist the reason before rethrowing. Otherwise a dropped sign-in is
+        // invisible in the data — last_synced simply stops moving, and only
+        // whoever happens to read the table ever finds out.
+        const code = (e as PlaidError).code || null;
+        await markStatus(conn.id, code, String((e as Error).message || e));
+        throw e;
       }
 
       const now = new Date().toISOString();
@@ -181,8 +289,13 @@ Deno.serve(async (req) => {
       }
 
       // Everything is durable — only now is it safe to move the cursor past it.
+      // A sync that got this far proves the Item is healthy, so clear any stale
+      // failure recorded against it in the same write.
       const { error: curErr } = await supabase.from("bank_connections")
-        .update({ cursor, last_synced: now }).eq("id", conn.id);
+        .update({
+          cursor, last_synced: now,
+          status: "ok", status_code: null, status_error: null, status_at: now,
+        }).eq("id", conn.id);
       if (curErr) throw curErr;
 
       let snap = { balances: [] as ReturnType<typeof snapshotBalances>["balances"], current_balance: null as number | null, balance_as_of: null as string | null };

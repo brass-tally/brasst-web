@@ -24,11 +24,21 @@ export async function plaid(action, body = {}) {
 export async function listConnections(ledgerId) {
   const { data, error } = await supabase
     .from("bank_connections")
-    .select("id, institution, last_synced, current_balance, balance_as_of, accounts")
+    .select("id, institution, last_synced, current_balance, balance_as_of, accounts, status, status_code, status_error, status_at")
     .eq("ledger_id", ledgerId)
     .order("created_at");
   if (error) throw error;
   return data || [];
+}
+
+/** True when only a fresh sign-in through Link update mode can revive this one. */
+export function needsReconnect(conn) {
+  return conn?.status === "login_required";
+}
+
+/** Ask Plaid how every Item in this ledger is doing and store the answer. */
+export async function checkStatus(ledgerId) {
+  return plaid("check_status", { ledger_id: ledgerId });
 }
 
 /** Sum of depository balances across connections (null if none reported yet). */
@@ -169,8 +179,10 @@ function linkStores() {
   return out;
 }
 
-export function saveLinkSession({ link_token, ledger_id }) {
-  const value = JSON.stringify({ link_token, ledger_id, at: Date.now() });
+// connection_id is set only for update-mode reconnects, so an OAuth return
+// lands back on the right flow.
+export function saveLinkSession({ link_token, ledger_id, connection_id = null }) {
+  const value = JSON.stringify({ link_token, ledger_id, connection_id, at: Date.now() });
   for (const store of linkStores()) {
     try { store.setItem(LINK_SESSION_KEY, value); } catch { /* private mode */ }
   }

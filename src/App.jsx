@@ -5246,15 +5246,29 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
     return list;
   };
 
+  // Ask Plaid whether each Item is still signed in, then re-read. Runs in the
+  // background: a dropped sign-in should announce itself here rather than
+  // waiting for the user to press Sync and watch it fail.
+  const refreshHealth = async () => {
+    try {
+      await bank.checkStatus(data.ledger.id);
+      await refreshConns();
+    } catch { /* health is a nicety; never block the card on it */ }
+  };
+
   const finishConnect = async (public_token, metadata, ledgerId) => {
-    await bank.plaid("exchange", {
+    // No institution name in update mode — send null rather than "Bank" so the
+    // server keeps the name already stored instead of overwriting it.
+    const res = await bank.plaid("exchange", {
       public_token,
       ledger_id: ledgerId,
-      institution: metadata?.institution?.name || "Bank",
+      institution: metadata?.institution?.name || null,
     });
     setResumable(false);
     await refreshConns();
-    setNotice("Bank connected. Tap Sync now to pull transactions into review.");
+    setNotice(res?.reconnected
+      ? "Bank sign-in restored. Tap Sync now to pick up everything since the last sync."
+      : "Bank connected. Tap Sync now to pull transactions into review.");
   };
 
   const handleLinkExit = (exitErr, metadata) => {
@@ -5271,7 +5285,10 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
 
   useEffect(() => {
     (async () => {
-      try { await refreshConns(); }
+      try {
+        const list = await refreshConns();
+        if (list.length) refreshHealth();
+      }
       catch { setConns([]); setShowSetup(true); onConnectionsChange?.([]); }
     })();
   }, [data.ledger.id]);
@@ -5346,6 +5363,30 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
     setBusy(false);
   };
 
+  // Update mode: re-authenticate the Item the ledger already holds. Distinct
+  // from connect() on purpose — linking the bank again would create a second
+  // connection, which double-counts the balance and re-imports every line.
+  const reconnect = async (id) => {
+    setErr(""); setNotice(""); setBusy(true);
+    try {
+      const redirect_uri = bank.plaidRedirectUri();
+      const { link_token } = await bank.plaid("create_link_token", { redirect_uri, connection_id: id });
+      bank.saveLinkSession({ link_token, ledger_id: data.ledger.id, connection_id: id });
+      setResumable(true);
+      await bank.openPlaidLink({
+        link_token,
+        onSuccess: async (public_token, metadata) => {
+          try { await finishConnect(public_token, metadata, data.ledger.id); }
+          catch (e) { setErr(String(e.message || e)); }
+        },
+        onExit: handleLinkExit,
+      });
+    } catch (e) {
+      setErr(String(e.message || e));
+    }
+    setBusy(false);
+  };
+
   const resume = async () => {
     const session = bank.loadLinkSession();
     if (!session) { setResumable(false); return; }
@@ -5400,7 +5441,15 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
         setNotice(`${parts.join(", ")} — opening consolidate.`);
         await onSynced?.();
       }
-    } catch (e) { setErr(String(e.message || e)); }
+    } catch (e) {
+      const msg = String(e.message || e);
+      // The server has just recorded why this failed; re-read so the row shows
+      // its Reconnect button instead of only a raw Plaid string in the banner.
+      await refreshConns().catch(() => {});
+      setErr(/ITEM_LOGIN_REQUIRED|PENDING_EXPIRATION|login is required/i.test(msg)
+        ? "This bank needs you to sign in again. Use Reconnect on the connection below — it restores this connection in place and keeps your matched lines."
+        : msg);
+    }
     setSyncing(null);
   };
 
@@ -5428,21 +5477,33 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
 
       {conns?.length > 0 && (
         <div className="mt-4 space-y-2">
-          {conns.map((c) => (
-            <div key={c.id} style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 flex items-center gap-2">
+          {conns.map((c) => {
+            const stale = bank.needsReconnect(c);
+            return (
+            <div key={c.id} style={{ background: P.bg, border: `1px solid ${stale ? P.debit : P.line}` }} className="rounded-lg p-3 flex items-center gap-2 flex-wrap">
               <div className="flex-1 min-w-0">
                 <div className="text-sm truncate">{c.institution || "Bank"}</div>
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
                   {c.current_balance != null ? `${fmt(Number(c.current_balance))} · ` : ""}
                   {c.last_synced ? `last synced ${String(c.last_synced).slice(0, 10)}` : "never synced"}
                 </div>
+                {stale && (
+                  <div style={{ color: P.debit }} className="text-xs mt-1">
+                    Sign-in expired — balance and transactions have been frozen since the last sync. Reconnect to resume.
+                  </div>
+                )}
               </div>
-              <Btn tone="ghost" onClick={() => sync(c.id)} disabled={syncing === c.id}>
-                {syncing === c.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Sync now
-              </Btn>
+              {stale
+                ? <Btn onClick={() => reconnect(c.id)} disabled={busy}>
+                    {busy ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Reconnect
+                  </Btn>
+                : <Btn tone="ghost" onClick={() => sync(c.id)} disabled={syncing === c.id}>
+                    {syncing === c.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Sync now
+                  </Btn>}
               <button onClick={() => disconnect(c.id)} style={{ color: P.faint }} title="Disconnect"><Trash2 size={13} /></button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
