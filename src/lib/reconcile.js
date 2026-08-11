@@ -114,6 +114,84 @@ export function proposeMatches(bankTxns, txs, { anchorDate = "1970-01-01" } = {}
   };
 }
 
+/* ---------------- the plan ----------------
+   Consolidating used to be a screen you drove: here are two columns, off you
+   go. That asks the wrong person to do the work. Nobody opens their books
+   already knowing which of thirty bank lines is the one that matters.
+
+   So the engine decides first and the person reviews. Everything it can settle
+   on its own goes in `fix`, as one approvable plan with every item written out
+   before it runs. Everything genuinely out of its scope, a coin flip between
+   two entries, a charge nobody recorded, a line the bank changed after the
+   fact, goes in `ask`, one question at a time. If `ask` is empty, there is
+   nothing to think about and the screen should say so. */
+
+/**
+ * @returns {{
+ *   fix: { matches, duplicates, dupBank, count, lines: string[] },
+ *   ask: { changed, maybeDuplicates, pairs, unrecorded, count },
+ *   uncleared, scanned: { bank, books },
+ * }}
+ */
+export function consolidationPlan({ bankTxns = [], txs = [], duplicates = [], dupBankLines = [], balance } = {}) {
+  const anchorDate = balance?.anchorDate || "1970-01-01";
+  const { auto, suggested, unmatchedBank, unmatchedBook } = proposeMatches(bankTxns, txs, { anchorDate });
+
+  const changed = (bankTxns || []).filter((b) => b.reviewReason);
+  // The bar for deleting something without being asked is deliberately higher
+  // than the bar for flagging it: same day, same amount, and the same
+  // description down to the character. That is a statement imported twice.
+  // Everything else, including anything the scorer merely thinks is close, is a
+  // judgement call and belongs in `ask`.
+  const autoRemovable = (g) =>
+    g.confidence === "high" &&
+    g.extras.every((e) => e.date === g.keep.date && sameText(e.description, g.keep.description));
+  const exactDups = duplicates.filter(autoRemovable);
+  const maybeDups = duplicates.filter((g) => !autoRemovable(g));
+
+  const dupExtras = exactDups.reduce((s, g) => s + g.extras.length, 0);
+  const dupBankExtras = dupBankLines.reduce((s, g) => s + g.extras.length, 0);
+
+  // Anything the plan is about to deal with must not also be asked about. A
+  // repeated bank line is both "the bank sent this twice" and "nothing in the
+  // books explains this", and listing it under both reads as two problems.
+  const spokenFor = new Set(dupBankLines.flatMap((g) => g.extras.map((e) => e.id)));
+  const goingAway = new Set(exactDups.flatMap((g) => g.extras.map((e) => e.id)));
+  const openBank = unmatchedBank.filter((b) => !spokenFor.has(b.id));
+  const openBook = unmatchedBook.filter((t) => !goingAway.has(t.id));
+
+  const lines = [];
+  if (auto.length) lines.push(auto.length === 1
+    ? "Pair 1 bank line with the entry it belongs to. Same amount, within a day or two, and nothing else competing for it."
+    : `Pair ${auto.length} bank lines with the entries they belong to. Same amount, within a day or two, and nothing else competing for them.`);
+  if (dupExtras) lines.push(dupExtras === 1
+    ? `Remove 1 entry that was recorded twice, worth ${fmtish(exactDups[0].extraTotal)}. It is an exact copy of the one being kept.`
+    : `Remove ${dupExtras} entries that were recorded twice, worth ${fmtish(exactDups.reduce((s, g) => s + g.extraTotal, 0))} between them. Each is an exact copy of one being kept.`);
+  if (dupBankExtras) lines.push(`Set aside ${dupBankExtras} bank ${dupBankExtras === 1 ? "line the bank sent" : "lines the bank sent"} twice. The originals stay.`);
+
+  return {
+    fix: {
+      matches: auto,
+      duplicates: exactDups,
+      dupBank: dupBankLines,
+      count: auto.length + dupExtras + dupBankExtras,
+      lines,
+    },
+    ask: {
+      changed,
+      maybeDuplicates: maybeDups,
+      pairs: suggested,
+      unrecorded: openBank,
+      count: changed.length + maybeDups.length + suggested.length + openBank.length,
+    },
+    uncleared: openBook,
+    scanned: {
+      bank: (bankTxns || []).filter((b) => !b.removedAt && b.date > anchorDate).length,
+      books: (txs || []).filter((t) => t.date && t.date > anchorDate && isCash(t)).length,
+    },
+  };
+}
+
 /* ---------------- what the delta is actually made of ---------------- */
 
 /**
@@ -206,7 +284,7 @@ export function explainDelta(bankTxns, txs, { balance } = {}) {
       `${round2(balance?.anchorAmount ?? 0).toFixed(2)}@${anchorDate}`,
     ]),
     reading: delta == null
-      ? "No bank connected — the book balance is the only figure."
+      ? "No bank connected, so the book balance is the only figure."
       : Math.abs(delta) < 0.01
         ? "Bank and books agree."
         : Math.abs(round2(delta - explained)) < 0.01
@@ -217,6 +295,10 @@ export function explainDelta(bankTxns, txs, { balance } = {}) {
 
 const plural = (n, one, many) => (n === 1 ? one : many || `${one}s`);
 const fmtish = (n) => `${n < 0 ? "-" : ""}$${Math.abs(Number(n) || 0).toFixed(2)}`;
+/** Same words, ignoring case and surrounding space. Not a score, an equality. */
+const sameText = (a, b) =>
+  String(a || "").trim().replace(/\s+/g, " ").toLowerCase() ===
+  String(b || "").trim().replace(/\s+/g, " ").toLowerCase();
 
 /* ---------------- signatures ---------------- */
 
@@ -293,7 +375,13 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
       const score = (t) => (matchedIds.has(t.id) ? 4 : 0) + (t.attachmentId ? 2 : 0) + (t.subcategory ? 1 : 0);
       const keep = [...members].sort((a, b) => score(b) - score(a) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))[0];
       const extras = members.filter((m) => m.id !== keep.id);
-      const identical = extras.every((e) => e.date === keep.date && similarity(e.description, keep.description) >= 0.999);
+      // "Identical" has to mean the same characters, not a high similarity
+      // score. The scorer drops tokens of two letters or less, so "Contractor A"
+      // and "Contractor B" both reduce to {contractor} and score a perfect 1 —
+      // two real payments to two real people, one of which would be deleted as
+      // a copy. Anything that is not literally the same text is a judgement
+      // call and has to stay one.
+      const identical = extras.every((e) => e.date === keep.date && sameText(e.description, keep.description));
 
       groups.push({
         id: `dup-${keep.id}`,
@@ -308,7 +396,7 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
         reason: matchedIds.has(keep.id)
           ? "one copy is matched to a bank line, the others aren't backed by anything"
           : identical
-            ? `${members.length} identical copies on ${keep.date} — usually a statement imported twice`
+            ? `${members.length} identical copies on ${keep.date}, usually a statement imported twice`
             : "same amount within a few days and the descriptions agree",
       });
     }
@@ -354,7 +442,7 @@ export function findDuplicateBankLines(bankTxns) {
       keep,
       extras,
       reason: connections.size > 1
-        ? "the same line arrived from two connections — the account is probably linked twice"
+        ? "the same line arrived from two connections, the account is probably linked twice"
         : "a pending line was re-delivered after it posted",
     });
   }

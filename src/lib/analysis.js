@@ -384,7 +384,7 @@ export function findDuplicates(data, { windowDays = 6, minAmount = 5, threshold 
           likelyCause: /^(paid|received):/i.test(sorted[j].description) || /^(paid|received):/i.test(sorted[i].description)
             ? "one side looks like an AR/AP settlement, the other like a manual or imported entry"
             : gap === 0
-              ? "same day, same amount — often a double import or a double tap"
+              ? "same day, same amount, often a double import or a double tap"
               : "same amount within a few days",
         });
       }
@@ -421,7 +421,7 @@ export function balanceBreakdown(data, { balance, bankConns = [], recon = null }
     bank: balance?.bank == null ? null : round2(balance.bank),
     delta: delta == null ? null : round2(delta),
     reading: delta == null
-      ? "No bank connected — the book balance is the only figure."
+      ? "No bank connected, so the book balance is the only figure."
       : Math.abs(delta) < 0.01
         ? "Bank and books agree."
         : delta > 0
@@ -445,7 +445,7 @@ export function balanceBreakdown(data, { balance, bankConns = [], recon = null }
       "transactions after the anchor date that were never entered (sync or import them)",
       "an entry recorded twice (see find_duplicates)",
       "an AR/AP settled in the app on a date the bank cleared differently",
-      "a stale bank balance — check bankBalanceAsOf",
+      "a stale bank balance, check bankBalanceAsOf",
       "an anchor set to the wrong date, so pre-anchor entries are double-counted",
     ],
     bankBalanceAsOf: balance?.balanceAsOf ? String(balance.balanceAsOf).slice(0, 10) : null,
@@ -507,7 +507,7 @@ export function recurringCosts(data) {
     scheduledObligations: scheduled,
     scheduledMonthlyOut: sum(scheduled.filter((s) => s.kind === "payables"), (s) => s.monthlyEquivalent),
     scheduledMonthlyIn: sum(scheduled.filter((s) => s.kind === "receivables"), (s) => s.monthlyEquivalent),
-    note: "Subscriptions are transactions the ledger marks recurring, grouped by merchant. They are historical, not scheduled — only AR/AP carry real due dates.",
+    note: "Subscriptions are transactions the ledger marks recurring, grouped by merchant. They are historical, not scheduled. Only AR/AP carry real due dates.",
   };
 }
 

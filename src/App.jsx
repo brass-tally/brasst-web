@@ -13,11 +13,16 @@ import { askClaude, friendlyError } from "./lib/extract";
 import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
 import { addInterval, occurrencesBetween } from "./lib/analysis";
 import {
-  proposeMatches, explainDelta, clearedIndex,
+  proposeMatches, explainDelta, clearedIndex, consolidationPlan,
   findDuplicateEntries, findDuplicateBankLines, likelyAlreadyInBooks, signatureOf,
 } from "./lib/reconcile";
 import { runAgent, trimHistory } from "./lib/agent";
 import { computeInsights } from "./lib/insights";
+import {
+  t2PackageFor, stackDiff, t2Deadlines, t1Deadlines, nextDeadline, countdown, longDate,
+  T2_COMPANION_FORMS, T1_PACKAGE, PROVINCES, SEPARATE_PROVINCIAL_RETURN, CRA_FORMS_INDEX,
+} from "./lib/cra";
+import { GUIDES, guideOpener } from "./lib/guides";
 
 /* ================= palettes: midnight & daylight ledger ================= */
 const PALETTES = {
@@ -85,6 +90,17 @@ const shiftMonth = (ym, d) => {
   const [y, m] = ym.split("-").map(Number);
   const dt = new Date(y, m - 1 + d, 1);
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+};
+// Date and clock time, in the reader's own timezone. "Last synced" is a
+// question about how stale the figure is, and a bare date can't answer it: a
+// sync at 08:00 and one at 23:50 read identically.
+const stamp = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  const day = relDay(iso);
+  const time = d.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
+  return `${day} at ${time}`;
 };
 
 /* ================= attachments (receipts / invoice PDFs) ================= */
@@ -620,6 +636,12 @@ function Ledger({ onSignOut }) {
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
+  const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
+  const [chatNudge, setChatNudge] = useState(null); // { at, received, total } money landed, say so
+  // Read by callbacks that fire after an await, when the closure's copy of
+  // state is already a render behind.
+  const dataRef = useRef(null);
+  const balanceRef = useRef(null);
   const [reconciling, setReconciling] = useState(false);
   const [importing, setImporting] = useState(false);
   const [ledgers, setLedgers] = useState(null);          // null = loading list
@@ -636,6 +658,7 @@ function Ledger({ onSignOut }) {
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 4200); return () => clearTimeout(t); }, [toast]);
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
+  const [setupHidden, setSetupHidden] = useState(() => Boolean(window.localStorage.getItem("setup:hidden")));
 
   /* ---- 1) list this user's ledgers ---- */
   useEffect(() => {
@@ -707,6 +730,36 @@ function Ledger({ onSignOut }) {
       setBankTxns(list);
       return list;
     } catch (e) { console.error("bank transactions:", e); return []; }
+  };
+
+  /* ---- what a sync actually landed ----
+     Pressing Sync is a request for new lines, not a request to be handed a
+     screenful of decisions. So the sync reports back: here is what arrived, and
+     here is whether any of it needs you. Opening the review is then a choice.
+
+     The plan is computed from the rows just fetched rather than from state,
+     because state has not re-rendered yet at this point. */
+  const afterSync = async () => {
+    const rows = await refreshBankTxns();
+    if (!dataRef.current) return null;
+    const txs = dataRef.current.transactions;
+    const plan = consolidationPlan({
+      bankTxns: rows,
+      txs,
+      duplicates: findDuplicateEntries(txs, { bankTxns: rows }),
+      dupBankLines: findDuplicateBankLines(rows),
+      balance: balanceRef.current,
+    });
+    // Money landing is worth saying out loud, whether or not the books need work.
+    const arrived = plan.ask.unrecorded.filter((b) => b.direction === "credit");
+    if (arrived.length) {
+      setChatNudge({
+        at: Date.now(),
+        received: arrived.slice(0, 5).map((b) => ({ id: b.id, description: b.description, amount: b.amount, date: b.date })),
+        total: arrived.reduce((s, b) => s + Number(b.amount || 0), 0),
+      });
+    }
+    return plan;
   };
 
   const createLedgerAndSwitch = async ({ name, kind, startingBalance, anchorDate }) => {
@@ -817,8 +870,17 @@ function Ledger({ onSignOut }) {
     () => (data ? computeInsights(data, { balance, month, bankConns, recon, consolidation, duplicates }) : []),
     [data, balance, month, bankConns, recon, consolidation, duplicates],
   );
+  dataRef.current = data;
+  balanceRef.current = balance;
   // A question queued for the chat panel by something else in the app.
   const askAgent = (question) => { setChatSeed({ question, at: Date.now() }); setChatOpen(true); };
+  // A section handing the chat its own brief, so help arrives already knowing
+  // which screen you were on.
+  const openGuide = (id) => {
+    try { window.localStorage.setItem("guide:used", "1"); } catch { /* private mode */ }
+    setChatGuide({ id, at: Date.now() });
+    setChatOpen(true);
+  };
 
   if (fatal === "migration")
     return (
@@ -964,6 +1026,12 @@ function Ledger({ onSignOut }) {
     const settledOn = actual.date || todayStr();
     const payMethod = actual.payMethod === "credits" ? "credits" : actual.payMethod === "cash" ? "cash" : (item.payMethod === "credits" ? "credits" : "cash");
     const creditId = payMethod === "credits" ? (actual.creditId ?? item.creditId) : undefined;
+    // Evidence. A receipt captured at settle time rides on the transaction it writes.
+    // The obligation keeps the invoice it was filed with (so neither file is orphaned),
+    // and adopts the receipt only when it had nothing on file.
+    const receiptId = actual.attachmentId || undefined;
+    const receiptName = receiptId ? actual.attachmentName : undefined;
+    const obDoc = receiptId && !item.attachmentId ? { attachmentId: receiptId, attachmentName: receiptName } : null;
     const tx = {
       id: crypto.randomUUID(),
       date: settledOn,
@@ -979,8 +1047,8 @@ function Ledger({ onSignOut }) {
       recurrence: item.recurrence,
       payMethod,
       creditId,
-      attachmentId: item.attachmentId,
-      attachmentName: item.attachmentName,
+      attachmentId: receiptId || item.attachmentId,
+      attachmentName: receiptId ? receiptName : item.attachmentName,
     };
     // recurring: queue the NEXT occurrence; the settled one locks in Settled
     const next = item.recurrence === "recurring"
@@ -994,14 +1062,14 @@ function Ledger({ onSignOut }) {
         ...d,
         [kind]: [
           ...(next ? [next] : []),
-          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId } : x)),
+          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId, ...(obDoc || {}) } : x)),
         ],
         transactions: [tx, ...d.transactions],
       };
     });
     setMonth(settledOn.slice(0, 7));
     dbTry(async () => {
-      await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId: creditId || null });
+      await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId: creditId || null, ...(obDoc || {}) });
       await db.insertTransaction(tx);
       if (next) await db.insertObligation(kind, next);
     });
@@ -1137,8 +1205,10 @@ function Ledger({ onSignOut }) {
       const hit = pairs.find((p) => p.bankId === b.id);
       return hit ? { ...b, status: "matched", matchedTxId: hit.txId, matchSource: "auto" } : b;
     }));
+    // No toast here: the consolidate screen is the only caller and it reports
+    // what the approved plan did, in place. Two announcements of one action
+    // reads like two actions.
     dbTry(() => bank.matchMany(pairs.map((p) => ({ bankId: p.bankId, txId: p.txId })), "auto"));
-    setToast(`${pairs.length} bank ${pairs.length === 1 ? "line" : "lines"} matched automatically.`);
   };
 
   // Turn a bank line the books never recorded into a real entry, already linked
@@ -1377,12 +1447,12 @@ function Ledger({ onSignOut }) {
             </span>
             <span className="block text-xs mt-0.5" style={{ color: consolidation.settled ? P.faint : P.muted }}>
               {consolidation.settled
-                ? `Consolidated ${relDay(consolidation.last.createdAt)} — the gap is ${recon?.unexplained != null && Math.abs(recon.unexplained) >= 0.01 ? "as explained as it can be" : "fully accounted for"} by ${recon?.bankOnly.count || 0} bank ${(recon?.bankOnly.count || 0) === 1 ? "line" : "lines"} and ${recon?.bookOnly.count || 0} ${(recon?.bookOnly.count || 0) === 1 ? "entry" : "entries"} still open. Tap to review.`
+                ? `Consolidated ${relDay(consolidation.last.createdAt)}. The gap is ${recon?.unexplained != null && Math.abs(recon.unexplained) >= 0.01 ? "as explained as it can be" : "fully accounted for"} by ${recon?.bankOnly.count || 0} bank ${(recon?.bankOnly.count || 0) === 1 ? "line" : "lines"} and ${recon?.bookOnly.count || 0} ${(recon?.bookOnly.count || 0) === 1 ? "entry" : "entries"} still open. Tap to review.`
                 : duplicates.length
-                  ? `${duplicates.length} possible ${duplicates.length === 1 ? "duplicate" : "duplicates"} in the books${recon ? `, ${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} recorded` : ""} — tap to consolidate.`
+                  ? `${duplicates.length} possible ${duplicates.length === 1 ? "duplicate" : "duplicates"} in the books${recon ? `, ${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} recorded` : ""}. Tap to consolidate.`
                   : recon && (recon.bankOnly.count || recon.bookOnly.count)
-                    ? `${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} in the books, ${recon.bookOnly.count} ${recon.bookOnly.count === 1 ? "entry hasn't" : "entries haven't"} cleared — tap to pair them up.`
-                    : "Books and bank disagree — tap to consolidate line by line."}
+                    ? `${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} in the books, ${recon.bookOnly.count} ${recon.bookOnly.count === 1 ? "entry hasn't" : "entries haven't"} cleared. Tap to pair them up.`
+                    : "Books and bank disagree. Tap to consolidate line by line."}
             </span>
           </button>
         )}
@@ -1394,14 +1464,26 @@ function Ledger({ onSignOut }) {
           }} />
         )}
         <div key={tab} className="tab-enter">
+        {tab === "overview" && !setupHidden && (
+          <SetupChecklist
+            data={data}
+            bankConns={bankConns}
+            openGuide={openGuide}
+            onGo={(where) => {
+              if (where === "capture") return setChatOpen(true);
+              setTab(where);
+            }}
+            onDismiss={() => { window.localStorage.setItem("setup:hidden", "1"); setSetupHidden(true); }}
+          />
+        )}
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} insights={insights} onAsk={askAgent} />}
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
-        {tab === "arap" && <ARAP data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
+        {tab === "arap" && <ARAP openGuide={openGuide} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
-        {tab === "integrations" && <IntegrationsTab data={data} onSynced={async () => { await refreshBankTxns(); setMatchOpen(true); }} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
+        {tab === "integrations" && <IntegrationsTab data={data} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
           setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
@@ -1437,6 +1519,10 @@ function Ledger({ onSignOut }) {
               insights={insights}
               seed={chatSeed}
               onSeedUsed={() => setChatSeed(null)}
+              guide={chatGuide}
+              onGuideUsed={() => setChatGuide(null)}
+              nudge={chatNudge}
+              onNudgeUsed={() => setChatNudge(null)}
               apply={{ addTx, addAR, settleAR, setPlanned, setAnchor }}
               onGo={(view) => {
                 setChatOpen(false);
@@ -1467,7 +1553,7 @@ function Ledger({ onSignOut }) {
           {/* capture button, frosted brass, on the right */}
           <button
             onClick={() => setChatOpen(!chatOpen)}
-            title={chatOpen ? "Close Brasstally" : "Message Brasstally — capture a receipt or ask about the ledger"}
+            title={chatOpen ? "Close Brasstally" : "Message Brasstally, capture a receipt or ask about the ledger"}
             aria-label="Brasstally"
             className="dock-capture rounded-full flex items-center justify-center shrink-0"
             style={{ background: theme === "dark" ? "rgba(201,162,75,0.22)" : "rgba(150,118,31,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(201,162,75,0.5)" : "rgba(150,118,31,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
@@ -1492,6 +1578,7 @@ function Ledger({ onSignOut }) {
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
       {matchOpen && (
         <MatchView
+          openGuide={openGuide}
           data={data}
           bankTxns={bankTxns}
           balance={balance}
@@ -1625,7 +1712,7 @@ function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate,
         </div>
         <p style={{ color: P.muted }} className="text-sm mb-4">
           {initialAmount != null
-            ? "Prefilled from your bank feed. Anchoring aligns the ledger books to that number on this date — it does not invent missing transactions."
+            ? "Prefilled from your bank feed. Anchoring aligns the ledger books to that number on this date. It does not invent missing transactions."
             : "Check your real accounts and enter the combined total. The ledger anchors to that number on that date , months you never tracked before it stop affecting the balance, and only entries you log after it count."}
         </p>
         <div className="grid grid-cols-2 gap-3 mb-3">
@@ -1729,17 +1816,57 @@ const BookLine = ({ t, selected, onSelect }) => (
  * work is done; the run stores a fingerprint of what was still open when it
  * finished, and the ask only comes back when that changes.
  */
+/* ================= consolidate =================
+   A review, not a chore. The engine works the books first and arrives with a
+   plan: here is what I am sure about, approve it; here is what I am not, one
+   question at a time. The two-column pairing screen is still here, because
+   sometimes you do want to drive, but it is behind a link rather than being
+   the first thing you meet. */
+
+function PlanLine({ children, tone = "muted" }) {
+  return (
+    <div className="flex items-start gap-2 text-sm" style={{ color: P[tone] }}>
+      <span style={{ color: P.brass }} className="shrink-0">·</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+/** One thing the engine could not settle, phrased as a question with answers. */
+function AskCard({ title, detail, amount, date, children, tone = "line" }) {
+  return (
+    <div style={{ border: `1px solid ${P[tone]}` }} className="rounded-lg p-3">
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm" style={{ color: P.text }}>{title}</div>
+          {detail && <div style={{ color: P.muted }} className="text-xs mt-0.5">{detail}</div>}
+        </div>
+        {amount != null && (
+          <div className="shrink-0 text-right">
+            <div style={{ fontFamily: MONO }} className="text-sm tabular-nums">{fmt(amount)}</div>
+            {date && <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">{date}</div>}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2 mt-2">{children}</div>
+    </div>
+  );
+}
+
 function MatchView({
   data, bankTxns, balance, recon, duplicates = [], dupBankLines = [], consolidation,
-  actions, onAnchorInstead, onClose,
+  actions, onAnchorInstead, onClose, openGuide,
 }) {
   const [pickedBank, setPickedBank] = useState(null);
   const [pickedTx, setPickedTx] = useState(null);
   const [adding, setAdding] = useState(null);   // bank line being turned into an entry
+  const [showManual, setShowManual] = useState(false);
   const [showMatched, setShowMatched] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [openRun, setOpenRun] = useState(null); // history row expanded to its items
   const [openDup, setOpenDup] = useState(null); // duplicate group expanded to its copies
+  const [fixing, setFixing] = useState(false);
+  const [fixedSummary, setFixedSummary] = useState(null); // what the approved plan actually did
   // Everything this session did, in order. It becomes the history record on the
   // way out, so a consolidation can be read back line by line months later.
   const [log, setLog] = useState([]);
@@ -1751,11 +1878,10 @@ function MatchView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const proposal = useMemo(
-    () => proposeMatches(bankTxns, data.transactions, { anchorDate: balance.anchorDate }),
-    [bankTxns, data.transactions, balance.anchorDate],
+  const plan = useMemo(
+    () => consolidationPlan({ bankTxns, txs: data.transactions, duplicates, dupBankLines, balance }),
+    [bankTxns, data.transactions, duplicates, dupBankLines, balance],
   );
-  const flagged = bankTxns.filter((b) => b.reviewReason);
   const matched = bankTxns.filter((b) => b.status === "matched");
   const ignored = bankTxns.filter((b) => b.status === "ignored");
   const txById = useMemo(() => new Map(data.transactions.map((t) => [t.id, t])), [data.transactions]);
@@ -1770,33 +1896,20 @@ function MatchView({
     note({
       kind: "matched", date: b?.date, amount: b?.amount,
       description: b?.description || "bank line",
-      detail: `matched to ${t?.description || t?.category || "an entry"}${t?.date && t.date !== b?.date ? ` (${t.date})` : ""}`,
+      detail: `paired with ${t?.description || t?.category || "an entry"}${t?.date && t.date !== b?.date ? ` dated ${t.date}` : ""}`,
     });
-  };
-
-  const doApplyAuto = (pairs) => {
-    actions.applyAuto(pairs);
-    for (const p of pairs) {
-      const b = bankTxns.find((x) => x.id === p.bankId);
-      const t = txById.get(p.txId);
-      note({
-        kind: "matched", date: b?.date, amount: b?.amount,
-        description: b?.description || "bank line",
-        detail: `auto-matched to ${t?.description || t?.category || "an entry"}`,
-      });
-    }
   };
 
   const doUnmatch = (bankId) => {
     const b = bankTxns.find((x) => x.id === bankId);
     actions.unmatch(bankId);
-    note({ kind: "unmatched", date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "match undone" });
+    note({ kind: "unmatched", date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "pairing undone" });
   };
 
   const doIgnore = (bankId) => {
     const b = bankTxns.find((x) => x.id === bankId);
     actions.ignore(bankId);
-    note({ kind: "ignored", date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "set aside, will never have an entry" });
+    note({ kind: "ignored", date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "set aside, it will never have an entry" });
   };
 
   const doCreate = (b, opts) => {
@@ -1811,22 +1924,49 @@ function MatchView({
 
   const doRemoveDup = (g) => {
     const gone = actions.removeDuplicates(g);
-    if (!gone.length) return;
+    if (!gone.length) return 0;
     note({
       kind: "duplicate", date: g.date, amount: g.extraTotal,
       description: g.description || g.keep.category,
-      detail: `${gone.length} duplicate ${gone.length === 1 ? "copy" : "copies"} removed, kept ${g.keep.date} ${g.keep.description || g.keep.category}`,
+      detail: `${gone.length} duplicate ${gone.length === 1 ? "copy" : "copies"} removed, kept the one from ${g.keep.date}`,
     });
+    return gone.length;
   };
 
   const doIgnoreDupBank = (g) => {
     const gone = actions.ignoreDupBank(g);
-    if (!gone.length) return;
+    if (!gone.length) return 0;
     note({
       kind: "duplicate", date: g.date, amount: 0,
       description: g.description || "bank line",
-      detail: `${gone.length} duplicate bank ${gone.length === 1 ? "line" : "lines"} set aside — ${g.reason}`,
+      detail: `${gone.length} repeated bank ${gone.length === 1 ? "line" : "lines"} set aside, ${g.reason}`,
     });
+    return gone.length;
+  };
+
+  /* ---- the approved plan, run in one go ---- */
+  const runPlan = () => {
+    setFixing(true);
+    let paired = 0, removed = 0, setAside = 0;
+
+    if (plan.fix.matches.length) {
+      const pairs = plan.fix.matches.map((p) => ({ bankId: p.bankId, txId: p.txId }));
+      actions.applyAuto(pairs);
+      for (const p of plan.fix.matches) {
+        const t = txById.get(p.txId);
+        note({
+          kind: "matched", date: p.bank?.date, amount: p.bank?.amount,
+          description: p.bank?.description || "bank line",
+          detail: `paired with ${t?.description || t?.category || "an entry"}, found by the engine`,
+        });
+      }
+      paired = pairs.length;
+    }
+    for (const g of plan.fix.duplicates) removed += doRemoveDup(g);
+    for (const g of plan.fix.dupBank) setAside += doIgnoreDupBank(g);
+
+    setFixedSummary({ paired, removed, setAside });
+    setFixing(false);
   };
 
   const pairSelected = () => {
@@ -1838,9 +1978,6 @@ function MatchView({
 
   /* ---- finishing ---- */
   const count = (kind) => log.filter((l) => l.kind === kind).length;
-  const dupExtras = duplicates.reduce((s, g) => s + g.extras.length, 0);
-  const dupTotal = duplicates.reduce((s, g) => s + g.extraTotal, 0);
-  const highDups = duplicates.filter((g) => g.confidence === "high");
 
   const record = () => actions.record({
     kind: log.length ? "reconcile" : "reviewed",
@@ -1853,123 +1990,128 @@ function MatchView({
     deltaBefore: opened.current.delta,
     unexplainedBefore: opened.current.unexplained,
     items: log.slice(0, 300),
-    note: log.length ? null : "reviewed, nothing needed changing",
+    note: log.length ? null : "looked through it, nothing needed changing",
   });
 
   const finish = () => { record(); onClose(); };
   // Work that was actually done is never lost to a stray Escape or a tap on the
-  // backdrop — otherwise the app would ask for it again, which is the whole
-  // thing this is here to stop. Leaving without touching anything records
-  // nothing: that's a look, not a decision.
+  // backdrop. Leaving without touching anything records nothing: that's a look,
+  // not a decision.
   const closeView = () => { if (log.length) record(); onClose(); };
   const closeRef = useRef(closeView);
   closeRef.current = closeView;
 
   const connected = balance.source === "bank" && balance.bank != null;
+  const nothingToDo = plan.fix.count === 0 && plan.ask.count === 0;
+
+  // The opening line, in the register someone would actually use out loud.
+  const headline = !connected
+    ? "No bank connected yet, so there is nothing to compare the books against."
+    : nothingToDo
+      ? "Everything lines up. Every bank line has an entry behind it and there are no duplicates."
+      : plan.fix.count && plan.ask.count
+        ? `I went through ${plan.scanned.bank} bank ${plan.scanned.bank === 1 ? "line" : "lines"} and ${plan.scanned.books} ${plan.scanned.books === 1 ? "entry" : "entries"}. I can sort out ${plan.fix.count} of them myself. ${plan.ask.count} ${plan.ask.count === 1 ? "needs" : "need"} you.`
+        : plan.fix.count
+          ? `I went through ${plan.scanned.bank} bank ${plan.scanned.bank === 1 ? "line" : "lines"} and found ${plan.fix.count} ${plan.fix.count === 1 ? "thing" : "things"} I can sort out myself. Nothing else needs you.`
+          : `Nothing for me to fix automatically. ${plan.ask.count} ${plan.ask.count === 1 ? "thing needs" : "things need"} a decision from you.`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 overflow-y-auto" style={{ background: P.overlay }} onClick={closeView}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-4xl p-5 my-6" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 mb-1">
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-3xl p-5 my-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 mb-3">
           <div>
-            <h3 style={{ fontFamily: SERIF }} className="text-lg">Consolidate</h3>
+            <h3 style={{ fontFamily: SERIF }} className="text-xl">Consolidate</h3>
             {consolidation?.last && (
-              <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs">
-                last run {relDay(consolidation.last.createdAt)} · {runSummary(consolidation.last)}
-                {consolidation.settled ? " · nothing has changed since" : ""}
+              <div style={{ color: P.faint }} className="text-xs">
+                Last done {relDay(consolidation.last.createdAt)}. {runSummary(consolidation.last)}.
+                {consolidation.settled ? " Nothing has moved since." : ""}
               </div>
             )}
           </div>
-          <button onClick={closeView} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+          <div className="flex items-center gap-2">
+            <GuideAnchor id="consolidate" onOpen={openGuide} label="What is this?" />
+            <button onClick={closeView} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+          </div>
         </div>
 
-        {/* ---- the gap, and what it's made of ---- */}
-        {connected ? (
-          <>
-            <div style={{ fontFamily: MONO }} className="text-sm tabular-nums mb-1">
-              Bank {fmt(balance.bank)} · books {fmt(balance.book)} ·{" "}
-              <span style={{ color: Math.abs(balance.delta) < 0.01 ? P.credit : P.debit }}>Δ {fmt(balance.delta)}</span>
-            </div>
-            <p style={{ color: P.muted }} className="text-sm mb-4">{recon?.reading}</p>
-          </>
-        ) : (
-          <p style={{ color: P.muted }} className="text-sm mb-4">
-            No bank balance yet — connect a bank on Connectors, or sync an existing connection, and the lines land here.
-          </p>
+        {/* ---- what I found ---- */}
+        <p className="text-sm mb-1" style={{ color: P.text }}>{headline}</p>
+        {connected && (
+          <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs tabular-nums mb-4">
+            bank {fmt(balance.bank)} · books {fmt(balance.book)} · difference{" "}
+            <span style={{ color: Math.abs(balance.delta) < 0.01 ? P.credit : P.brass }}>{fmt(balance.delta)}</span>
+          </div>
         )}
 
-        {/* ---- the bank changed something we'd already settled ---- */}
-        {flagged.length > 0 && (
-          <div style={{ border: `1px solid ${P.debit}` }} className="rounded p-3 mb-4">
-            <div style={{ color: P.debit, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
-              <AlertTriangle size={12} className="inline mb-0.5" /> Changed after matching
+        {/* ---- the plan, written out before it runs ---- */}
+        {plan.fix.count > 0 && !fixedSummary && (
+          <div style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-4 mb-4">
+            <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
+              What I would do
             </div>
-            <div className="space-y-2">
-              {flagged.map((b) => (
-                <div key={b.id} className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate">{b.description}</div>
-                    <div style={{ color: P.faint }} className="text-xs">{b.date} · {b.reviewReason}</div>
-                  </div>
-                  <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(b.amount)}</div>
-                  {b.matchedTxId && (
-                    <Btn tone="ghost" onClick={() => doUnmatch(b.id)}>Unmatch</Btn>
-                  )}
-                  <Btn tone="ghost" onClick={() => actions.dismissFlag(b.id)}>Dismiss</Btn>
-                </div>
-              ))}
+            <div className="space-y-1.5">
+              {plan.fix.lines.map((l, i) => <PlanLine key={i}>{l}</PlanLine>)}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <Btn onClick={runPlan} disabled={fixing}>
+                {fixing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Go ahead
+              </Btn>
+              <button onClick={() => setShowManual(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+                let me look at each one first
+              </button>
+            </div>
+            <p style={{ color: P.faint }} className="text-xs mt-2">
+              Pairing is reversible from this screen. Removing a duplicate deletes the extra copy, and every removal is written into the history below with the copy that was kept.
+            </p>
+          </div>
+        )}
+
+        {fixedSummary && (
+          <div style={{ background: P.bg, border: `1px solid ${P.credit}` }} className="rounded-lg p-3 mb-4">
+            <div style={{ color: P.credit }} className="text-sm">
+              <Check size={13} className="inline mb-0.5" /> Done.{" "}
+              {[
+                fixedSummary.paired ? `${fixedSummary.paired} paired up` : null,
+                fixedSummary.removed ? `${fixedSummary.removed} duplicate ${fixedSummary.removed === 1 ? "entry" : "entries"} removed` : null,
+                fixedSummary.setAside ? `${fixedSummary.setAside} repeated bank ${fixedSummary.setAside === 1 ? "line" : "lines"} set aside` : null,
+              ].filter(Boolean).join(", ") || "nothing needed changing"}.
+            </div>
+            <div style={{ color: P.faint }} className="text-xs mt-1">
+              The difference against the bank does not go to zero from pairing. Pairing explains it, which is what makes the remainder meaningful.
             </div>
           </div>
         )}
 
-        {/* ---- the same thing written down twice ----
-             Deliberately above matching: a duplicate that survives into the
-             matching step can be paired with a bank line, which makes the copy
-             look reconciled and hides the real problem. */}
-        {duplicates.length > 0 && (
-          <div style={{ border: `1px solid ${P.brass}` }} className="rounded p-3 mb-4">
-            <div className="flex items-start justify-between gap-3 mb-2">
-              <div>
-                <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-1">
-                  <Copy size={12} className="inline mb-0.5" /> Recorded more than once
-                </div>
-                <div className="text-sm">
-                  {duplicates.length} {duplicates.length === 1 ? "group" : "groups"} · {dupExtras} extra {dupExtras === 1 ? "copy" : "copies"} worth {fmt(dupTotal)}
-                </div>
-                <div style={{ color: P.faint }} className="text-xs mt-0.5">
-                  A copy is counted twice everywhere it lands — the P&amp;L, the budget, and the gap against the bank. One of each is kept: the one a bank line has already matched, or the one with a receipt.
-                </div>
-              </div>
-              {highDups.length > 1 && (
-                <Btn onClick={() => highDups.forEach(doRemoveDup)}>
-                  <Trash2 size={13} /> Remove {highDups.reduce((s, g) => s + g.extras.length, 0)} exact
-                </Btn>
-              )}
+        {/* ---- the questions ---- */}
+        {plan.ask.count > 0 && (
+          <div className="mb-4">
+            <div className="flex items-baseline justify-between gap-2 mb-2">
+              <Label>Over to you</Label>
+              <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">{plan.ask.count} left</span>
             </div>
             <div className="space-y-2">
-              {duplicates.slice(0, 12).map((g) => (
-                <div key={g.id} style={{ border: `1px solid ${P.line}` }} className="rounded p-2">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm truncate">{g.description || g.keep.category}</div>
-                      <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">
-                        {g.extras.length + 1} copies · {g.reason}
-                      </div>
-                    </div>
-                    <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(g.amount)}</div>
-                    <Btn tone="ghost" onClick={() => doRemoveDup(g)}>
-                      <Trash2 size={13} /> Remove {g.extras.length}
-                    </Btn>
-                  </div>
-                  <button
-                    onClick={() => setOpenDup(openDup === g.id ? null : g.id)}
-                    style={{ color: P.brass, fontFamily: MONO }}
-                    className="text-xs mt-1 underline decoration-dotted underline-offset-2"
-                  >
-                    {openDup === g.id ? "hide" : "show"} the copies →
+
+              {/* the bank changed something already settled */}
+              {plan.ask.changed.map((b) => (
+                <AskCard key={b.id} tone="debit" amount={b.amount} date={b.date}
+                  title={`The bank changed this after you had already dealt with it: ${b.description}`}
+                  detail={b.reviewReason}>
+                  {b.matchedTxId && <Btn tone="ghost" onClick={() => doUnmatch(b.id)}>Undo the pairing</Btn>}
+                  <Btn tone="ghost" onClick={() => actions.dismissFlag(b.id)}>It is fine, leave it</Btn>
+                </AskCard>
+              ))}
+
+              {/* recorded twice, but not identically */}
+              {plan.ask.maybeDuplicates.map((g) => (
+                <AskCard key={g.id} tone="brass" amount={g.amount} date={g.date}
+                  title={`Did you pay ${g.description || g.keep.category} once or ${g.extras.length + 1} times?`}
+                  detail={`${g.extras.length + 1} entries, ${g.reason}. A copy counts twice in the profit and loss, the budget, and the difference against the bank.`}>
+                  <Btn onClick={() => doRemoveDup(g)}><Trash2 size={13} /> Once, remove the {g.extras.length === 1 ? "other" : `other ${g.extras.length}`}</Btn>
+                  <button onClick={() => setOpenDup(openDup === g.id ? null : g.id)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+                    {openDup === g.id ? "hide" : "show me"} the copies
                   </button>
                   {openDup === g.id && (
-                    <div className="mt-2 space-y-1">
+                    <div className="w-full mt-1 space-y-1">
                       {[g.keep, ...g.extras].map((t, i) => (
                         <div key={t.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: i === 0 ? P.text : P.faint }}>
                           <span className="shrink-0" style={{ color: i === 0 ? P.credit : P.debit }}>{i === 0 ? "keep" : "drop"}</span>
@@ -1978,221 +2120,180 @@ function MatchView({
                           <span className="tabular-nums shrink-0">{fmt(t.amount)}</span>
                         </div>
                       ))}
-                      <div style={{ color: P.faint }} className="text-xs">
-                        Keeping the wrong one? Remove the other from Transactions instead — nothing here touches the entry it keeps.
-                      </div>
+                      <div style={{ color: P.faint }} className="text-xs">Keeping the wrong one? Delete the other from Transactions instead.</div>
                     </div>
                   )}
-                </div>
+                </AskCard>
               ))}
-              {duplicates.length > 12 && (
-                <div style={{ color: P.faint }} className="text-xs">and {duplicates.length - 12} more groups</div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* ---- the same bank line delivered twice ---- */}
-        {dupBankLines.length > 0 && (
-          <div style={{ border: `1px solid ${P.line}` }} className="rounded p-3 mb-4">
-            <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
-              <Copy size={12} className="inline mb-0.5" /> Duplicate bank lines
-            </div>
-            <div className="space-y-2">
-              {dupBankLines.slice(0, 8).map((g) => (
-                <div key={g.id} className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate">{g.description}</div>
-                    <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">{g.date} · {g.extras.length + 1} copies · {g.reason}</div>
-                  </div>
-                  <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(g.amount)}</div>
-                  <Btn tone="ghost" onClick={() => doIgnoreDupBank(g)}>Set {g.extras.length} aside</Btn>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ---- confident pairs ---- */}
-        {proposal.auto.length > 0 && (
-          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded p-3 mb-4">
-            <div className="flex items-center justify-between gap-3 mb-2">
-              <div>
-                <div className="text-sm">{proposal.auto.length} {proposal.auto.length === 1 ? "pair matches" : "pairs match"} exactly</div>
-                <div style={{ color: P.faint }} className="text-xs">Same amount and direction, within a day or two, and nothing else competes for them.</div>
-              </div>
-              <Btn onClick={() => doApplyAuto(proposal.auto.map((p) => ({ bankId: p.bankId, txId: p.txId })))}>
-                <Check size={13} /> Match all
-              </Btn>
-            </div>
-            <div className="space-y-1">
-              {proposal.auto.slice(0, 6).map((p) => (
-                <div key={p.bankId} style={{ fontFamily: MONO, color: P.faint }} className="text-xs truncate">
-                  {p.bank.date} {p.bank.description} → {p.tx.description || p.tx.category} · {fmt(p.bank.amount)}
-                </div>
-              ))}
-              {proposal.auto.length > 6 && (
-                <div style={{ color: P.faint }} className="text-xs">and {proposal.auto.length - 6} more</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ---- pairs that need a human ---- */}
-        {proposal.suggested.length > 0 && (
-          <div className="mb-4">
-            <Label>Probably the same thing</Label>
-            <div className="space-y-2">
-              {proposal.suggested.slice(0, 12).map((p) => (
-                <div key={p.bankId} style={{ border: `1px solid ${P.line}` }} className="rounded p-2">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm truncate">{p.bank.description}</div>
-                      <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">
-                        {p.bank.date} → {p.tx.date} · {p.tx.description || p.tx.category}
-                      </div>
+              {/* two entries fit the same bank line, or the text does not agree */}
+              {plan.ask.pairs.slice(0, 12).map((p) => (
+                <AskCard key={p.bankId} amount={p.bank.amount} date={p.bank.date}
+                  title={`Is "${p.bank.description}" the same thing as "${p.tx.description || p.tx.category}"?`}
+                  detail={p.ambiguous
+                    ? "Another entry fits this line just as well, so I will not guess. Check which one it is."
+                    : `${p.gap === 0 ? "Same day" : `${p.gap} ${p.gap === 1 ? "day" : "days"} apart`}, and the descriptions ${p.text >= 0.5 ? "roughly agree" : "do not agree"}.`}>
+                  <Btn onClick={() => doMatch(p.bankId, p.txId, "manual")}><Check size={13} /> Yes, same thing</Btn>
+                  <Btn tone="ghost" onClick={() => setAdding(adding?.id === p.bank.id ? null : p.bank)}>No, it is new</Btn>
+                  <Btn tone="ghost" onClick={() => doIgnore(p.bankId)}>Not mine, set it aside</Btn>
+                  {adding?.id === p.bank.id && (
+                    <div className="w-full">
+                      <AddFromBank
+                        bankTxn={p.bank} data={data} bankTxns={bankTxns}
+                        onMatchInstead={(txId) => { doMatch(p.bank.id, txId, "manual"); setAdding(null); }}
+                        onCancel={() => setAdding(null)}
+                        onAdd={(opts) => { doCreate(p.bank, opts); setAdding(null); }}
+                      />
                     </div>
-                    <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(p.bank.amount)}</div>
-                    <Btn tone="ghost" onClick={() => doMatch(p.bankId, p.txId, "manual")}><Check size={13} /> Match</Btn>
-                  </div>
-                  <div style={{ color: P.faint }} className="text-xs mt-1">
-                    {p.ambiguous
-                      ? "Another entry fits this line just as well — check which one before matching."
-                      : `${p.gap === 0 ? "Same day" : `${p.gap} ${p.gap === 1 ? "day" : "days"} apart`}, descriptions ${p.text >= 0.5 ? "line up" : "don't line up"}.`}
-                  </div>
-                </div>
+                  )}
+                </AskCard>
               ))}
-            </div>
-          </div>
-        )}
 
-        {/* ---- the two sides ---- */}
-        <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <div>
-            <Label>On the bank, not in the books ({proposal.unmatchedBank.length})</Label>
-            <div className="space-y-2">
-              {proposal.unmatchedBank.length === 0 && (
-                <p style={{ color: P.faint }} className="text-sm py-3">Every bank line is accounted for.</p>
-              )}
-              {proposal.unmatchedBank.map((b) => (
-                <div key={b.id}>
-                  <BankLine b={b} selected={pickedBank === b.id} onSelect={() => setPickedBank(pickedBank === b.id ? null : b.id)} />
-                  <div className="flex gap-2 mt-1 mb-2">
-                    <button onClick={() => setAdding(adding?.id === b.id ? null : b)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
-                      add to books
-                    </button>
-                    <button onClick={() => doIgnore(b.id)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
-                      ignore
-                    </button>
-                  </div>
+              {/* the bank saw money move and the books never heard about it */}
+              {plan.ask.unrecorded.slice(0, 20).map((b) => (
+                <AskCard key={b.id} amount={b.amount} date={b.date}
+                  title={`${b.direction === "credit" ? "Money came in" : "Money went out"} and the books have nothing for it: ${b.description}`}
+                  detail={b.pending ? "Still pending at the bank, so it may change." : "Add it to the books, or set it aside if it belongs to another ledger."}>
+                  <Btn onClick={() => setAdding(adding?.id === b.id ? null : b)}><Plus size={13} /> Add it to the books</Btn>
+                  <Btn tone="ghost" onClick={() => doIgnore(b.id)}>Set it aside</Btn>
                   {adding?.id === b.id && (
-                    <AddFromBank
-                      bankTxn={b}
-                      data={data}
-                      bankTxns={bankTxns}
-                      onMatchInstead={(txId) => { doMatch(b.id, txId, "manual"); setAdding(null); }}
-                      onCancel={() => setAdding(null)}
-                      onAdd={(opts) => { doCreate(b, opts); setAdding(null); }}
-                    />
+                    <div className="w-full">
+                      <AddFromBank
+                        bankTxn={b} data={data} bankTxns={bankTxns}
+                        onMatchInstead={(txId) => { doMatch(b.id, txId, "manual"); setAdding(null); }}
+                        onCancel={() => setAdding(null)}
+                        onAdd={(opts) => { doCreate(b, opts); setAdding(null); }}
+                      />
+                    </div>
                   )}
+                </AskCard>
+              ))}
+
+              {plan.ask.unrecorded.length > 20 && (
+                <div style={{ color: P.faint }} className="text-xs">
+                  and {plan.ask.unrecorded.length - 20} more bank lines. Deal with these first and the rest will still be here.
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <Label>In the books, not on the bank ({proposal.unmatchedBook.length})</Label>
-            <div className="space-y-2">
-              {proposal.unmatchedBook.length === 0 && (
-                <p style={{ color: P.faint }} className="text-sm py-3">Every entry has cleared.</p>
               )}
-              {proposal.unmatchedBook.slice(0, 60).map((t) => (
-                <BookLine key={t.id} t={t} selected={pickedTx === t.id} onSelect={() => setPickedTx(pickedTx === t.id ? null : t.id)} />
-              ))}
             </div>
-          </div>
-        </div>
-
-        {(pickedBank || pickedTx) && (
-          <div style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded p-2 mb-4 flex items-center gap-3">
-            <span style={{ color: P.muted }} className="text-xs flex-1">
-              {pickedBank && pickedTx
-                ? "Pair these two — the amounts don't have to agree, but check that they should."
-                : "Now pick the other side."}
-            </span>
-            <Btn disabled={!pickedBank || !pickedTx} onClick={pairSelected}><Check size={13} /> Match these</Btn>
-            <button onClick={() => { setPickedBank(null); setPickedTx(null); }} style={{ color: P.faint }} className="text-xs">clear</button>
           </div>
         )}
 
-        {/* ---- already reconciled ---- */}
-        {(matched.length > 0 || ignored.length > 0) && (
-          <div className="mb-4">
-            <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
-              {showMatched ? "hide" : "show"} {matched.length} matched, {ignored.length} ignored →
-            </button>
-            {showMatched && (
-              <div className="space-y-1 mt-2">
-                {matched.map((b) => (
-                  <div key={b.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
-                    <Check size={11} style={{ color: P.credit }} className="shrink-0" />
-                    <span className="flex-1 truncate">{b.date} {b.description} → {txById.get(b.matchedTxId)?.description || "entry"}</span>
-                    <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
-                    <button onClick={() => doUnmatch(b.id)} style={{ color: P.brass }}>unmatch</button>
-                  </div>
-                ))}
-                {ignored.map((b) => (
-                  <div key={b.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
-                    <X size={11} className="shrink-0" />
-                    <span className="flex-1 truncate">{b.date} {b.description}</span>
-                    <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
-                    <button onClick={() => actions.unignore(b.id)} style={{ color: P.brass }}>restore</button>
-                  </div>
-                ))}
+        {/* ---- entries the bank has not cleared: information, not a task ---- */}
+        {plan.uncleared.length > 0 && (
+          <p style={{ color: P.faint }} className="text-xs mb-4">
+            {plan.uncleared.length} {plan.uncleared.length === 1 ? "entry has" : "entries have"} not cleared the bank yet.
+            That is normal for a cheque or a recent charge, and nothing needs doing about it.
+          </p>
+        )}
+
+        {/* ---- the old two-column screen, for when you do want to drive ---- */}
+        <button onClick={() => setShowManual(!showManual)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+          {showManual ? "hide" : "show"} everything line by line
+        </button>
+
+        {showManual && (
+          <div className="mt-3">
+            <div className="grid md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <Label>On the bank, not in the books ({plan.ask.unrecorded.length})</Label>
+                <div className="space-y-2">
+                  {plan.ask.unrecorded.length === 0 && (
+                    <p style={{ color: P.faint }} className="text-sm py-3">Every bank line is accounted for.</p>
+                  )}
+                  {plan.ask.unrecorded.map((b) => (
+                    <div key={b.id}>
+                      <BankLine b={b} selected={pickedBank === b.id} onSelect={() => setPickedBank(pickedBank === b.id ? null : b.id)} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <Label>In the books, not on the bank ({plan.uncleared.length})</Label>
+                <div className="space-y-2">
+                  {plan.uncleared.length === 0 && (
+                    <p style={{ color: P.faint }} className="text-sm py-3">Every entry has cleared.</p>
+                  )}
+                  {plan.uncleared.slice(0, 60).map((t) => (
+                    <BookLine key={t.id} t={t} selected={pickedTx === t.id} onSelect={() => setPickedTx(pickedTx === t.id ? null : t.id)} />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {(pickedBank || pickedTx) && (
+              <div style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded p-2 mb-4 flex items-center gap-3">
+                <span style={{ color: P.muted }} className="text-xs flex-1">
+                  {pickedBank && pickedTx ? "Pair these two." : "Now pick the other side."}
+                </span>
+                <Btn disabled={!pickedBank || !pickedTx} onClick={pairSelected}><Check size={13} /> Pair them</Btn>
+                <button onClick={() => { setPickedBank(null); setPickedTx(null); }} style={{ color: P.faint }} className="text-xs">clear</button>
               </div>
             )}
+
+            {(matched.length > 0 || ignored.length > 0) && (
+              <div className="mb-4">
+                <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                  {showMatched ? "hide" : "show"} {matched.length} already paired, {ignored.length} set aside
+                </button>
+                {showMatched && (
+                  <div className="space-y-1 mt-2">
+                    {matched.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
+                        <Check size={11} style={{ color: P.credit }} className="shrink-0" />
+                        <span className="flex-1 truncate">{b.date} {b.description} → {txById.get(b.matchedTxId)?.description || "entry"}</span>
+                        <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
+                        <button onClick={() => doUnmatch(b.id)} style={{ color: P.brass }}>undo</button>
+                      </div>
+                    ))}
+                    {ignored.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
+                        <X size={11} className="shrink-0" />
+                        <span className="flex-1 truncate">{b.date} {b.description}</span>
+                        <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
+                        <button onClick={() => actions.unignore(b.id)} style={{ color: P.brass }}>bring it back</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+              or force the books to the bank balance, which sets the difference to zero without explaining it
+            </button>
           </div>
         )}
 
-        {/* ---- what past consolidations did ---- */}
+        {/* ---- what past consolidations did, in sentences ---- */}
         {consolidation?.history?.length > 0 && (
-          <div className="mb-4">
+          <div className="mt-4">
             <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
-              <History size={11} className="inline mb-0.5" /> {showHistory ? "hide" : "show"} the last {Math.min(consolidation.history.length, 12)} {consolidation.history.length === 1 ? "consolidation" : "consolidations"} →
+              <History size={11} className="inline mb-0.5" /> {showHistory ? "hide" : "show"} what past consolidations did
             </button>
             {showHistory && (
               <div className="mt-2 space-y-1">
                 {consolidation.history.slice(0, 12).map((run) => (
                   <div key={run.id} style={{ border: `1px solid ${P.line}` }} className="rounded p-2">
-                    <button onClick={() => setOpenRun(openRun === run.id ? null : run.id)} className="w-full text-left flex items-center gap-2">
-                      <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs shrink-0 w-24">
-                        {String(run.createdAt).slice(0, 10)}
-                      </span>
-                      <span className="text-xs flex-1 min-w-0 truncate" style={{ color: P.muted }}>{runSummary(run)}</span>
-                      {run.deltaBefore != null && run.deltaAfter != null && Math.abs(run.deltaBefore - run.deltaAfter) >= 0.01 && (
-                        <span style={{ fontFamily: MONO, color: P.credit }} className="text-xs tabular-nums shrink-0">
-                          Δ {fmt(run.deltaBefore)} → {fmt(run.deltaAfter)}
-                        </span>
-                      )}
-                      <ChevronRight size={13} style={{ color: P.faint, transform: openRun === run.id ? "rotate(90deg)" : "none", transition: "transform .15s" }} className="shrink-0" />
+                    <button onClick={() => setOpenRun(openRun === run.id ? null : run.id)} className="w-full text-left flex items-start gap-2">
+                      <ChevronRight size={13} style={{ color: P.faint, transform: openRun === run.id ? "rotate(90deg)" : "none", transition: "transform .15s" }} className="shrink-0 mt-0.5" />
+                      <span className="text-xs flex-1 min-w-0" style={{ color: P.muted }}>{runStory(run)}</span>
                     </button>
                     {openRun === run.id && (
-                      <div className="mt-2 space-y-1">
+                      <div className="mt-2 space-y-1 pl-5">
                         {(run.items || []).length === 0 && (
-                          <div style={{ color: P.faint }} className="text-xs">{run.note || "Nothing was changed in this run."}</div>
+                          <div style={{ color: P.faint }} className="text-xs">{run.note || "Nothing was changed in this one."}</div>
                         )}
                         {(run.items || []).map((it, i) => (
-                          <div key={i} className="flex items-start gap-2 text-xs" style={{ fontFamily: MONO, color: P.faint }}>
-                            <span className="shrink-0 w-16" style={{ color: RUN_ITEM_COLOR[it.kind] ? P[RUN_ITEM_COLOR[it.kind]] : P.faint }}>{it.kind}</span>
+                          <div key={i} className="flex items-start gap-2 text-xs" style={{ color: P.faint }}>
+                            <span className="shrink-0" style={{ color: RUN_ITEM_COLOR[it.kind] ? P[RUN_ITEM_COLOR[it.kind]] : P.faint }}>·</span>
                             <span className="flex-1 min-w-0">
-                              <span style={{ color: P.muted }}>{it.date} {it.description}</span>
-                              {it.detail ? <span> — {it.detail}</span> : null}
+                              {itemStory(it)}
                             </span>
-                            <span className="tabular-nums shrink-0">{it.amount ? fmt(it.amount) : ""}</span>
                           </div>
                         ))}
                         <div style={{ color: P.faint }} className="text-xs pt-1">
-                          Left open afterwards: {run.openBank} bank {run.openBank === 1 ? "line" : "lines"}, {run.openBooks} {run.openBooks === 1 ? "entry" : "entries"}.
+                          Left open afterwards: {run.openBank} bank {run.openBank === 1 ? "line" : "lines"} and {run.openBooks} {run.openBooks === 1 ? "entry" : "entries"}.
                         </div>
                       </div>
                     )}
@@ -2204,29 +2305,25 @@ function MatchView({
         )}
 
         {/* ---- close the run ----
-             Matching explains the gap but never closes it, so "Δ is zero" can't
-             be what tells the app you're done. Recording the run is. Until the
-             bank or the books move, nothing asks you to do this again. */}
-        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-3 mt-1 flex items-center gap-3">
-          <div style={{ color: P.faint }} className="text-xs flex-1">
+             Pairing explains the difference but never closes it, so "the gap is
+             zero" cannot be what tells the app you are finished. Recording the
+             run is. Until the bank or the books move, nothing asks again. */}
+        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-3 mt-4 flex items-center gap-3 flex-wrap">
+          <div style={{ color: P.faint }} className="text-xs flex-1 min-w-[12rem]">
             {log.length
-              ? `This run: ${runSummary({
+              ? `This time: ${runSummary({
                   matchedCount: count("matched"), createdCount: count("created"),
                   ignoredCount: count("ignored"), unmatchedCount: count("unmatched"),
                   duplicatesRemoved: log.filter((l) => l.kind === "duplicate").length,
                 })}.`
               : consolidation?.settled
-                ? "Already consolidated, and nothing has moved since."
-                : "Record this once you've been through the lines — the gap that's left gets filed as explained, and you won't be asked again until something changes."}
+                ? "Already done, and nothing has moved since."
+                : "Say you are finished and the app stops asking, until the bank or the books actually move."}
           </div>
           <Btn onClick={finish} disabled={!log.length && consolidation?.settled}>
-            <Check size={13} /> {log.length ? "Save this consolidation" : consolidation?.settled ? "Nothing to record" : "Mark consolidated"}
+            <Check size={13} /> {log.length ? "Save and close" : consolidation?.settled ? "Nothing to save" : "I am finished"}
           </Btn>
         </div>
-
-        <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="w-full text-center text-xs underline decoration-dotted underline-offset-2 mt-3">
-          or force the books to the bank balance — sets the gap to zero without explaining it →
-        </button>
       </div>
     </div>
   );
@@ -2240,13 +2337,64 @@ function runSummary(run) {
     return `statement imported, ${run.createdCount} ${run.createdCount === 1 ? "line" : "lines"} added to the books`;
   }
   const parts = [];
-  if (run.matchedCount) parts.push(`${run.matchedCount} matched`);
+  if (run.matchedCount) parts.push(`${run.matchedCount} paired up`);
   if (run.createdCount) parts.push(`${run.createdCount} added to the books`);
   if (run.duplicatesRemoved) parts.push(`${run.duplicatesRemoved} duplicate ${run.duplicatesRemoved === 1 ? "group" : "groups"} removed`);
   if (run.ignoredCount) parts.push(`${run.ignoredCount} set aside`);
-  if (run.unmatchedCount) parts.push(`${run.unmatchedCount} unmatched`);
-  if (!parts.length) return run.kind === "import" ? "statement imported" : "reviewed, nothing changed";
+  if (run.unmatchedCount) parts.push(`${run.unmatchedCount} unpaired`);
+  if (!parts.length) return run.kind === "import" ? "statement imported" : "looked through it, nothing needed changing";
   return parts.join(", ");
+}
+
+/* A run, read back as a sentence.
+   The old history said things like "reviewed, nothing changed", which is true
+   and tells you nothing. What someone wants months later is what happened to
+   their money: what got joined up, what got deleted, and whether the books
+   ended up closer to the bank than they started. */
+function runStory(run) {
+  const when = relDay(run.createdAt);
+  const day = when.charAt(0).toUpperCase() + when.slice(1);
+  if (run.kind === "import") {
+    return `${day}: you imported a statement and ${run.createdCount || 0} ${run.createdCount === 1 ? "line" : "lines"} went into the books.`;
+  }
+
+  const did = [];
+  if (run.matchedCount) did.push(`joined ${run.matchedCount} bank ${run.matchedCount === 1 ? "line" : "lines"} to ${run.matchedCount === 1 ? "the entry" : "the entries"} behind ${run.matchedCount === 1 ? "it" : "them"}`);
+  if (run.createdCount) did.push(`added ${run.createdCount} ${run.createdCount === 1 ? "entry" : "entries"} the books had missed`);
+  if (run.duplicatesRemoved) {
+    const amt = Number(run.duplicateAmount) || 0;
+    did.push(`removed ${run.duplicatesRemoved} thing${run.duplicatesRemoved === 1 ? "" : "s"} recorded twice${amt ? `, worth ${fmt(amt)}` : ""}`);
+  }
+  if (run.ignoredCount) did.push(`set ${run.ignoredCount} ${run.ignoredCount === 1 ? "line" : "lines"} aside as not yours`);
+  if (run.unmatchedCount) did.push(`undid ${run.unmatchedCount} ${run.unmatchedCount === 1 ? "pairing" : "pairings"}`);
+
+  const moved = run.deltaBefore != null && run.deltaAfter != null && Math.abs(run.deltaBefore - run.deltaAfter) >= 0.01
+    ? ` The difference against the bank went from ${fmt(run.deltaBefore)} to ${fmt(run.deltaAfter)}.`
+    : "";
+  const left = (run.openBank || 0) + (run.openBooks || 0) === 0
+    ? " Nothing was left open."
+    : ` ${run.openBank || 0} bank ${run.openBank === 1 ? "line" : "lines"} and ${run.openBooks || 0} ${run.openBooks === 1 ? "entry" : "entries"} were still open at the end.`;
+
+  if (!did.length) {
+    return `${day}: you went through the books and everything was already right, so nothing changed.${left}`;
+  }
+  const list = did.length === 1 ? did[0] : `${did.slice(0, -1).join(", ")} and ${did[did.length - 1]}`;
+  return `${day}: ${list}.${moved}${left}`;
+}
+
+/** One logged action, as a sentence rather than a table row. */
+function itemStory(it) {
+  const money = it.amount ? fmt(Number(it.amount)) : "";
+  const what = it.description || "a line";
+  const on = it.date ? ` on ${it.date}` : "";
+  switch (it.kind) {
+    case "matched": return `${money} ${what}${on}, ${it.detail || "paired with its entry"}.`;
+    case "created": return `${money} ${what}${on} was not in the books, so it ${it.detail || "was added"}.`;
+    case "duplicate": return `${what}${on}: ${it.detail || "duplicate removed"}${money ? `, ${money}` : ""}.`;
+    case "ignored": return `${money} ${what}${on} was set aside, ${it.detail || "it will never have an entry"}.`;
+    case "unmatched": return `${money} ${what}${on}: ${it.detail || "pairing undone"}.`;
+    default: return `${what}${on} ${it.detail || ""}`.trim() + ".";
+  }
 }
 
 /** Inline form to turn a bank line into a ledger entry. Amount, date and
@@ -2274,7 +2422,7 @@ function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCa
           </div>
           <div className="text-xs" style={{ color: P.muted }}>
             {already.tx.date} · {already.tx.description || already.tx.category} · {fmt(already.tx.amount)}
-            {" — "}same amount {already.gap === 0 ? "on the same day" : `${already.gap} ${already.gap === 1 ? "day" : "days"} away`}.
+            {" · "}same amount {already.gap === 0 ? "on the same day" : `${already.gap} ${already.gap === 1 ? "day" : "days"} away`}.
             Adding this line would record it twice.
           </div>
           {onMatchInstead && (
@@ -2296,7 +2444,7 @@ function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCa
         <div>
           <Label>Subcategory</Label>
           <Select value={subcategory} onChange={(e) => setSubcategory(e.target.value)} disabled={!subs.length}>
-            <option value="">{subs.length ? "—" : "none"}</option>
+            <option value="">{subs.length ? "·" : "none"}</option>
             {subs.map((s) => <option key={s} value={s}>{s}</option>)}
           </Select>
         </div>
@@ -2568,7 +2716,7 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
         <button onClick={onReconcile} className="text-left" title={fromBank ? "Bank balance · tap to align books" : "Set or correct the balance against your real accounts"}>
           <Label>{fromBank ? "Balance to date · bank" : "Balance to date · fix"}</Label>
           <div style={{ fontFamily: MONO, color: P.brass }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
-            {balance.beforeAnchor ? "—" : fmt(balance.value)}
+            {balance.beforeAnchor ? "·" : fmt(balance.value)}
           </div>
         </button>
         {creditsLeft !== null && (
@@ -2941,19 +3089,22 @@ const DEFAULT_ASKS = [
 
 function Capture({
   data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, consolidation, bankConns,
-  insights = [], seed, onSeedUsed, apply, onGo,
+  insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, apply, onGo,
 }) {
   // A gap that's already been consolidated isn't news — opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
   const drift = balance?.source === "bank" && balance.delta != null
     && Math.abs(balance.delta) >= 0.01 && !consolidation?.settled;
   const opener = drift
-    ? `Bank is ${fmt(balance.bank)}, books are ${fmt(balance.book)} (Δ ${fmt(balance.delta)}). Ask me to walk through it — I'll go through the entries. You can also drop a receipt or type an entry anytime.`
-    : "Drop a receipt or invoice, type something like “paid Vercel $70 today”, or ask me about the books — I can dig through your transactions, budgets, AR/AP, and cash to answer.";
+    ? `Bank is ${fmt(balance.bank)}, books are ${fmt(balance.book)} (Δ ${fmt(balance.delta)}). Ask me to walk through it and I'll go through the entries. You can also drop a receipt or type an entry anytime.`
+    : "Drop a receipt or invoice, type something like “paid Vercel $70 today”, or ask me about the books. I can dig through your transactions, budgets, AR/AP, and cash to answer.";
   const [mode, setMode] = useState(drift ? "help" : "capture"); // capture | help
   const [msgs, setMsgs] = useState([{ role: "assistant", text: opener }]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Which section's brief the agent is carrying, if any. Cleared when the user
+  // moves on to something the guide has nothing to say about.
+  const [guideId, setGuideId] = useState(null);
   const fileRef = useRef(null);
   const endRef = useRef(null);
   const greetedDrift = useRef(false);
@@ -2979,7 +3130,7 @@ function Capture({
       return [...prev, { role: "assistant", steps: [name] }];
     });
 
-  const runTurn = async (question) => {
+  const runTurn = async (question, useGuide = guideId) => {
     setMode("help");
     setBusy(true);
     const before = convo.current;
@@ -2988,7 +3139,7 @@ function Capture({
       const { text, messages } = await runAgent({
         history,
         // Rebuilt every turn from live state, so the agent reads what's on screen.
-        ctx: { data, balance, month, bankConns, recon, consolidation },
+        ctx: { data, balance, month, bankConns, recon, consolidation, guide: useGuide },
         onEvent: (ev) => {
           if (ev.type === "tool") pushStep(ev.name);
           else if (ev.type === "text") push({ role: "assistant", text: ev.text });
@@ -3013,9 +3164,12 @@ function Capture({
     setBusy(false);
   };
 
-  const ask = (question) => {
+  // `withGuide` is passed explicitly by the guide's own step buttons: setState
+  // has not flushed by the time the handler calls this, so reading guideId off
+  // state here would send the first question of a guide without its brief.
+  const ask = (question, withGuide) => {
     push({ role: "user", text: question });
-    runTurn(question);
+    runTurn(question, withGuide === undefined ? guideId : withGuide);
   };
 
   // A question handed over from an insight card on the Overview tab.
@@ -3025,6 +3179,40 @@ function Capture({
     if (busy) return;
     ask(seed.question);
   }, [seed?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- a section handing over its brief ----
+     Nothing is sent upstream yet. The guide introduces itself with the opener
+     written for that section and offers the questions people actually have
+     there, so the first turn costs nothing and still lands somewhere useful. */
+  useEffect(() => {
+    if (!guide?.id || !GUIDES[guide.id]) return;
+    onGuideUsed?.();
+    setGuideId(guide.id);
+    setMode("help");
+    push({ role: "assistant", text: guideOpener(guide.id), guideId: guide.id });
+  }, [guide?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- money landed, so say so before being asked ----
+     The whole point of a proactive message is that it arrives without a
+     question. It states what came in, then puts the payments that are actually
+     due in front of the user with one tap to settle each. */
+  useEffect(() => {
+    if (!nudge?.received?.length) return;
+    onNudgeUsed?.();
+    const due = (data.payables || [])
+      .filter((p) => p.status === "open")
+      .sort((a, b) => String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")))
+      .slice(0, 3);
+    const one = nudge.received.length === 1 ? nudge.received[0] : null;
+    push({
+      role: "assistant",
+      text: one
+        ? `Heads up, ${fmt(one.amount)} came in from ${one.description} on ${one.date}.`
+        : `Heads up, ${fmt(nudge.total)} came in across ${nudge.received.length} payments.`,
+      nudge: { received: nudge.received, due },
+    });
+    setMode("help");
+  }, [nudge?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFile = async (file) => {
     if (!file) return;
@@ -3059,7 +3247,7 @@ function Capture({
       const draft = normalizeDraft(raw, { categories: data.categories, ledgerKind: data.ledger.kind });
       push({ role: "assistant", text: draft.note || "Here's what I read, confirm or adjust:", draft, att });
     } catch (e) {
-      push({ role: "assistant", text: `I couldn't read that one — ${friendlyError(e)}. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”).` });
+      push({ role: "assistant", text: `I couldn't read that one. ${friendlyError(e)}. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”).` });
     }
     setBusy(false);
   };
@@ -3095,7 +3283,7 @@ function Capture({
       push({ role: "assistant", text: draft.note || "Got it, confirm or adjust:", draft });
     } catch (e) {
       if (local) {
-        push({ role: "assistant", text: `${friendlyError(e)}, so I filled this in from your message — check the category before saving.`, draft: local });
+        push({ role: "assistant", text: `${friendlyError(e)}, so I filled this in from your message. Check the category before saving.`, draft: local });
       } else {
         push({ role: "assistant", text: "I couldn't find an amount in that. Try including one, e.g. “paid Canva $40 yesterday”." });
       }
@@ -3143,6 +3331,18 @@ function Capture({
       style={embedded ? {} : { background: P.surface, border: `1px solid ${P.line}` }}
       className={(embedded ? "" : "rounded-lg ") + "flex flex-col"}
     >
+      {guideId && GUIDES[guideId] && (
+        <div className="flex items-center gap-2 px-3 pt-2">
+          <span style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brass, fontFamily: MONO, width: 22, height: 22 }}
+            className="rounded-full text-xs flex items-center justify-center shrink-0">
+            {GUIDES[guideId].avatar}
+          </span>
+          <span style={{ fontFamily: MONO, color: P.muted }} className="text-xs flex-1 truncate">{GUIDES[guideId].title}</span>
+          <button onClick={() => setGuideId(null)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+            leave the guide
+          </button>
+        </div>
+      )}
       <div className="flex gap-1 px-3 pt-2">
         {[
           ["capture", "Capture"],
@@ -3192,6 +3392,18 @@ function Capture({
                   ))}
                 </div>
               )}
+              {m.guideId && GUIDES[m.guideId] && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {GUIDES[m.guideId].steps.map((q) => (
+                    <button key={q} type="button" onClick={() => { setGuideId(m.guideId); ask(q, m.guideId); }}
+                      style={{ border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
+                      className="rounded-full px-2.5 py-1 text-xs text-left">
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {m.nudge && <NudgeCard nudge={m.nudge} data={data} apply={apply} onDone={(line) => push({ role: "assistant", text: line, done: true })} />}
               {m.draft && <DraftCard draft={m.draft} att={m.att} data={data} addSub={addSub} onSave={saveDraft} />}
               {m.proposal && <ProposalCard proposal={m.proposal} data={data} apply={apply} />}
               {m.link && (
@@ -3242,6 +3454,86 @@ function Capture({
           <Send size={15} />
         </Btn>
       </div>
+    </div>
+  );
+}
+
+/* ================= the proactive card =================
+   Money arriving is the one moment when "what should I pay now" is a live
+   question, so this is the moment to ask it. Nothing here is clever: what came
+   in, what is due, and one tap per bill to settle it or leave it. */
+
+function NudgeCard({ nudge, data, apply, onDone }) {
+  const [settled, setSettled] = useState({});
+  const [dismissed, setDismissed] = useState(false);
+  const due = nudge.due || [];
+  const today = todayStr();
+  const outstanding = due.filter((d) => !settled[d.id]);
+
+  if (dismissed) {
+    return <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-2">Fine, I will leave those for now.</p>;
+  }
+
+  const pay = (item) => {
+    apply?.settleAR?.("payables", item.id, { date: today });
+    setSettled((s) => ({ ...s, [item.id]: true }));
+    onDone?.(`Marked ${item.party || item.description} paid, ${fmt(item.amount)}. The transaction is in the books.`);
+  };
+
+  return (
+    <div className="mt-2 space-y-2">
+      {nudge.received.length > 1 && (
+        <div className="space-y-0.5">
+          {nudge.received.map((r) => (
+            <div key={r.id} style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-2">
+              <span className="flex-1 truncate">{r.date} {r.description}</span>
+              <span style={{ color: P.credit }} className="tabular-nums shrink-0">{fmt(r.amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {due.length === 0 ? (
+        <p style={{ color: P.muted }} className="text-sm">Nothing is due right now, so it is yours to keep.</p>
+      ) : (
+        <>
+          <p style={{ color: P.muted }} className="text-sm">
+            {outstanding.length ? "Here is what is due. Want to pay any of it now?" : "That clears everything that was due."}
+          </p>
+          {due.map((d) => {
+            const late = d.dueDate && d.dueDate < today;
+            const isDone = settled[d.id];
+            return (
+              <div key={d.id} style={{ border: `1px solid ${isDone ? P.credit : late ? P.debit : P.line}` }} className="rounded-lg p-2.5">
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate" style={{ color: isDone ? P.faint : P.text }}>{d.party || d.description}</div>
+                    <div style={{ fontFamily: MONO, color: late ? P.debit : P.faint }} className="text-xs">
+                      {d.dueDate ? (late ? `overdue since ${d.dueDate}` : `due ${d.dueDate}`) : "no due date"}
+                    </div>
+                  </div>
+                  <div style={{ fontFamily: MONO }} className="text-sm tabular-nums shrink-0">{fmt(d.amount)}</div>
+                </div>
+                {!isDone && (
+                  <div className="flex gap-2 mt-2">
+                    <Btn onClick={() => pay(d)}><Check size={13} /> Paid it</Btn>
+                  </div>
+                )}
+                {isDone && (
+                  <div style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-1">
+                    marked paid today · file the receipt against it from AR / AP whenever you have it
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {outstanding.length > 0 && (
+            <button onClick={() => setDismissed(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+              later
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -3561,8 +3853,12 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   const [form, setForm] = useState(blank);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
+  // A Personal Ledger has one account, so splitting it by business/personal
+  // offers a choice with no meaning behind it. The filter only appears on a
+  // Business Ledger, where personal entries genuinely do sit alongside business ones.
+  const showAccountFilter = data.ledger.kind !== "personal";
   const list = monthTx
-    .filter((t) => filter === "all" || t.account === filter)
+    .filter((t) => !showAccountFilter || filter === "all" || t.account === filter)
     .filter((t) => !recOnly || isRec(t))
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const recTotal = list.filter(isRec).reduce((s, t) => s + (t.type === "income" ? t.amount : -t.amount), 0);
@@ -3579,7 +3875,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
       <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg">{monthLabel(month)}, {list.length} entries</h2>
         <div className="flex gap-2 items-center">
-          {["all", "business", "personal"].map((f) => (
+          {showAccountFilter && ["all", "business", "personal"].map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               style={{ fontFamily: MONO, color: filter === f ? P.brass : P.faint }} className="text-xs uppercase tracking-wider">
               {f}
@@ -3851,7 +4147,7 @@ const PLRow = ({ label, value, color }) => (
 );
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -3880,9 +4176,12 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
           <Stat label="Owed to you" value={fmt(openAR)} color={P.credit} />
           <Stat label="You owe" value={fmt(openAP)} color={P.debit} />
           <Stat label="Net position" value={fmt(net)} color={net >= 0 ? P.credit : P.debit} />
-          <Btn tone="ghost" onClick={exportCSV} title="Download all receivables & payables as CSV">
-            <Download size={14} /> Export CSV
-          </Btn>
+          <div className="flex items-center gap-2">
+            <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
+            <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
+              <Download size={14} /> Export CSV
+            </Btn>
+          </div>
         </div>
         <div className="flex h-2 rounded-full overflow-hidden" style={{ background: P.bg }}>
           <div style={{ width: `${(openAR / (openAR + openAP || 1)) * 100}%`, background: P.credit }} />
@@ -4017,7 +4316,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
       if (d.note) setReadErr(d.note);
       setAdding(true);
     } catch (e) {
-      setReadErr(`Couldn't read that invoice — ${friendlyError(e)}. Fill the fields in yourself, or try a clearer file.`);
+      setReadErr(`Couldn't read that invoice. ${friendlyError(e)}. Fill the fields in yourself, or try a clearer file.`);
       setAdding(true);
     }
     setReading(false);
@@ -4135,7 +4434,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
           <Pencil size={13} />
         </button>
-        <Btn tone="ghost" onClick={() => setSettleFor(i)} title={`${action}: confirm the actual amount, date, and payment`}>
+        <Btn tone="ghost" onClick={() => setSettleFor(i)} title={`${action}: confirm the actual amount, date, payment, and file the receipt`}>
           <Check size={13} />
         </Btn>
         <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
@@ -4220,7 +4519,17 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
           data={data}
           addCredit={addCredit}
           action={action}
-          onConfirm={(actual) => { settleAR(kind, settleFor.id, actual); setSettleFor(null); }}
+          onConfirm={async ({ att, ...actual }) => {
+            let attachmentId, attachmentName;
+            if (att) {
+              attachmentId = await storeAttachment(att);
+              // evidence is the point of the dialog: if the file didn't land, nothing settles
+              if (!attachmentId) throw new Error("The receipt couldn't be saved to storage. Check your connection and try again.");
+              attachmentName = att.name;
+            }
+            settleAR(kind, settleFor.id, { ...actual, attachmentId, attachmentName });
+            setSettleFor(null);
+          }}
           onClose={() => setSettleFor(null)}
         />
       )}
@@ -4281,6 +4590,10 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
   const [date, setDate] = useState(todayStr());
   const [payMethod, setPayMethod] = useState(item.payMethod === "credits" ? "credits" : "cash");
   const [creditId, setCreditId] = useState(item.creditId || null);
+  const [doc, setDoc] = useState(null);        // the receipt being attached to this settlement
+  const [docErr, setDocErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
 
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -4289,8 +4602,33 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
   }, [onClose]);
 
   const parsed = parseFloat(amount);
-  const valid = !Number.isNaN(parsed) && parsed > 0 && date;
-  const differs = valid && Math.abs(parsed - item.amount) > 0.005;
+  const differs = !Number.isNaN(parsed) && parsed > 0 && Math.abs(parsed - item.amount) > 0.005;
+  // Nothing settles without paper: either the invoice already filed against this
+  // entry, or a receipt attached right here.
+  const filedName = item.attachmentId ? (item.attachmentName || "the filed invoice") : null;
+  const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName);
+
+  const pickDoc = (file) => {
+    if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      setDocErr(`That file is ${(file.size / 1048576).toFixed(1)} MB, max 8 MB. Try a smaller export or a screenshot.`);
+      return;
+    }
+    setDocErr("");
+    setDoc({ name: file.name || "receipt.png", type: file.type || attTypeFromName(file.name), file });
+  };
+
+  const confirm = async () => {
+    if (!valid || saving) return;
+    setSaving(true);
+    setDocErr("");
+    try {
+      await onConfirm({ amount: parsed, date, payMethod, creditId, att: doc });
+    } catch (e) {
+      setDocErr(e?.message || "Something went wrong filing that. Try again.");
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
@@ -4317,18 +4655,46 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
             onChange={(pm, cid) => { setPayMethod(pm); setCreditId(cid); }} />
         </div>
 
+        <div className="mt-2">
+          <Label>{kind === "receivables" ? "Proof of payment · required" : "Receipt · required"}</Label>
+          <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
+            onChange={(e) => { pickDoc(e.target.files[0]); e.target.value = ""; }} />
+          {doc ? (
+            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg px-3 py-2 flex items-center gap-2">
+              <Paperclip size={12} style={{ color: P.brass }} className="shrink-0" />
+              <span style={{ fontFamily: MONO }} className="text-xs truncate flex-1">{doc.name}</span>
+              <button onClick={() => setDoc(null)} style={{ color: P.faint }} title="Remove"><X size={12} /></button>
+            </div>
+          ) : (
+            <button onClick={() => fileRef.current.click()} disabled={saving}
+              style={{ color: P.muted, border: `1px dashed ${P.line}` }}
+              className="w-full rounded-lg py-2 text-sm inline-flex items-center justify-center gap-2">
+              <FileText size={14} />
+              {filedName ? "Attach the payment receipt" : "Attach the receipt · photo or PDF"}
+            </button>
+          )}
+          {filedName && !doc && (
+            <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-1.5 truncate">
+              📎 {filedName} is already filed against this entry, that counts as evidence.
+            </p>
+          )}
+        </div>
+
         {differs && (
           <p style={{ color: P.brass, fontFamily: MONO }} className="text-xs mt-2">
             estimated {fmt(item.amount)} → actual {fmt(parsed)}; the books record the actual
           </p>
         )}
+        {docErr && <p style={{ color: P.brass }} className="text-xs mt-2">{docErr}</p>}
 
-        <Btn className="w-full justify-center mt-4" disabled={!valid}
-          onClick={() => onConfirm({ amount: parsed, date, payMethod, creditId })}>
-          <Check size={14} /> {action} · {valid ? fmt(parsed) : "…"}
+        <Btn className="w-full justify-center mt-4" disabled={!valid || saving} onClick={confirm}>
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+          {saving ? "filing the receipt…" : `${action} · ${!Number.isNaN(parsed) && parsed > 0 ? fmt(parsed) : "…"}`}
         </Btn>
         <p style={{ color: P.faint }} className="text-xs mt-2">
-          Logs the transaction, locks this entry{item.recurrence === "recurring" ? ", and queues the next occurrence" : ""}.
+          {doc || filedName
+            ? <>Files the document, logs the transaction, locks this entry{item.recurrence === "recurring" ? ", and queues the next occurrence" : ""}.</>
+            : <>A receipt or invoice is required, nothing settles without paper behind it.</>}
         </p>
       </div>
     </div>
@@ -4779,6 +5145,90 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
   );
 }
 
+/* ================= getting started =================
+   Four things have to be true before the app is worth anything: a ledger, a
+   bank feed, an entry, and something to compare spending against. Nobody reads
+   a welcome tour, so this is not one. It is the four things, each a button that
+   does the thing, and it disappears on its own once they are done. */
+
+function SetupChecklist({ data, bankConns, onGo, openGuide, onDismiss }) {
+  const hasBank = (bankConns?.length || 0) > 0;
+  const hasEntry = (data.transactions?.length || 0) > 0;
+  const hasBudget = ["expense", "income"].some((t) => (data.categories?.[t] || []).some((c) => Number(c.planned) > 0));
+  const metGuide = Boolean(window.localStorage.getItem("guide:used"));
+
+  const steps = [
+    {
+      id: "ledger", done: true,
+      title: `${data.ledger.name} is set up`,
+      sub: `A ${kindLabel(data.ledger.kind)}. You can add more and switch from the title at the top.`,
+    },
+    {
+      id: "bank", done: hasBank,
+      title: "Connect your bank",
+      sub: "You sign in on your bank's own screen. Brasstally never sees the password and cannot move money. This is what makes the balance real instead of typed.",
+      action: ["Connect it", () => onGo("integrations")],
+      help: "bank-feed",
+    },
+    {
+      id: "entry", done: hasEntry,
+      title: "Put something in the books",
+      sub: "Photograph a receipt, or just type what you paid. Either way it reads the amount, the merchant, and the date for you.",
+      action: ["Capture something", () => onGo("capture")],
+    },
+    {
+      id: "budget", done: hasBudget,
+      title: "Say what you expect to spend",
+      sub: "Set a monthly figure on a category or two. Without one, over budget has nothing to mean.",
+      action: ["Set a budget", () => onGo("overview")],
+    },
+    {
+      id: "guide", done: metGuide,
+      title: "Meet your guides",
+      sub: "Every section has a help anchor that already knows what that screen is for. Tax, bank, consolidating, money owed.",
+      action: ["Try one", () => openGuide("bank-feed")],
+    },
+  ];
+
+  const doneCount = steps.filter((s) => s.done).length;
+  if (doneCount === steps.length) return null;
+
+  return (
+    <section style={{ background: P.surface, border: `1px solid ${P.brass}` }} className="rounded-lg p-5 mb-6">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Getting set up</h2>
+          <p style={{ color: P.muted }} className="text-sm">{doneCount} of {steps.length} done. This card goes away by itself.</p>
+        </div>
+        <button onClick={onDismiss} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted shrink-0">
+          hide it
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-1">
+        {steps.map((s) => (
+          <div key={s.id} className="flex items-start gap-3 py-2" style={{ borderTop: `1px solid ${P.line}` }}>
+            <span style={{ color: s.done ? P.credit : P.faint, border: `1px solid ${s.done ? P.credit : P.line}` }}
+              className="rounded-full shrink-0 mt-0.5 w-5 h-5 flex items-center justify-center">
+              {s.done ? <Check size={12} /> : null}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm" style={{ color: s.done ? P.faint : P.text }}>{s.title}</div>
+              {!s.done && <div style={{ color: P.muted }} className="text-xs mt-0.5">{s.sub}</div>}
+            </div>
+            {!s.done && s.action && (
+              <div className="flex items-center gap-2 shrink-0">
+                {s.help && <GuideAnchor id={s.help} onOpen={openGuide} label="Guide me" />}
+                <Btn onClick={s.action[1]}>{s.action[0]}</Btn>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /* ================= Integrations: bank feed + CRA T2 ================= */
 const GIFI_RULES = [
   [/salar|wage|contractor|payroll/i, "9060", "Salaries and wages"],
@@ -4898,18 +5348,358 @@ const addMonths = (dateStr, m) => {
   return d.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
 };
 
-function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange }) {
+/* ================= the guide anchor =================
+   A section-sized invitation to be helped. It opens the same chat panel, but
+   hands over the brief for the section it sits in, so the first message already
+   knows what the user was looking at. Purpose built beats general purpose:
+   "walk me through my T1" answered by something that already knows what a T1
+   section is for reads very differently from the same question typed cold. */
+
+function GuideAnchor({ id, onOpen, label }) {
+  const g = GUIDES[id];
+  const [hover, setHover] = useState(false);
+  if (!g || !onOpen) return null;
+  return (
+    <button
+      onClick={() => onOpen(id)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={g.blurb}
+      style={{
+        border: `1px solid ${hover ? P.brass : P.line}`,
+        background: hover ? P.brass + "18" : "transparent",
+        color: hover ? P.brass : P.muted,
+      }}
+      className="rounded-full pl-1 pr-3 py-1 inline-flex items-center gap-2 shrink-0 transition-colors"
+    >
+      <span
+        style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brass, fontFamily: MONO, width: 24, height: 24 }}
+        className="rounded-full text-xs flex items-center justify-center shrink-0"
+      >
+        {g.avatar}
+      </span>
+      <span style={{ fontFamily: MONO }} className="text-xs whitespace-nowrap">{label || "Need a hand?"}</span>
+    </button>
+  );
+}
+
+/* ================= filing deadlines =================
+   The question a tax section has to answer before any other is "how long have
+   I got". It goes at the top and it is always visible, draft or no draft. */
+
+const TONE = { late: "debit", soon: "brass", ok: "credit", far: "muted" };
+
+function DeadlineStrip({ rows, title = "Deadlines" }) {
+  if (!rows?.length) return null;
+  const next = nextDeadline(rows);
+  const c = countdown(next.days);
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P[TONE[c.tone]] || P.line}` }} className="rounded-lg p-4 mt-3">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div>
+          <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs uppercase tracking-wider">Next up</div>
+          <div style={{ fontFamily: SERIF }} className="text-lg leading-tight">{next.title}</div>
+          <div style={{ fontFamily: MONO, color: P.brass }} className="text-sm">{longDate(next.date)}</div>
+        </div>
+        <div style={{ color: P[TONE[c.tone]] || P.text, border: `1px solid ${P[TONE[c.tone]] || P.line}`, fontFamily: MONO }}
+          className="rounded-full px-3 py-1 text-sm whitespace-nowrap">
+          {c.text}
+        </div>
+      </div>
+      <div style={{ color: P.muted }} className="text-xs mt-1">{next.sub}</div>
+
+      {rows.length > 1 && (
+        <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-2 space-y-1">
+          <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs uppercase tracking-wider mb-1">{title}</div>
+          {rows.map((r) => {
+            const rc = countdown(r.days);
+            return (
+              <div key={r.id} className="flex items-center gap-3 text-xs">
+                <span style={{ fontFamily: MONO, color: P.muted }} className="w-28 shrink-0">{longDate(r.date)}</span>
+                <span style={{ color: P.text }} className="flex-1 min-w-0 truncate">{r.title}</span>
+                <span style={{ fontFamily: MONO, color: P[TONE[rc.tone]] || P.faint }} className="shrink-0">{rc.text}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ================= the filing package =================
+   Which forms the return is actually made of, and which issue of each one this
+   tax year files on. The version matters: CRA reissues a schedule when the law
+   behind it changes and heads the new one "20XX and later tax years", so a 2023
+   return and a 2025 return are assembled from different stacks. */
+
+const NEED_LABEL = {
+  always: ["Always file", "Every T2 return includes these."],
+  usually: ["Almost certainly you", "Standard for a small Canadian corporation. Confirm each one applies."],
+  if: ["Only if it applies", "Skip anything that isn't true of your corporation."],
+};
+
+function FormRow({ f, checked, onToggle }) {
+  return (
+    <div className="flex items-start gap-2 py-1.5" style={{ borderTop: `1px solid ${P.line}` }}>
+      <button onClick={onToggle} title={checked ? "Mark as still to do" : "Mark as done"}
+        style={{ color: checked ? P.credit : P.faint, border: `1px solid ${checked ? P.credit : P.line}` }}
+        className="rounded shrink-0 mt-0.5 w-4 h-4 flex items-center justify-center">
+        {checked ? <Check size={11} /> : null}
+      </button>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{f.code}</span>
+          <span className="text-sm" style={{ color: checked ? P.faint : P.text }}>{f.name}</span>
+          {f.fromLedger && (
+            <span style={{ fontFamily: MONO, color: P.credit, border: `1px solid ${P.credit}` }} className="text-xs rounded px-1">
+              drafted here
+            </span>
+          )}
+        </div>
+        <div style={{ color: P.muted }} className="text-xs mt-0.5">{f.when}</div>
+      </div>
+      <div className="shrink-0 text-right">
+        {f.notYet ? (
+          <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">not in this year</span>
+        ) : (
+          <a href={f.url} target="_blank" rel="noreferrer"
+            style={{ fontFamily: MONO, color: P.brass }} className="text-xs underline decoration-dotted whitespace-nowrap">
+            {f.version} issue ↗
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FilingPackage({ taxYear, province, done, setDone }) {
+  const [openGroup, setOpenGroup] = useState({ always: true, usually: true, if: false });
+  const [showDiff, setShowDiff] = useState(false);
+  const pkg = useMemo(() => t2PackageFor(taxYear, province), [taxYear, province]);
+  const groups = { always: [], usually: [], if: [] };
+  for (const f of pkg) (groups[f.need] || groups.if).push(f);
+
+  // The stack this year files on, against the one before it. Computed from the
+  // version lists rather than asserted, so it stays right as CRA reissues forms.
+  const diff = useMemo(() => stackDiff(taxYear - 1, taxYear, province), [taxYear, province]);
+  const changed = diff.added.length + diff.dropped.length + diff.moved.length;
+  const separate = province ? SEPARATE_PROVINCIAL_RETURN[province] : null;
+
+  const requiredDone = groups.always.filter((f) => done[f.code]).length;
+
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <Label>The {taxYear} filing package</Label>
+          <p style={{ color: P.muted }} className="text-xs">
+            Every form CRA expects with a T2, on the issue that {taxYear} files on. Tick them off as they are done.
+          </p>
+        </div>
+        <span style={{ fontFamily: MONO, color: requiredDone === groups.always.length ? P.credit : P.faint }} className="text-xs whitespace-nowrap">
+          {requiredDone} / {groups.always.length} required
+        </span>
+      </div>
+
+      {separate && (
+        <p style={{ color: P.brass }} className="text-xs mt-2">{separate.note}</p>
+      )}
+
+      {changed > 0 && (
+        <div className="mt-3">
+          <button onClick={() => setShowDiff(!showDiff)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+            {showDiff ? "hide" : "show"} what changed from {taxYear - 1} to {taxYear} ({changed})
+          </button>
+          {showDiff && (
+            <div className="mt-2 space-y-1">
+              {diff.added.map((f) => (
+                <div key={"a" + f.code} style={{ fontFamily: MONO, color: P.credit }} className="text-xs">
+                  new · {f.code} {f.name} first appears in the {f.version} issue
+                </div>
+              ))}
+              {diff.moved.map((f) => (
+                <div key={"m" + f.code} style={{ fontFamily: MONO, color: P.brass }} className="text-xs">
+                  reissued · {f.code} moves from the {f.from} issue to the {f.version} issue
+                </div>
+              ))}
+              {diff.dropped.map((f) => (
+                <div key={"d" + f.code} style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+                  gone · {f.code} is not part of the {taxYear} stack
+                </div>
+              ))}
+              <p style={{ color: P.faint }} className="text-xs pt-1">
+                Filing an older year on the current PDF is a real error. Each link above already points at the issue for {taxYear}.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {["always", "usually", "if"].map((k) => {
+        const [title, sub] = NEED_LABEL[k];
+        const list = groups[k];
+        if (!list.length) return null;
+        const open = openGroup[k];
+        return (
+          <div key={k} className="mt-4">
+            <button onClick={() => setOpenGroup((g) => ({ ...g, [k]: !g[k] }))} className="w-full text-left">
+              <div className="flex items-center gap-2">
+                <ChevronRight size={13} style={{ color: P.faint, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+                <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-wider">{title}</span>
+                <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">({list.length})</span>
+              </div>
+              <div style={{ color: P.faint }} className="text-xs ml-5">{sub}</div>
+            </button>
+            {open && (
+              <div className="mt-1">
+                {list.map((f) => (
+                  <FormRow key={f.code} f={f} checked={Boolean(done[f.code])}
+                    onToggle={() => setDone({ ...done, [f.code]: !done[f.code] })} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-4 pt-3">
+        <Label>Forms that travel with the return</Label>
+        {T2_COMPANION_FORMS.map((f) => (
+          <div key={f.code} className="flex items-start gap-2 text-xs py-1">
+            <span style={{ fontFamily: MONO, color: P.brass }} className="w-20 shrink-0">{f.code}</span>
+            <span className="flex-1 min-w-0"><span style={{ color: P.text }}>{f.name}</span> <span style={{ color: P.muted }}>{f.when}</span></span>
+          </div>
+        ))}
+      </div>
+
+      <p style={{ color: P.faint }} className="text-xs mt-3">
+        Version list read from CRA's own form pages. <a href={CRA_FORMS_INDEX} target="_blank" rel="noreferrer" style={{ color: P.brass }} className="underline decoration-dotted">CRA forms and publications ↗</a>
+      </p>
+    </div>
+  );
+}
+
+/* ================= sending the package to an accountant =================
+   A mailto link cannot carry a file and quietly truncates a long body, which is
+   why the old version looked like it worked and didn't. So: write the files to
+   disk first, keep the body short enough that every mail client survives it,
+   and say plainly that the two files have to be dragged into the draft. */
+
+const MAILTO_BODY_LIMIT = 1400;
+
+function SendToAccountant({ subject, shortBody, fullText, files, email, setEmail, note, setNote, guide }) {
+  const [stage, setStage] = useState("idle"); // idle | prepared
+  const [copied, setCopied] = useState("");
+  const valid = /.+@.+\..+/.test(email.trim());
+
+  const body = (() => {
+    const composed = `${note.trim()}\n\n${shortBody}`;
+    return composed.length > MAILTO_BODY_LIMIT
+      ? `${composed.slice(0, MAILTO_BODY_LIMIT)}\n\n(The full figures are in the attached files.)`
+      : composed;
+  })();
+
+  // Staggered on purpose. Two downloads fired in the same tick is the pattern
+  // browsers treat as a multiple-download prompt, and one of the two files
+  // quietly not arriving is exactly the failure this flow exists to prevent.
+  const prepare = () => {
+    files.forEach((f, i) => setTimeout(() => f.download(), i * 350));
+    setStage("prepared");
+  };
+
+  const copy = (what, text) => {
+    navigator.clipboard?.writeText(text).catch(() => {});
+    setCopied(what);
+    setTimeout(() => setCopied(""), 2000);
+  };
+
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <div className="flex items-start justify-between gap-2">
+        <Label>Send it to your accountant</Label>
+        {guide}
+      </div>
+
+      <div className="space-y-2 mt-1">
+        <div><Label>Accountant's email</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="taxes@yourcpa.ca" /></div>
+        <div>
+          <Label>Message</Label>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
+            style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.text }}
+            className="rounded px-2 py-1.5 text-sm w-full outline-none" />
+        </div>
+
+        {stage === "idle" ? (
+          <>
+            <Btn className="w-full justify-center" onClick={prepare}>
+              <Download size={14} /> Prepare the package ({files.length} {files.length === 1 ? "file" : "files"})
+            </Btn>
+            <p style={{ color: P.faint }} className="text-xs">
+              Downloads {files.map((f) => f.label).join(" and ")}, then opens your email app with the message ready. Email links cannot attach files by themselves, so the last step is dragging those two in.
+            </p>
+          </>
+        ) : (
+          <div style={{ border: `1px solid ${P.credit}` }} className="rounded-lg p-3 space-y-2">
+            <div style={{ color: P.credit, fontFamily: MONO }} className="text-xs">
+              <Check size={12} className="inline mb-0.5" /> {files.length} {files.length === 1 ? "file is" : "files are"} in your Downloads folder
+            </div>
+            {files.map((f) => (
+              <div key={f.name} style={{ fontFamily: MONO, color: P.muted }} className="text-xs flex items-center gap-1.5">
+                <Paperclip size={11} style={{ color: P.brass }} /> {f.name}
+              </div>
+            ))}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <a href={valid ? `mailto:${email.trim()}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : undefined}
+                style={{ background: valid ? P.brass : P.surface2, color: "#10120C", opacity: valid ? 1 : 0.4, pointerEvents: valid ? "auto" : "none" }}
+                className="rounded px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5">
+                <Mail size={14} /> Open the draft
+              </a>
+              <Btn tone="ghost" onClick={() => copy("email", `To: ${email}\nSubject: ${subject}\n\n${note}\n\n${fullText}`)}>
+                {copied === "email" ? <Check size={13} /> : null} {copied === "email" ? "Copied" : "Copy the whole email instead"}
+              </Btn>
+              <Btn tone="ghost" onClick={() => setStage("idle")}>Start over</Btn>
+            </div>
+            <p style={{ color: P.faint }} className="text-xs">
+              Then drag {files.length === 1 ? "the file" : "both files"} into the draft before you send. If your email app did not open, use Copy and paste it into webmail.
+            </p>
+            {!valid && <p style={{ color: P.brass }} className="text-xs">Add their email address above to open the draft.</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange, openGuide, onReview }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
   const fye = data.ledger.fye || "12-31";
   const yearsAvail = fyEndYearsFromTxs(bizTx, fye);
   const [fy, setFy] = useState(yearsAvail[0] || new Date().getFullYear());
   const [draft, setDraft] = useState(false);
-  const [path, setPath] = useState("B");
   const [copied, setCopied] = useState(false);
   const [accEmail, setAccEmail] = useState("");
-  const [accNote, setAccNote] = useState(`Hi, below is our GIFI-coded T2 draft for ${data.ledger.name}. Balance sheet items still to come from your side. Can you review and let me know what else you need?`);
-  const [emailCopied, setEmailCopied] = useState(false);
+  const [accNote, setAccNote] = useState(`Hi, attached is our GIFI coded T2 draft for ${data.ledger.name}. Balance sheet items still to come from our side. Can you review and let me know what else you need?`);
+  // Province drives which provincial tax calculation schedule belongs in the
+  // package, and whether the province collects its own corporate tax at all.
+  // Kept on the device rather than in a new column, so no migration is needed
+  // to answer a question that only shapes a checklist.
+  const provKey = `ledger:${data.ledger.id}:province`;
+  const [province, setProvince] = useState(() => window.localStorage.getItem(provKey) || "ON");
+  const setProv = (v) => { setProvince(v); window.localStorage.setItem(provKey, v); };
+  const [sbd, setSbd] = useState(true);   // claiming the small business deduction
+  const [sred, setSred] = useState(false);
+  const doneKey = `ledger:${data.ledger.id}:T2:${fy}:done`;
+  const [pkgDone, setPkgDone] = useState({});
+  useEffect(() => {
+    try { setPkgDone(JSON.parse(window.localStorage.getItem(doneKey) || "{}")); }
+    catch { setPkgDone({}); }
+  }, [doneKey]);
+  const savePkgDone = (next) => {
+    setPkgDone(next);
+    try { window.localStorage.setItem(doneKey, JSON.stringify(next)); } catch { /* private mode */ }
+  };
 
   // Keep selected FY valid when FYE or txs change
   useEffect(() => {
@@ -4976,33 +5766,36 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
       ["Covered by vendor credits (non-cash)", "", creditsCovered.toFixed(2)],
     ]);
   };
-  const mailtoHref = () => {
-    const subject = encodeURIComponent(`${data.ledger.name}, T2 draft (GIFI) for review`);
-    const body = encodeURIComponent(accNote + "\n\n" + draftText().replace(/\\n/g, "\n"));
-    return `mailto:${accEmail}?subject=${subject}&body=${body}`;
-  };
+  const deadlines = t2Deadlines(fyEnd, { smallBusinessDeduction: sbd, sred });
+  const emailSubject = `${data.ledger.name}, T2 draft for FY ${fy}`;
+  // Short enough that every mail client survives it. The figures ride in the
+  // files, which is the only way they arrive intact anyway.
+  const emailShortBody =
+    `T2 draft, ${data.ledger.name}\n` +
+    `Fiscal year: ${fyStart} to ${fyEnd}\n` +
+    `Revenue: ${fmt(revenue)}\n` +
+    `Expenses: ${fmt(totalExp)}\n` +
+    `Net before taxes: ${fmt(net)}\n` +
+    (creditsCovered > 0 ? `Of the expenses, ${fmt(creditsCovered)} was covered by vendor credits and never moved cash.\n` : "") +
+    `\nAttached: the GIFI coded Schedule 125 working paper (PDF) and the same figures as a CSV.\n` +
+    `Balance sheet items for Schedule 100 are not tracked in this ledger and still need to come from us.`;
 
   return (
     <div className="space-y-6">
-      <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} />
+      <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} openGuide={openGuide} onReview={onReview} />
 
       {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
-      {!isBiz ? <PersonalTaxCard data={data} /> : (
+      {!isBiz ? <PersonalTaxCard data={data} openGuide={openGuide} /> : (
       <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">CRA · Corporate tax (T2)</h2>
-            <p style={{ color: P.muted }} className="text-sm">GIFI-coded draft from {isBiz ? "this ledger" : "this ledger's business entries"}, ready for certified software or your accountant</p>
+            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Corporate tax (T2)</h2>
+            <p style={{ color: P.muted }} className="text-sm">Your year, mapped onto the forms CRA expects</p>
           </div>
+          <GuideAnchor id="filing-t2" onOpen={openGuide} label="Walk me through it" />
         </div>
 
-        <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3">
-          <p style={{ color: P.muted }} className="text-xs">
-            Straight talk: the CRA has no public API for T2 filing, returns go through CRA-certified software or an
-            accountant's EFILE. This does the 90% before that: your year mapped onto GIFI line codes, so filing becomes
-            data entry instead of bookkeeping archaeology.
-          </p>
-        </div>
+        <DeadlineStrip rows={deadlines} title={`All deadlines for the year ending ${longDate(fyEnd)}`} />
 
         <div className="grid sm:grid-cols-4 gap-3 mt-4 items-end">
           <div>
@@ -5012,36 +5805,45 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
             </Select>
           </div>
           <div>
-            <Label>Year-end (FYE)</Label>
+            <Label>Year-end date</Label>
             <Select value={fye} onChange={(e) => updateLedgerMeta({ fye: e.target.value })}>
               {["12-31", "01-31", "02-28", "03-31", "04-30", "05-31", "06-30", "07-31", "08-31", "09-30", "10-31", "11-30"].map((d) => (
                 <option key={d} value={d}>{d}</option>
               ))}
             </Select>
           </div>
-          <div className="sm:col-span-2">
-            <Btn onClick={() => setDraft(true)}><FileText size={14} /> Generate T2 draft</Btn>
+          <div>
+            <Label>Province</Label>
+            <Select value={province} onChange={(e) => setProv(e.target.value)}>
+              {PROVINCES.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
+            </Select>
           </div>
+          <div>
+            <Btn className="w-full justify-center" onClick={() => setDraft(true)}><FileText size={14} /> Build the package</Btn>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-4 mt-3">
+          {[
+            [sbd, setSbd, "Claiming the small business deduction", "Moves the balance due date from 2 months after year end to 3."],
+            [sred, setSred, "Claiming SR&ED", "Adds the T661 cutoff, 18 months after year end and not extendable."],
+          ].map(([on, set, label, why]) => (
+            <button key={label} onClick={() => set(!on)} className="flex items-start gap-2 text-left">
+              <span style={{ color: on ? P.credit : P.faint, border: `1px solid ${on ? P.credit : P.line}` }}
+                className="rounded shrink-0 mt-0.5 w-4 h-4 flex items-center justify-center">
+                {on ? <Check size={11} /> : null}
+              </span>
+              <span>
+                <span className="text-xs" style={{ color: P.text }}>{label}</span>
+                <span className="block text-xs" style={{ color: P.faint }}>{why}</span>
+              </span>
+            </button>
+          ))}
         </div>
 
         {draft && (
           <div className="mt-4 space-y-4">
-            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-              <Label>Deadlines for FYE {fyEnd}</Label>
-              <div className="grid sm:grid-cols-3 gap-3 mt-1">
-                {[
-                  [addMonths(fyEnd, 3), "Balance owing due", "3 months after year-end (CCPC claiming the small business deduction)"],
-                  [addMonths(fyEnd, 6), "T2 return due", "6 months after year-end, file even if no tax is owing"],
-                  [addMonths(fyEnd, 18), "SR&ED claim cutoff", "T661 within 18 months of year-end, hard deadline, no extensions"],
-                ].map(([date, title, sub]) => (
-                  <div key={title}>
-                    <div style={{ fontFamily: MONO, color: P.brass }} className="text-sm">{date}</div>
-                    <div className="text-sm" style={{ color: P.text }}>{title}</div>
-                    <div className="text-xs" style={{ color: P.faint }}>{sub}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <FilingPackage taxYear={fy} province={province} done={pkgDone} setDone={savePkgDone} />
 
             <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
               <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
@@ -5071,41 +5873,26 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
                 </p>
               )}
               <p style={{ color: P.faint }} className="text-xs mt-2">
-                GIFI codes are inferred from your categories/subcategories, have your accountant confirm the mapping.
-                Schedule 100 (balance sheet) needs assets/liabilities the ledger doesn't track.
+                GIFI codes are inferred from your categories and subcategories, so have your accountant confirm the mapping.
+                Schedule 100 needs assets and liabilities this ledger does not track.
               </p>
             </div>
             <FilingConnector data={data} form="T2" taxYear={fy} accountantEmail={accEmail} />
 
-
-            <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-              <Label>Send to your accountant</Label>
-              <div className="space-y-2 mt-1">
-                <div><Label>Accountant's email</Label><Input type="email" value={accEmail} onChange={(e) => setAccEmail(e.target.value)} placeholder="taxes@yourcpa.ca" /></div>
-                <div>
-                  <Label>Message</Label>
-                  <textarea value={accNote} onChange={(e) => setAccNote(e.target.value)} rows={3}
-                    style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.text }}
-                    className="rounded px-2 py-1.5 text-sm w-full outline-none" />
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <a href={accEmail.includes("@") ? mailtoHref() : undefined}
-                    style={{ background: accEmail.includes("@") ? P.brass : P.surface2, color: "#10120C", opacity: accEmail.includes("@") ? 1 : 0.4, pointerEvents: accEmail.includes("@") ? "auto" : "none" }}
-                    className="rounded px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5">
-                    <Mail size={14} /> Open in your email app
-                  </a>
-                  <Btn tone="ghost" onClick={() => {
-                    navigator.clipboard?.writeText(`To: ${accEmail}\nSubject: ${data.ledger.name}, T2 draft (GIFI) for review\n\n${accNote}\n\n${draftText().replace(/\\n/g, "\n")}`).catch(() => {});
-                    setEmailCopied(true); setTimeout(() => setEmailCopied(false), 2000);
-                  }}>
-                    {emailCopied ? <Check size={13} /> : null} {emailCopied ? "Copied" : "Copy as email text"}
-                  </Btn>
-                </div>
-                <p style={{ color: P.faint }} className="text-xs">
-                  Opens pre-filled with the GIFI draft in the body. Attach the CSV (button above) plus your P&L and AR/AP exports before sending.
-                </p>
-              </div>
-            </div>
+            <SendToAccountant
+              subject={emailSubject}
+              shortBody={emailShortBody}
+              fullText={draftText()}
+              email={accEmail}
+              setEmail={setAccEmail}
+              note={accNote}
+              setNote={setAccNote}
+              guide={<GuideAnchor id="filing-t2" onOpen={openGuide} label="What do they need?" />}
+              files={[
+                { name: `T2_S125_GIFI_${data.ledger.name.replace(/\s/g, "")}_FY${fy}.pdf`, label: "the working paper PDF", download: exportGifiPDF },
+                { name: `T2_GIFI_${data.ledger.name.replace(/\s/g, "")}_FY${fy}.csv`, label: "the CSV", download: exportGifiCSV },
+              ]}
+            />
           </div>
         )}
       </section>
@@ -5229,7 +6016,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
 
 /* ================= live bank feed (Plaid) ================= */
-function BankFeedCard({ data, onSynced, onConnectionsChange }) {
+function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview }) {
   const [conns, setConns] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(null);
@@ -5237,6 +6024,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
   const [notice, setNotice] = useState("");
   const [showSetup, setShowSetup] = useState(false);
   const [resumable, setResumable] = useState(false);
+  const [afterSync, setAfterSync] = useState(null); // { label, plan } once a sync brings something in
   const oauthHandled = useRef(false);
 
   const refreshConns = async () => {
@@ -5430,16 +6218,20 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
         return;
       }
       const { added = 0, modified = 0, removed = 0 } = res;
-      // Lines are already stored server-side by now, so opening the reconcile
-      // view is a convenience — closing it doesn't lose anything.
-      if (!added && !modified && !removed) setNotice("Up to date. Nothing new since the last sync.");
-      else {
+      if (!added && !modified && !removed) {
+        setNotice("Up to date. Nothing new since the last sync.");
+        setAfterSync(null);
+      } else {
         const parts = [];
         if (added) parts.push(`${added} new`);
         if (modified) parts.push(`${modified} updated`);
         if (removed) parts.push(`${removed} reversed`);
-        setNotice(`${parts.join(", ")} — opening consolidate.`);
-        await onSynced?.();
+        // Syncing used to throw the consolidate screen at you, which is a
+        // question ("what do I do here?") in answer to a button you pressed for
+        // a different reason. Say what arrived and what, if anything, it needs.
+        const plan = await onSynced?.();
+        setAfterSync({ label: parts.join(", "), plan: plan || null });
+        setNotice("");
       }
     } catch (e) {
       const msg = String(e.message || e);
@@ -5447,11 +6239,13 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
       // its Reconnect button instead of only a raw Plaid string in the banner.
       await refreshConns().catch(() => {});
       setErr(/ITEM_LOGIN_REQUIRED|PENDING_EXPIRATION|login is required/i.test(msg)
-        ? "This bank needs you to sign in again. Use Reconnect on the connection below — it restores this connection in place and keeps your matched lines."
+        ? "This bank needs you to sign in again. Use Reconnect on the connection below. It restores this connection in place and keeps your matched lines."
         : msg);
     }
     setSyncing(null);
   };
+
+  const connected = (conns?.length || 0) > 0;
 
   const disconnect = async (id) => {
     if (!window.confirm("Disconnect this bank? Entries you already imported stay in the ledger.")) return;
@@ -5465,14 +6259,17 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
 
   return (
     <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Bank feed</h2>
-          <p style={{ color: P.muted }} className="text-sm">Connections belong to this ledger ({data.ledger.name}); each ledger links its own bank accounts</p>
+          <p style={{ color: P.muted }} className="text-sm">Connections belong to this ledger ({data.ledger.name}). Each ledger links its own bank accounts.</p>
         </div>
-        <span style={{ fontFamily: MONO, color: conns?.length ? P.credit : P.faint, border: `1px solid ${conns?.length ? P.credit : P.line}` }} className="text-xs rounded-full px-2 py-0.5 whitespace-nowrap">
-          {conns === null ? "checking…" : conns.length ? `${conns.length} connected` : "not connected"}
-        </span>
+        <div className="flex items-center gap-2">
+          <GuideAnchor id="bank-feed" onOpen={openGuide} label={connected ? "Something wrong?" : "Help me connect"} />
+          <span style={{ fontFamily: MONO, color: conns?.length ? P.credit : P.faint, border: `1px solid ${conns?.length ? P.credit : P.line}` }} className="text-xs rounded-full px-2 py-0.5 whitespace-nowrap">
+            {conns === null ? "checking…" : conns.length ? `${conns.length} connected` : "not connected"}
+          </span>
+        </div>
       </div>
 
       {conns?.length > 0 && (
@@ -5485,11 +6282,11 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
                 <div className="text-sm truncate">{c.institution || "Bank"}</div>
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
                   {c.current_balance != null ? `${fmt(Number(c.current_balance))} · ` : ""}
-                  {c.last_synced ? `last synced ${String(c.last_synced).slice(0, 10)}` : "never synced"}
+                  {c.last_synced ? `last synced ${stamp(c.last_synced)}` : "never synced"}
                 </div>
                 {stale && (
                   <div style={{ color: P.debit }} className="text-xs mt-1">
-                    Sign-in expired — balance and transactions have been frozen since the last sync. Reconnect to resume.
+                    Sign-in expired. Balance and transactions have been frozen since the last sync. Reconnect to resume.
                   </div>
                 )}
               </div>
@@ -5507,11 +6304,24 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
         </div>
       )}
 
+      {/* Connecting is a one-time act. Once a bank is on the card, offering
+          "Connect a bank" again reads as "add another account" and is the
+          fastest way to end up with the same account linked twice, which
+          double-counts the balance. It comes back when the last one is removed. */}
       <div className="flex flex-wrap items-center gap-3 mt-4">
-        <Btn onClick={connect} disabled={busy}>
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Connect a bank
-        </Btn>
-        {resumable && (
+        {connected ? (
+          <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">
+            {conns.length === 1 ? "This ledger is connected to your bank." : `This ledger is connected to ${conns.length} banks.`} Remove one with the bin icon to connect a different bank.
+          </span>
+        ) : (
+          <>
+            <Btn onClick={connect} disabled={busy}>
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Connect a bank
+            </Btn>
+            <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">no signup needed · you sign in with your own bank · Brasstally never sees the password</span>
+          </>
+        )}
+        {resumable && !connected && (
           <>
             <Btn tone="ghost" onClick={resume} disabled={busy}>
               <RotateCcw size={13} /> Resume bank sign-in
@@ -5521,22 +6331,56 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
             </Btn>
           </>
         )}
-        <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">no signup needed · you sign in with your own bank · Brasstally never sees the password</span>
       </div>
       {notice && <p style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-2">{notice}</p>}
       {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
 
-      <button onClick={() => setShowSetup(!showSetup)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted mt-4">
-        {showSetup ? "hide" : "show"} one-time server setup
-      </button>
-      {showSetup && (
+      {/* What the sync actually brought in, and whether it needs anything. */}
+      {afterSync && (() => {
+        const p = afterSync.plan;
+        const needs = p ? p.ask.count : 0;
+        const canFix = p ? p.fix.count : 0;
+        return (
+          <div style={{ background: P.bg, border: `1px solid ${needs ? P.brass : P.credit}` }} className="rounded-lg p-3 mt-3">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="flex-1 min-w-[14rem]">
+                <div className="text-sm" style={{ color: P.text }}>{afterSync.label} from your bank.</div>
+                <div style={{ color: P.muted }} className="text-xs mt-0.5">
+                  {!p
+                    ? "They are in the books now."
+                    : needs === 0 && canFix === 0
+                      ? "Everything already lines up with what you had recorded. Nothing for you to do."
+                      : needs === 0
+                        ? `I can sort out all ${canFix} of them without you. Open it and press one button.`
+                        : canFix
+                          ? `I can sort out ${canFix} on my own. ${needs} ${needs === 1 ? "needs" : "need"} a decision from you.`
+                          : `${needs} ${needs === 1 ? "needs" : "need"} a decision from you.`}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {(needs > 0 || canFix > 0) && (
+                  <Btn onClick={() => { setAfterSync(null); onReview?.(); }}>Open it</Btn>
+                )}
+                <button onClick={() => setAfterSync(null)} style={{ color: P.faint }} className="p-1" title="Dismiss"><X size={14} /></button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {!connected && (
+        <button onClick={() => setShowSetup(!showSetup)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted mt-4">
+          {showSetup ? "hide" : "show"} one-time server setup
+        </button>
+      )}
+      {showSetup && !connected && (
         <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-2 space-y-1.5">
           {[
             ["1", "Run supabase/migration-bank-connections.sql and supabase/migration-bank-balances.sql in the SQL Editor"],
             ["2", "Edge Functions: add secrets PLAID_CLIENT_ID, PLAID_SECRET, and PLAID_ENV (sandbox to test, production when approved)"],
             ["3", "Deploy the function: Edge Functions, New function, name it exactly \"plaid\", paste supabase/functions/plaid/index.ts, Deploy"],
             ["4", `In the Plaid Dashboard → Team Settings → API, add Allowed redirect URI: ${typeof window !== "undefined" ? window.location.origin + "/" : "https://your-site/"}`],
-            ["5", "Reload this page and tap Connect a bank. Console warnings about WebGPU/WASM from Plaid's own scripts are harmless — ignore them."],
+            ["5", "Reload this page and tap Connect a bank. Console warnings about WebGPU/WASM from Plaid's own scripts are harmless, so ignore them."],
           ].map(([n, t]) => (
             <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
               <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>
@@ -5549,15 +6393,14 @@ function BankFeedCard({ data, onSynced, onConnectionsChange }) {
 }
 
 /* ================= personal tax (T1) for Personal Ledgers ================= */
-function PersonalTaxCard({ data }) {
+function PersonalTaxCard({ data, openGuide }) {
   const yearsAvail = [...new Set(data.transactions.map((t) => Number((t.date || "").slice(0, 4))).filter(Boolean))].sort((a, b) => b - a);
   const [ty, setTy] = useState(yearsAvail[0] || new Date().getFullYear());
   const [draft, setDraft] = useState(false);
-  const [path, setPath] = useState("A");
   const [copied, setCopied] = useState(false);
+  const [showForms, setShowForms] = useState(false);
   const [accEmail, setAccEmail] = useState("");
-  const [accNote, setAccNote] = useState(`Hi, below is my ${new Date().getFullYear()} personal tax summary from Brasstally. Slips (T4/T5) will come via CRA auto-fill. Can you review and let me know what else you need?`);
-  const [emailCopied, setEmailCopied] = useState(false);
+  const [accNote, setAccNote] = useState(`Hi, attached is my personal tax summary from Brasstally. Slips such as T4s and T5s will come through CRA auto-fill. Can you review and let me know what else you need?`);
 
   const yrTx = data.transactions.filter((t) => (t.date || "").startsWith(String(ty)) && !t.plExclude);
   const incomeByCat = {};
@@ -5632,28 +6475,28 @@ function PersonalTaxCard({ data }) {
       ...lines.map(([label, v]) => [label.trim(), v === null ? "" : v.toFixed(2)]),
     ]);
   };
-  const mailtoHref = () => {
-    const subject = encodeURIComponent(`Personal tax ${ty}, summary for review`);
-    const body = encodeURIComponent(accNote + "\n\n" + draftText());
-    return `mailto:${accEmail}?subject=${subject}&body=${body}`;
-  };
+  const deadlines = t1Deadlines(ty, { selfEmployed: hasSE });
+  const emailSubject = `Personal tax ${ty}, summary for review`;
+  const emailShortBody =
+    `Personal tax summary, ${ty}\n` +
+    `Total income recorded in my ledger: ${fmt(totalIncome)}\n` +
+    (hasSE ? `Self employment: ${fmt(seIncome)} in, ${fmt(seExpenses)} of expenses, net ${fmt(seIncome - seExpenses)} (form T2125)\n` : "") +
+    (medical > 0 ? `Medical: ${fmt(medical)}\n` : "") +
+    (donations > 0 ? `Donations: ${fmt(donations)}\n` : "") +
+    `\nAttached: the working paper PDF and the same figures as a CSV.\n` +
+    `T4, T5 and RRSP slips are not in here. They come through CRA auto-fill.`;
 
   return (
     <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">CRA · Personal tax (T1)</h2>
-          <p style={{ color: P.muted }} className="text-sm">A filing-ready summary of this Personal Ledger's year, for NETFILE software or your accountant</p>
+          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Personal tax (T1)</h2>
+          <p style={{ color: P.muted }} className="text-sm">Everything CRA cannot see, ready for your software or your accountant</p>
         </div>
+        <GuideAnchor id="filing-t1" onOpen={openGuide} label="Walk me through it" />
       </div>
 
-      <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-3 mt-3">
-        <p style={{ color: P.muted }} className="text-xs">
-          Straight talk: personal returns file through NETFILE-certified software or an accountant's EFILE, and CRA's
-          auto-fill already knows your T4s and T5s. What CRA can't see is everything in this ledger: self-employment
-          income, deductible expenses, medical, donations. That's the part this prepares.
-        </p>
-      </div>
+      <DeadlineStrip rows={deadlines} title={`All deadlines for tax year ${ty}`} />
 
       <div className="grid sm:grid-cols-4 gap-3 mt-4 items-end">
         <div>
@@ -5663,27 +6506,37 @@ function PersonalTaxCard({ data }) {
           </Select>
         </div>
         <div className="sm:col-span-3">
-          <Btn onClick={() => setDraft(true)}><FileText size={14} /> Generate T1 summary</Btn>
+          <Btn onClick={() => setDraft(true)}><FileText size={14} /> Build my summary</Btn>
         </div>
       </div>
 
       {draft && (
         <div className="mt-4 space-y-4">
           <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-            <Label>Deadlines for tax year {ty}</Label>
-            <div className="grid sm:grid-cols-3 gap-3 mt-1">
-              {[
-                [`Mar 2, ${ty + 1}`, "RRSP deadline", "Contributions in the first 60 days still count for this year"],
-                [`Apr 30, ${ty + 1}`, "Return and balance due", "Filing and payment deadline for most people"],
-                ...(hasSE ? [[`Jun 15, ${ty + 1}`, "Self-employed filing", "Extra time to file, but any balance is still due Apr 30"]] : [[`Jul – Aug ${ty + 1}`, "Benefit recalcs", "GST/HST credit and benefits reset off this return"]]),
-              ].map(([date, title, sub]) => (
-                <div key={title}>
-                  <div style={{ fontFamily: MONO, color: P.brass }} className="text-sm">{date}</div>
-                  <div className="text-sm" style={{ color: P.text }}>{title}</div>
-                  <div className="text-xs" style={{ color: P.faint }}>{sub}</div>
-                </div>
-              ))}
-            </div>
+            <button onClick={() => setShowForms(!showForms)} className="w-full text-left flex items-center gap-2">
+              <ChevronRight size={13} style={{ color: P.faint, transform: showForms ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+              <Label>What a T1 is made of</Label>
+            </button>
+            {showForms ? (
+              <div className="mt-1">
+                {T1_PACKAGE.map((f) => (
+                  <div key={f.code} className="flex items-start gap-2 py-1.5" style={{ borderTop: `1px solid ${P.line}` }}>
+                    <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs w-24 shrink-0">{f.code}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="text-sm" style={{ color: P.text }}>{f.name}</span>
+                      <span className="block text-xs" style={{ color: P.muted }}>{f.when}</span>
+                    </span>
+                    <span style={{ fontFamily: MONO, color: f.need === "always" ? P.credit : P.faint }} className="text-xs shrink-0">
+                      {f.need === "always" ? "always" : f.need === "usually" ? "likely" : "if it applies"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: P.muted }} className="text-xs ml-5">
+                Your software fills most of this in for you once CRA auto-fill runs. Open it if you want to know what is going where.
+              </p>
+            )}
           </div>
 
           <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
@@ -5713,37 +6566,25 @@ function PersonalTaxCard({ data }) {
               </div>
             )}
             <p style={{ color: P.faint }} className="text-xs mt-2">
-              Deduction lines are candidates from your categories; eligibility rules apply, so confirm before claiming.
+              Deduction lines are candidates from your categories. Eligibility rules apply, so confirm before claiming.
             </p>
           </div>
             <FilingConnector data={data} form="T1" taxYear={ty} accountantEmail={accEmail} />
 
-
-          <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-            <Label>Send to your accountant</Label>
-            <div className="space-y-2 mt-1">
-              <div><Label>Accountant's email</Label><Input type="email" value={accEmail} onChange={(e) => setAccEmail(e.target.value)} placeholder="taxes@yourcpa.ca" /></div>
-              <div>
-                <Label>Message</Label>
-                <textarea value={accNote} onChange={(e) => setAccNote(e.target.value)} rows={3}
-                  style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.text }}
-                  className="rounded px-2 py-1.5 text-sm w-full outline-none" />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <a href={accEmail.includes("@") ? mailtoHref() : undefined}
-                  style={{ background: accEmail.includes("@") ? P.brass : P.surface2, color: "#10120C", opacity: accEmail.includes("@") ? 1 : 0.4, pointerEvents: accEmail.includes("@") ? "auto" : "none" }}
-                  className="rounded px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5">
-                  <Mail size={14} /> Open in your email app
-                </a>
-                <Btn tone="ghost" onClick={() => {
-                  navigator.clipboard?.writeText(`To: ${accEmail}\nSubject: Personal tax ${ty}, summary for review\n\n${accNote}\n\n${draftText()}`).catch(() => {});
-                  setEmailCopied(true); setTimeout(() => setEmailCopied(false), 2000);
-                }}>
-                  {emailCopied ? <Check size={13} /> : null} {emailCopied ? "Copied" : "Copy as email text"}
-                </Btn>
-              </div>
-            </div>
-          </div>
+          <SendToAccountant
+            subject={emailSubject}
+            shortBody={emailShortBody}
+            fullText={draftText()}
+            email={accEmail}
+            setEmail={setAccEmail}
+            note={accNote}
+            setNote={setAccNote}
+            guide={<GuideAnchor id="filing-t1" onOpen={openGuide} label="What do they need?" />}
+            files={[
+              { name: `T1_prep_${ty}_${data.ledger.name.replace(/\s/g, "")}.pdf`, label: "the working paper PDF", download: exportPDF },
+              { name: `T1_prep_${ty}.csv`, label: "the CSV", download: exportCSV },
+            ]}
+          />
         </div>
       )}
     </section>

@@ -56,8 +56,8 @@ export function computeInsights(data, { balance, month, bankConns = [], recon = 
               : "Together they account for the whole gap."
           }`
         : delta > 0
-          ? `The bank holds ${money(Math.abs(delta))} more than the ledger accounts for — likely income or refunds that were never entered.`
-          : `The ledger expects ${money(Math.abs(delta))} more than the bank holds — likely spending that cleared without being recorded, or an entry made twice.`,
+          ? `The bank holds ${money(Math.abs(delta))} more than the ledger accounts for, likely income or refunds that were never entered.`
+          : `The ledger expects ${money(Math.abs(delta))} more than the bank holds, likely spending that cleared without being recorded, or an entry made twice.`,
       ask: "Walk me through the gap between my bank balance and my books, line by line, and tell me what to do about it.",
     });
   }
@@ -213,7 +213,7 @@ export function computeInsights(data, { balance, month, bankConns = [], recon = 
         severity: total >= 200 ? "warn" : "info",
         weight: total * 0.9 + 100,
         title: `${plural(extras, "duplicate entry", "duplicate entries")} inflating the books by ${money(total)}`,
-        detail: `${top.description || top.keep.category} at ${money(top.amount)} is recorded ${top.extras.length + 1} times — ${top.reason}. Consolidate keeps one copy of each and removes the rest.`,
+        detail: `${top.description || top.keep.category} at ${money(top.amount)} is recorded ${top.extras.length + 1} times, ${top.reason}. Consolidate keeps one copy of each and removes the rest.`,
         ask: "Show me the entries that look like duplicates and tell me which one to remove.",
       });
     } else {

@@ -331,6 +331,7 @@ export async function updateObligation(id, patch) {
     status: "status", settledOn: "settled_on", settledTxId: "settled_tx_id", account: "account", recurrence: "recurrence",
     category: "category", subcategory: "subcategory", frequency: "frequency",
     payMethod: "pay_method", creditId: "credit_id",
+    attachmentId: "attachment_path", attachmentName: "attachment_name",
   };
   const row = {};
   for (const [k, col] of Object.entries(map)) if (k in patch) row[col] = patch[k] ?? null;

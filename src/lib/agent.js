@@ -12,6 +12,7 @@
 
 import * as A from "./analysis";
 import { askClaudeAgent } from "./extract";
+import { guideBrief } from "./guides";
 
 /* ================= tool schemas ================= */
 
@@ -114,7 +115,7 @@ export const TOOLS = [
   {
     name: "consolidation_history",
     description:
-      "Past consolidation runs on this ledger: when each one ran, what it matched, what it added to the books, what it set aside, and which duplicates it removed — plus whether the gap showing right now has already been worked through. Use this before telling anyone to reconcile, and for any question about what was done to the books and when.",
+      "Past consolidation runs on this ledger: when each one ran, what it matched, what it added to the books, what it set aside, and which duplicates it removed, plus whether the gap showing right now has already been worked through. Use this before telling anyone to reconcile, and for any question about what was done to the books and when.",
     input_schema: {
       type: "object",
       properties: { limit: { type: "number", description: "How many runs to return, newest first. Default 10." } },
@@ -221,7 +222,7 @@ export const TOOLS = [
   {
     name: "propose_anchor",
     description:
-      "Draws a card to re-anchor the books to a known balance as of a date, which is how drift is closed once the missing entries are in. Only propose this after explaining what the drift was — re-anchoring hides a gap rather than explaining it.",
+      "Draws a card to re-anchor the books to a known balance as of a date, which is how drift is closed once the missing entries are in. Only propose this after explaining what the drift was. Re-anchoring hides a gap rather than explaining it.",
     input_schema: {
       type: "object",
       properties: {
@@ -271,6 +272,7 @@ HOW YOU WORK
 - Quote figures as they come back from tools. If a tool returns nothing, say so plainly rather than filling the gap.
 - Answer in 2-5 short sentences of plain language. No headers, no bullet lists unless you're listing three or more entries. Dollar amounts as $1,234.56.
 - Lead with the answer, then the reason. Skip the preamble.
+- Never use em dashes. Use a comma, a full stop, or a new sentence.
 
 WHAT YOU KNOW ABOUT THIS LEDGER
 - Expense categories: ${cats.expense.map((c) => c.name).join(", ") || "none"}.
@@ -282,13 +284,13 @@ WHAT YOU KNOW ABOUT THIS LEDGER
 - Matching a bank line to an entry explains the gap without closing it, so a delta can persist on books that are perfectly reconciled. Check consolidation_history before suggesting they reconcile: if the current gap is already consolidated, say what's still open and leave it there.
 
 CHANGING THINGS
-- You cannot write to the ledger. The propose_* tools draw a confirmation card the user must tap. After calling one, say what the card does and that it's waiting on them — never say you saved, logged, added, or updated anything.
+- You cannot write to the ledger. The propose_* tools draw a confirmation card the user must tap. After calling one, say what the card does and that it's waiting on them. Never say you saved, logged, added, or updated anything.
 - Propose one thing at a time unless the user asked for a batch.
 - Before proposing a transaction, check the category exists. Before proposing a settlement, get the real id from the obligations tool.
 - Re-anchoring erases a discrepancy from view. Explain the drift first; propose the anchor only once the user has decided the remainder is genuinely untraceable.
 
 TAXES AND ADVICE
-You can explain how this ledger's own numbers map onto CRA concepts, and what a category means for a T2 or T1. You are not the user's accountant: for a filing position, a valuation, or anything that turns on facts outside the ledger, say what the numbers show and that it's worth confirming with their accountant. Don't hedge routine bookkeeping.`;
+You can explain how this ledger's own numbers map onto CRA concepts, and what a category means for a T2 or T1. You are not the user's accountant: for a filing position, a valuation, or anything that turns on facts outside the ledger, say what the numbers show and that it's worth confirming with their accountant. Don't hedge routine bookkeeping.${guideBrief(ctx.guide)}`;
 }
 
 /* ================= tool executors ================= */
@@ -321,7 +323,7 @@ function consolidationHistory(ctx, { limit = 10 } = {}) {
       deltaBefore: r.deltaBefore,
       deltaAfter: r.deltaAfter,
       leftOpen: { bank: r.openBank, books: r.openBooks },
-      did: (r.items || []).slice(0, 40).map((i) => `${i.date || ""} ${i.kind}: ${i.description}${i.detail ? ` — ${i.detail}` : ""}`),
+      did: (r.items || []).slice(0, 40).map((i) => `${i.date || ""} ${i.kind}: ${i.description}${i.detail ? `, ${i.detail}` : ""}`),
       note: r.note,
     })),
   };
@@ -493,7 +495,7 @@ export async function runAgent({ history, ctx, onEvent = () => {}, call = askCla
   // Six rounds without settling means the question needs narrowing more than it
   // needs a seventh lookup.
   return {
-    text: "I went a few rounds on that without landing it. Try narrowing the question — a month, a category, or one entry.",
+    text: "I went a few rounds on that without landing it. Try narrowing the question: a month, a category, or one entry.",
     messages,
     stopped: "max_turns",
   };
