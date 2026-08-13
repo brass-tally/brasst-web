@@ -39,6 +39,156 @@ function snapshotBalances(accounts: any[]) {
   return { balances, current_balance, balance_as_of: new Date().toISOString() };
 }
 
+function makePlaid(base: string, creds: { client_id?: string; secret?: string }) {
+  return async (path: string, payload: Record<string, unknown>) => {
+    const r = await fetch(base + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...creds, ...payload }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      const err = new Error(d.error_message || d.error_code || "Plaid error") as PlaidError;
+      err.code = d.error_code || null;
+      throw err;
+    }
+    return d;
+  };
+}
+
+/**
+ * Drain /transactions/sync for one connection and store the result. Shared by
+ * the user-triggered "sync" action and the nightly cron_sync_all sweep, so a
+ * scheduled refresh behaves identically to pressing "Sync now".
+ */
+async function syncOne(
+  supabase: ReturnType<typeof createClient>,
+  plaid: ReturnType<typeof makePlaid>,
+  conn: Record<string, any>,
+) {
+  const markStatus = async (connectionId: string, code: string | null, message: string | null) => {
+    await supabase.from("bank_connections").update({
+      status: statusFor(code),
+      status_code: code,
+      status_error: message,
+      status_at: new Date().toISOString(),
+    }).eq("id", connectionId);
+  };
+
+  const fetchAndStoreBalances = async (connectionId: string, accessToken: string) => {
+    const acct = await plaid("/accounts/get", { access_token: accessToken });
+    const snap = snapshotBalances(acct.accounts || []);
+    await supabase.from("bank_connections").update({
+      current_balance: snap.current_balance,
+      balance_as_of: snap.balance_as_of,
+      accounts: snap.balances,
+    }).eq("id", connectionId);
+    return snap;
+  };
+
+  // Drain every page first, holding the new cursor locally. Nothing is
+  // committed until the rows below are stored: if a write fails we throw
+  // with the OLD cursor still on the connection, and the next sync replays
+  // the same lines. The (connection_id, plaid_txn_id) unique key makes that
+  // replay idempotent.
+  let cursor = conn.cursor || undefined;
+  const added: any[] = [], modified: any[] = [], removed: any[] = [];
+  let hasMore = true, guard = 0;
+  try {
+    while (hasMore && guard < 20) {
+      const d = await plaid("/transactions/sync", { access_token: conn.access_token, cursor, count: 250 });
+      added.push(...(d.added || []));
+      modified.push(...(d.modified || []));
+      removed.push(...(d.removed || []));
+      cursor = d.next_cursor; hasMore = d.has_more; guard += 1;
+    }
+  } catch (e) {
+    // Persist the reason before rethrowing. Otherwise a dropped sign-in is
+    // invisible in the data — last_synced simply stops moving, and only
+    // whoever happens to read the table ever finds out.
+    const code = (e as PlaidError).code || null;
+    await markStatus(conn.id, code, String((e as Error).message || e));
+    throw e;
+  }
+
+  const now = new Date().toISOString();
+  // Plaid convention: positive amount = money leaving the account
+  //
+  // user_id is set explicitly rather than left to its `default auth.uid()`:
+  // cron_sync_all runs as the service role with no signed-in user, so the
+  // default would insert null and violate the not-null constraint. conn's
+  // own user_id (set correctly when the connection was created) is the
+  // right owner for every row synced under it either way.
+  const toRow = (t: any) => ({
+    user_id: conn.user_id,
+    ledger_id: conn.ledger_id,
+    connection_id: conn.id,
+    plaid_txn_id: t.transaction_id,
+    account_id: t.account_id || null,
+    date: t.date,
+    amount: Math.abs(Number(t.amount)),
+    direction: Number(t.amount) > 0 ? "debit" : "credit",
+    description: t.merchant_name || t.name || "Bank transaction",
+    pending: Boolean(t.pending),
+    updated_at: now,
+  });
+
+  // Upserting only these columns leaves status/matched_tx_id untouched, so a
+  // line the user already reconciled survives the bank restating it.
+  const rows = [...added, ...modified]
+    .filter((t) => t?.transaction_id && t?.date)
+    .map(toRow);
+  for (let i = 0; i < rows.length; i += 200) {
+    const { error: upErr } = await supabase
+      .from("bank_transactions")
+      .upsert(rows.slice(i, i + 200), { onConflict: "connection_id,plaid_txn_id" });
+    if (upErr) throw upErr;
+  }
+
+  // A restated or reversed line that was already matched is the one case
+  // where a settled reconciliation silently goes wrong. Flag those.
+  const modifiedIds = modified.map((t) => t?.transaction_id).filter(Boolean);
+  if (modifiedIds.length) {
+    const { error: modErr } = await supabase.from("bank_transactions")
+      .update({ review_reason: "the bank restated this line after it was matched" })
+      .eq("connection_id", conn.id).eq("status", "matched").in("plaid_txn_id", modifiedIds);
+    if (modErr) throw modErr;
+  }
+
+  const removedIds = removed.map((t) => t?.transaction_id).filter(Boolean);
+  if (removedIds.length) {
+    const { error: remErr } = await supabase.from("bank_transactions")
+      .update({ removed_at: now, review_reason: "the bank reversed or withdrew this line" })
+      .eq("connection_id", conn.id).in("plaid_txn_id", removedIds);
+    if (remErr) throw remErr;
+  }
+
+  // Everything is durable — only now is it safe to move the cursor past it.
+  // A sync that got this far proves the Item is healthy, so clear any stale
+  // failure recorded against it in the same write.
+  const { error: curErr } = await supabase.from("bank_connections")
+    .update({
+      cursor, last_synced: now,
+      status: "ok", status_code: null, status_error: null, status_at: now,
+    }).eq("id", conn.id);
+  if (curErr) throw curErr;
+
+  let snap = { balances: [] as ReturnType<typeof snapshotBalances>["balances"], current_balance: null as number | null, balance_as_of: null as string | null };
+  try {
+    snap = await fetchAndStoreBalances(conn.id, conn.access_token);
+  } catch (e) {
+    console.error("balances after sync:", e);
+  }
+  return {
+    added: added.length,
+    modified: modified.length,
+    removed: removed.length,
+    balances: snap.balances,
+    current_balance: snap.current_balance,
+    balance_as_of: snap.balance_as_of,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -48,6 +198,42 @@ Deno.serve(async (req) => {
     const creds = { client_id: Deno.env.get("PLAID_CLIENT_ID"), secret: Deno.env.get("PLAID_SECRET") };
     if (!creds.client_id || !creds.secret) return json({ error: "Plaid keys are not configured yet" }, 400);
 
+    // The nightly autorefresh has no signed-in user — pg_cron calls this action
+    // with a shared secret instead of a user JWT, so it needs the service-role
+    // client (bypasses RLS) rather than the per-request anon client below.
+    if (action === "cron_sync_all") {
+      const cronSecret = Deno.env.get("CRON_SECRET");
+      if (!cronSecret || req.headers.get("x-cron-secret") !== cronSecret) {
+        return json({ error: "Not authorized" }, 401);
+      }
+
+      // pg_cron has no DST-aware scheduling, so it ticks hourly and leaves the
+      // "is it actually 8am Eastern right now" check to us. Every other hour
+      // this is a fast no-op.
+      if (typeof body.only_if_hour_ny === "number") {
+        const nyHour = Number(
+          new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date()),
+        );
+        if (nyHour !== body.only_if_hour_ny) return json({ skipped: true, nyHour });
+      }
+
+      const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const plaid = makePlaid(base, creds);
+      const { data: conns, error } = await admin.from("bank_connections").select("*");
+      if (error) throw error;
+
+      const results: Array<Record<string, unknown>> = [];
+      for (const conn of conns || []) {
+        try {
+          const r = await syncOne(admin, plaid, conn);
+          results.push({ id: conn.id, ok: true, ...r });
+        } catch (e) {
+          results.push({ id: conn.id, ok: false, error: String((e as Error).message || e) });
+        }
+      }
+      return json({ synced: results.length, results });
+    }
+
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -56,22 +242,7 @@ Deno.serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Not signed in" }, 401);
 
-    const plaid = async (path: string, payload: Record<string, unknown>) => {
-      const r = await fetch(base + path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...creds, ...payload }),
-      });
-      const d = await r.json();
-      if (!r.ok) {
-        // The code, not just the message, is what tells "sign in again" apart
-        // from "the bank is down, try later" — callers branch on it.
-        const err = new Error(d.error_message || d.error_code || "Plaid error") as PlaidError;
-        err.code = d.error_code || null;
-        throw err;
-      }
-      return d;
-    };
+    const plaid = makePlaid(base, creds);
 
     /** Record how an Item is doing, so the UI can say so before a sync fails. */
     const markStatus = async (connectionId: string, code: string | null, message: string | null) => {
@@ -217,101 +388,8 @@ Deno.serve(async (req) => {
     if (action === "sync") {
       const { data: conn, error } = await supabase.from("bank_connections").select("*").eq("id", body.connection_id).single();
       if (error || !conn) throw new Error("Connection not found");
-
-      // Drain every page first, holding the new cursor locally. Nothing is
-      // committed until the rows below are stored: if a write fails we throw
-      // with the OLD cursor still on the connection, and the next sync replays
-      // the same lines. The (connection_id, plaid_txn_id) unique key makes that
-      // replay idempotent.
-      let cursor = conn.cursor || undefined;
-      const added: any[] = [], modified: any[] = [], removed: any[] = [];
-      let hasMore = true, guard = 0;
-      try {
-        while (hasMore && guard < 20) {
-          const d = await plaid("/transactions/sync", { access_token: conn.access_token, cursor, count: 250 });
-          added.push(...(d.added || []));
-          modified.push(...(d.modified || []));
-          removed.push(...(d.removed || []));
-          cursor = d.next_cursor; hasMore = d.has_more; guard += 1;
-        }
-      } catch (e) {
-        // Persist the reason before rethrowing. Otherwise a dropped sign-in is
-        // invisible in the data — last_synced simply stops moving, and only
-        // whoever happens to read the table ever finds out.
-        const code = (e as PlaidError).code || null;
-        await markStatus(conn.id, code, String((e as Error).message || e));
-        throw e;
-      }
-
-      const now = new Date().toISOString();
-      // Plaid convention: positive amount = money leaving the account
-      const toRow = (t: any) => ({
-        ledger_id: conn.ledger_id,
-        connection_id: conn.id,
-        plaid_txn_id: t.transaction_id,
-        account_id: t.account_id || null,
-        date: t.date,
-        amount: Math.abs(Number(t.amount)),
-        direction: Number(t.amount) > 0 ? "debit" : "credit",
-        description: t.merchant_name || t.name || "Bank transaction",
-        pending: Boolean(t.pending),
-        updated_at: now,
-      });
-
-      // Upserting only these columns leaves status/matched_tx_id untouched, so a
-      // line the user already reconciled survives the bank restating it.
-      const rows = [...added, ...modified]
-        .filter((t) => t?.transaction_id && t?.date)
-        .map(toRow);
-      for (let i = 0; i < rows.length; i += 200) {
-        const { error: upErr } = await supabase
-          .from("bank_transactions")
-          .upsert(rows.slice(i, i + 200), { onConflict: "connection_id,plaid_txn_id" });
-        if (upErr) throw upErr;
-      }
-
-      // A restated or reversed line that was already matched is the one case
-      // where a settled reconciliation silently goes wrong. Flag those.
-      const modifiedIds = modified.map((t) => t?.transaction_id).filter(Boolean);
-      if (modifiedIds.length) {
-        const { error: modErr } = await supabase.from("bank_transactions")
-          .update({ review_reason: "the bank restated this line after it was matched" })
-          .eq("connection_id", conn.id).eq("status", "matched").in("plaid_txn_id", modifiedIds);
-        if (modErr) throw modErr;
-      }
-
-      const removedIds = removed.map((t) => t?.transaction_id).filter(Boolean);
-      if (removedIds.length) {
-        const { error: remErr } = await supabase.from("bank_transactions")
-          .update({ removed_at: now, review_reason: "the bank reversed or withdrew this line" })
-          .eq("connection_id", conn.id).in("plaid_txn_id", removedIds);
-        if (remErr) throw remErr;
-      }
-
-      // Everything is durable — only now is it safe to move the cursor past it.
-      // A sync that got this far proves the Item is healthy, so clear any stale
-      // failure recorded against it in the same write.
-      const { error: curErr } = await supabase.from("bank_connections")
-        .update({
-          cursor, last_synced: now,
-          status: "ok", status_code: null, status_error: null, status_at: now,
-        }).eq("id", conn.id);
-      if (curErr) throw curErr;
-
-      let snap = { balances: [] as ReturnType<typeof snapshotBalances>["balances"], current_balance: null as number | null, balance_as_of: null as string | null };
-      try {
-        snap = await fetchAndStoreBalances(conn.id, conn.access_token);
-      } catch (e) {
-        console.error("balances after sync:", e);
-      }
-      return json({
-        added: added.length,
-        modified: modified.length,
-        removed: removed.length,
-        balances: snap.balances,
-        current_balance: snap.current_balance,
-        balance_as_of: snap.balance_as_of,
-      });
+      const result = await syncOne(supabase, plaid, conn);
+      return json(result);
     }
 
     if (action === "disconnect") {

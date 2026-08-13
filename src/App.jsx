@@ -36,7 +36,7 @@ const PALETTES = {
     faint: "#7C847B",
     credit: "#6FCB97",
     debit: "#E0705F",
-    brass: "#E0B65A",
+    brass: "#F2B94A",
     overlay: "rgba(6,10,8,0.75)",
   },
   light: {
@@ -49,7 +49,7 @@ const PALETTES = {
     faint: "#83887A",
     credit: "#2E7D54",        // calmer green
     debit: "#B0523F",         // terracotta instead of alarm red
-    brass: "#8A6D1F",
+    brass: "#B8860B",
     overlay: "rgba(52,56,46,0.38)",
   },
 };
@@ -73,6 +73,14 @@ const fmt0 = (n) =>
 const monthLabel = (ym) => {
   const [y, m] = ym.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-CA", { month: "long", year: "numeric" });
+};
+// Time-of-day an entry was recorded (from its DB created_at), for telling apart
+// same-day duplicates that otherwise look identical down to the date.
+const fmtEntryTime = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
 };
 // "today" / "yesterday" / a date. For history lines, where the point is how
 // long ago something happened rather than the exact stamp.
@@ -398,7 +406,7 @@ class Boundary extends React.Component {
             The app hit an error instead of rendering. Reloading usually clears it, if it keeps happening, send this to whoever maintains the app:
           </p>
           <pre style={{ background: "#171F1B", border: "1px solid #2A3530", color: "#C4574E", whiteSpace: "pre-wrap" }} className="rounded p-3 text-xs mb-4">{String(this.state.err)}</pre>
-          <button onClick={() => window.location.reload()} style={{ background: "#C9A24B", color: "#10120C" }} className="rounded px-4 py-2 text-sm font-medium">Reload</button>
+          <button onClick={() => window.location.reload()} style={{ background: "#F2B94A", color: "#10120C" }} className="rounded px-4 py-2 text-sm font-medium">Reload</button>
         </div>
       </div>
     );
@@ -638,6 +646,7 @@ function Ledger({ onSignOut }) {
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
   const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
   const [chatNudge, setChatNudge] = useState(null); // { at, received, total } money landed, say so
+  const [chatUnread, setChatUnread] = useState(false); // Brasstally spoke proactively and nobody has looked yet
   // Read by callbacks that fire after an await, when the closure's copy of
   // state is already a render behind.
   const dataRef = useRef(null);
@@ -758,6 +767,7 @@ function Ledger({ onSignOut }) {
         received: arrived.slice(0, 5).map((b) => ({ id: b.id, description: b.description, amount: b.amount, date: b.date })),
         total: arrived.reduce((s, b) => s + Number(b.amount || 0), 0),
       });
+      setChatUnread(true);
     }
     return plan;
   };
@@ -1552,15 +1562,25 @@ function Ledger({ onSignOut }) {
 
           {/* capture button, frosted brass, on the right */}
           <button
-            onClick={() => setChatOpen(!chatOpen)}
-            title={chatOpen ? "Close Brasstally" : "Message Brasstally, capture a receipt or ask about the ledger"}
+            onClick={() => { setChatOpen(!chatOpen); if (!chatOpen) setChatUnread(false); }}
+            title={chatOpen ? "Close Brasstally" : chatUnread ? "Brasstally has something to tell you" : "Message Brasstally, capture a receipt or ask about the ledger"}
             aria-label="Brasstally"
             className="dock-capture rounded-full flex items-center justify-center shrink-0"
-            style={{ background: theme === "dark" ? "rgba(201,162,75,0.22)" : "rgba(150,118,31,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(201,162,75,0.5)" : "rgba(150,118,31,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
+            style={{ position: "relative", background: theme === "dark" ? "rgba(242,185,74,0.22)" : "rgba(184,134,11,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(242,185,74,0.5)" : "rgba(184,134,11,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
           >
             <span className="dock-capture-icon" style={{ display: "inline-flex", transform: chatOpen ? "rotate(45deg)" : "none", transition: "transform .28s cubic-bezier(.2,.8,.2,1)" }}>
               <Plus size={22} />
             </span>
+            {chatUnread && !chatOpen && (
+              <span
+                aria-hidden
+                className="dock-capture-badge"
+                style={{
+                  position: "absolute", top: 2, right: 2, width: 10, height: 10, borderRadius: "50%",
+                  background: P.debit, border: `2px solid ${theme === "dark" ? "#171f1b" : "#fbfaf5"}`,
+                }}
+              />
+            )}
           </button>
         </div>
       </nav>
@@ -2115,7 +2135,9 @@ function MatchView({
                       {[g.keep, ...g.extras].map((t, i) => (
                         <div key={t.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: i === 0 ? P.text : P.faint }}>
                           <span className="shrink-0" style={{ color: i === 0 ? P.credit : P.debit }}>{i === 0 ? "keep" : "drop"}</span>
-                          <span className="flex-1 truncate">{t.date} · {t.description || t.category}{t.subcategory ? ` / ${t.subcategory}` : ""}</span>
+                          <span className="flex-1 truncate">
+                            {t.date}{fmtEntryTime(t.createdAt) ? ` ${fmtEntryTime(t.createdAt)}` : ""} · {t.description || t.category}{t.subcategory ? ` / ${t.subcategory}` : ""}
+                          </span>
                           {t.attachmentId && <Paperclip size={11} className="shrink-0" />}
                           <span className="tabular-nums shrink-0">{fmt(t.amount)}</span>
                         </div>
@@ -2470,6 +2492,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
   const [rows, setRows] = useState([]); // parsed + { checked, dup }
   const [ending, setEnding] = useState(null); // { amount, date } from the statement
   const [anchorToo, setAnchorToo] = useState(true);
+  const [imported, setImported] = useState(false);
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -2562,6 +2585,12 @@ function ImportModal({ data, addSub, onImport, onClose }) {
   const netSelected = selected.reduce((s, r) => s + (r.direction === "credit" ? r.amount : -r.amount), 0);
 
   const doImport = () => {
+    // Without this, a double-click (or a slow network retry) fires onImport
+    // twice, and every checked row goes in a second time as brand-new rows —
+    // the app has no server-side dedupe, so that's a silent, exact-copy
+    // duplicate import worth however much the statement was.
+    if (imported) return;
+    setImported(true);
     const txs = selected.map((r) => {
       const type = r.direction === "credit" ? "income" : "expense";
       const list = data.categories[type].map((c) => c.name);
@@ -2692,7 +2721,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
                 importing {selected.length} · net <span style={{ color: netSelected >= 0 ? P.credit : P.debit }}>{fmt(netSelected)}</span>
               </div>
               <Btn tone="ghost" onClick={() => { setStep("input"); setErr(""); }}>Back</Btn>
-              <Btn onClick={doImport} disabled={selected.length === 0 && !(anchorToo && ending)}>
+              <Btn onClick={doImport} disabled={imported || (selected.length === 0 && !(anchorToo && ending))}>
                 <Check size={14} /> Import{anchorToo && ending ? " & anchor" : ""}
               </Btn>
             </div>
@@ -4001,6 +4030,25 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   );
 }
 
+/* A small value tooltip that follows hover on desktop and tap on touch,
+   used by the P&L bars so a number is always one interaction away. */
+function ChartTip({ show, children }) {
+  if (!show) return null;
+  return (
+    <div
+      role="tooltip"
+      className="absolute z-10 pointer-events-none"
+      style={{
+        bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 6,
+        background: P.text, color: P.surface, fontFamily: MONO, whiteSpace: "nowrap",
+        padding: "3px 7px", borderRadius: 5, fontSize: 11, boxShadow: "0 4px 14px rgba(0,0,0,0.28)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /* ================= P&L ================= */
 function ProfitLoss({ data, month }) {
   const inScope = () => true; // a ledger is its own scope now
@@ -4013,10 +4061,34 @@ function ProfitLoss({ data, month }) {
   const net = revenue - costs;
   const margin = revenue > 0 ? (net / revenue) * 100 : null;
 
+  // prior month, for a plain "up or down" read on the headline numbers
+  const prevMonth = shiftMonth(month, -1);
+  const prevTx = data.transactions.filter((t) => t.date?.startsWith(prevMonth) && inScope(t) && !t.plExclude);
+  const prevRevenue = prevTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const prevCosts = prevTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const prevNet = prevRevenue - prevCosts;
+  const pctChange = (curr, prev) => (prev === 0 ? null : ((curr - prev) / Math.abs(prev)) * 100);
+  const revenueChange = pctChange(revenue, prevRevenue);
+  const costsChange = pctChange(costs, prevCosts);
+  const netChange = pctChange(net, prevNet);
+
+  // how many days of this month have actually happened, for a burn-rate read
+  const [yy, mm] = month.split("-").map(Number);
+  const daysInMonth = new Date(yy, mm, 0).getDate();
+  const isCurrentMonth = month === thisMonth();
+  const daysElapsed = isCurrentMonth ? Math.min(new Date().getDate(), daysInMonth) : daysInMonth;
+  const avgDailyCost = daysElapsed > 0 ? costs / daysElapsed : 0;
+  const avgDailyRevenue = daysElapsed > 0 ? revenue / daysElapsed : 0;
+
   const byCat = {};
-  monthTx.filter((t) => t.type === "expense").forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
+  const catCount = {};
+  monthTx.filter((t) => t.type === "expense").forEach((t) => {
+    byCat[t.category] = (byCat[t.category] || 0) + t.amount;
+    catCount[t.category] = (catCount[t.category] || 0) + 1;
+  });
   const catRows = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
   const maxCat = Math.max(...catRows.map(([, v]) => v), 1);
+  const topCatShare = catRows.length && costs > 0 ? (catRows[0][1] / costs) * 100 : null;
 
   // last 6 months trend
   const months = [];
@@ -4071,8 +4143,8 @@ function ProfitLoss({ data, month }) {
       <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">{monthLabel(month)} statement</h2>
         <div className="space-y-2" style={{ fontFamily: MONO }}>
-          <PLRow label="Revenue" value={revenue} color={P.credit} />
-          <PLRow label="Costs & expenses" value={-costs} color={P.debit} />
+          <PLRow label="Revenue" value={revenue} color={P.credit} change={revenueChange} />
+          <PLRow label="Costs & expenses" value={-costs} color={P.debit} change={costsChange} invertChange />
           {recCosts > 0 && (
             <div style={{ color: P.faint }} className="flex justify-between text-xs pl-4">
               <span className="inline-flex items-center gap-1"><Repeat size={10} /> recurring / one-time</span>
@@ -4090,6 +4162,7 @@ function ProfitLoss({ data, month }) {
             <span style={{ color: net >= 0 ? P.credit : P.debit }} className="tabular-nums flex items-center gap-1">
               {net >= 0 ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />}{fmt(net)}
               {margin !== null && <span style={{ color: P.faint }} className="text-xs ml-1">({margin.toFixed(0)}%)</span>}
+              <PLChange value={netChange} />
             </span>
           </div>
         </div>
@@ -4100,6 +4173,21 @@ function ProfitLoss({ data, month }) {
         )}
       </section>
 
+      {/* at-a-glance stats: burn rate, top category concentration, txn count — the numbers behind the statement above */}
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">At a glance</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatTile label="Avg. daily spend" value={fmt(avgDailyCost)} hint={`over ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"}`} />
+          <StatTile label="Avg. daily revenue" value={fmt(avgDailyRevenue)} hint={`over ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"}`} />
+          <StatTile
+            label="Top category share"
+            value={topCatShare !== null ? `${topCatShare.toFixed(0)}%` : "—"}
+            hint={catRows.length ? catRows[0][0] : "no expenses"}
+          />
+          <StatTile label="Transactions" value={String(monthTx.length)} hint={`${monthTx.filter((t) => t.type === "expense").length} out · ${monthTx.filter((t) => t.type === "income").length} in`} />
+        </div>
+      </section>
+
       <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">Where the money went</h2>
         {catRows.length === 0 ? (
@@ -4107,31 +4195,23 @@ function ProfitLoss({ data, month }) {
         ) : (
           <div className="space-y-2">
             {catRows.map(([cat, v]) => (
-              <div key={cat} className="flex items-center gap-3">
-                <div className="w-32 text-sm truncate">{cat}</div>
-                <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: P.bg }}>
-                  <div style={{ width: `${(v / maxCat) * 100}%`, background: P.debit, opacity: 0.8 }} className="h-full" />
-                </div>
-                <div style={{ fontFamily: MONO }} className="text-sm tabular-nums w-24 text-right">{fmt(v)}</div>
-              </div>
+              <CatBarRow key={cat} cat={cat} value={v} max={maxCat} count={catCount[cat]} shareOfCosts={costs > 0 ? (v / costs) * 100 : null} />
             ))}
           </div>
         )}
       </section>
 
       <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">Six-month trend</h2>
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 style={{ fontFamily: SERIF }} className="text-lg">Six-month trend</h2>
+          <div className="flex items-center gap-3 text-xs" style={{ color: P.faint, fontFamily: MONO }}>
+            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.credit, display: "inline-block" }} /> income</span>
+            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.debit, display: "inline-block" }} /> expense</span>
+          </div>
+        </div>
         <div className="flex items-end gap-3 h-32">
           {trend.map((t) => (
-            <div key={t.m} className="flex-1 flex flex-col items-center gap-1">
-              <div className="flex items-end gap-0.5 w-full justify-center" style={{ height: 96 }}>
-                <div style={{ height: `${(t.inc / maxTrend) * 100}%`, background: P.credit, width: "30%", minHeight: t.inc ? 2 : 0 }} className="rounded-t" />
-                <div style={{ height: `${(t.exp / maxTrend) * 100}%`, background: P.debit, width: "30%", minHeight: t.exp ? 2 : 0 }} className="rounded-t" />
-              </div>
-              <div style={{ fontFamily: MONO, color: t.m === month ? P.brass : P.faint }} className="text-xs">
-                {t.m.slice(5)}
-              </div>
-            </div>
+            <TrendBar key={t.m} t={t} maxTrend={maxTrend} active={t.m === month} />
           ))}
         </div>
       </section>
@@ -4139,12 +4219,82 @@ function ProfitLoss({ data, month }) {
   );
 }
 
-const PLRow = ({ label, value, color }) => (
-  <div className="flex justify-between text-sm">
+// invertChange: for cost rows, a rise is bad (red) and a fall is good (green) — the opposite of revenue/net
+const PLChange = ({ value, invert = false }) => {
+  if (value === null || !Number.isFinite(value)) return null;
+  const good = invert ? value <= 0 : value >= 0;
+  return (
+    <span style={{ color: good ? P.credit : P.debit }} className="text-xs inline-flex items-center gap-0.5">
+      {value >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
+      {Math.abs(value).toFixed(0)}%
+    </span>
+  );
+};
+
+const PLRow = ({ label, value, color, change, invertChange }) => (
+  <div className="flex justify-between items-center text-sm">
     <span style={{ color: P.muted }}>{label}</span>
-    <span style={{ color }} className="tabular-nums">{fmt(value)}</span>
+    <span className="flex items-center gap-2">
+      {change !== undefined && <PLChange value={change} invert={invertChange} />}
+      <span style={{ color }} className="tabular-nums">{fmt(value)}</span>
+    </span>
   </div>
 );
+
+function StatTile({ label, value, hint }) {
+  return (
+    <div style={{ background: P.bg, border: `1px solid ${P.line}` }} className="rounded-md p-2.5">
+      <div style={{ color: P.faint }} className="text-xs mb-1 truncate">{label}</div>
+      <div style={{ fontFamily: MONO, color: P.text }} className="text-base tabular-nums">{value}</div>
+      {hint && <div style={{ color: P.faint }} className="text-xs mt-0.5 truncate">{hint}</div>}
+    </div>
+  );
+}
+
+function CatBarRow({ cat, value, max, count, shareOfCosts }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      className="relative flex items-center gap-3"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onTouchStart={() => setHover((h) => !h)}
+    >
+      <div className="w-32 text-sm truncate">{cat}</div>
+      <div className="flex-1 h-2 rounded-full overflow-hidden relative" style={{ background: P.bg }}>
+        <div style={{ width: `${(value / max) * 100}%`, background: P.debit, opacity: 0.8 }} className="h-full">
+          <ChartTip show={hover}>
+            {fmt(value)}{shareOfCosts !== null ? ` · ${shareOfCosts.toFixed(0)}% of costs` : ""} · {count} {count === 1 ? "txn" : "txns"}
+          </ChartTip>
+        </div>
+      </div>
+      <div style={{ fontFamily: MONO }} className="text-sm tabular-nums w-24 text-right">{fmt(value)}</div>
+    </div>
+  );
+}
+
+function TrendBar({ t, maxTrend, active }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      className="flex-1 flex flex-col items-center gap-1 relative"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onTouchStart={() => setHover((h) => !h)}
+    >
+      <ChartTip show={hover}>
+        {monthLabel(t.m)}: +{fmt(t.inc)} / −{fmt(t.exp)} · net {fmt(t.net)}
+      </ChartTip>
+      <div className="flex items-end gap-0.5 w-full justify-center" style={{ height: 96 }}>
+        <div style={{ height: `${(t.inc / maxTrend) * 100}%`, background: P.credit, width: "30%", minHeight: t.inc ? 2 : 0 }} className="rounded-t" />
+        <div style={{ height: `${(t.exp / maxTrend) * 100}%`, background: P.debit, width: "30%", minHeight: t.exp ? 2 : 0 }} className="rounded-t" />
+      </div>
+      <div style={{ fontFamily: MONO, color: active ? P.brass : P.faint }} className="text-xs">
+        {t.m.slice(5)}
+      </div>
+    </div>
+  );
+}
 
 /* ================= AR / AP ================= */
 function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide }) {

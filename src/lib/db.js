@@ -91,6 +91,7 @@ const rowToTx = (r) => ({
   payMethod: r.pay_method || "cash", creditId: r.credit_id || undefined,
   transferId: r.transfer_id || undefined, plExclude: !!r.pl_exclude,
   attachmentId: r.attachment_path || undefined, attachmentName: r.attachment_name || undefined,
+  createdAt: r.created_at || undefined,
 });
 
 const txToRow = (t) => ({
