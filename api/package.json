@@ -1,0 +1,10 @@
+{
+  "name": "brasstally-api",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "BrassTally API functions for beta approvals and email",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "resend": "^3.0.0"
+  }
+}

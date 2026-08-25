@@ -23,5 +23,11 @@
     { "source": "/app", "destination": { "service": "app" } },
     { "source": "/app/:path*", "destination": { "service": "app" } },
     { "source": "/(.*)", "destination": { "service": "landing" } }
+  ],
+  "crons": [
+    {
+      "path": "/api/send-beta-approvals",
+      "schedule": "*/1 * * * *"
+    }
   ]
 }

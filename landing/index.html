@@ -409,11 +409,29 @@
       err.style.display = "none";
 
       try {
+        // Check if this email already has a signup record
+        const { data: existing } = await supabase
+          .from("beta_signups")
+          .select("status")
+          .eq("email", email)
+          .single();
+
+        // If already approved, they might want to sign in instead
+        if (existing?.status === "approved") {
+          err.textContent = "This email was already approved! Check your inbox for the sign-in link, or go to " + APP_URL;
+          err.style.color = "#6FCB97"; // green
+          err.style.display = "block";
+          btn.disabled = false;
+          return;
+        }
+
+        // Insert or update the signup record
         const { error } = await supabase.from("beta_signups").insert([
           { email, status: "pending", created_at: new Date().toISOString() }
         ]).select();
 
-        if (error && error.code !== "23505") throw error; // 23505 = unique violation (email exists)
+        // 23505 = unique violation (email exists) — that's OK, they might be re-signing up
+        if (error && error.code !== "23505") throw error;
 
         sent.querySelector("b").textContent = email;
         row.style.display = "none";
