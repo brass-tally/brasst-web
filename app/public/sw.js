@@ -1,7 +1,7 @@
 // Minimal app-shell service worker: makes Brasstally installable and
 // serves a cached shell when offline. Network-first so fresh deploys win.
-const CACHE = "brasstally-v1";
-const SHELL = ["/", "/index.html", "/manifest.webmanifest"];
+const CACHE = "brasstally-v2";
+const SHELL = ["/app/", "/app/index.html", "/app/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -17,6 +17,7 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(request.url);
   // never intercept Supabase / API / cross-origin calls
   if (url.origin !== self.location.origin) return;
+  if (!url.pathname.startsWith("/app")) return;
   e.respondWith(
     fetch(request)
       .then((res) => {
@@ -24,6 +25,6 @@ self.addEventListener("fetch", (e) => {
         caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
         return res;
       })
-      .catch(() => caches.match(request).then((r) => r || caches.match("/index.html")))
+      .catch(() => caches.match(request).then((r) => r || caches.match("/app/index.html")))
   );
 });

@@ -6,16 +6,22 @@
     "app": {
       "root": "app",
       "rewrites": [
-        { "source": "/(.*)", "destination": "/index.html" }
+        { "source": "/app/assets/:path*", "destination": "/assets/:path*" },
+        { "source": "/app/favicon.ico", "destination": "/favicon.ico" },
+        { "source": "/app/icon-:size.png", "destination": "/icon-:size.png" },
+        { "source": "/app/icon-maskable-:size.png", "destination": "/icon-maskable-:size.png" },
+        { "source": "/app/apple-touch-icon.png", "destination": "/apple-touch-icon.png" },
+        { "source": "/app/manifest.webmanifest", "destination": "/manifest.webmanifest" },
+        { "source": "/app/sw.js", "destination": "/sw.js" },
+        { "source": "/app", "destination": "/index.html" },
+        { "source": "/app/", "destination": "/index.html" },
+        { "source": "/app/:path*", "destination": "/index.html" }
       ]
     }
   },
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "has": [{ "type": "host", "value": "app.brasstally.com" }],
-      "destination": { "service": "app" }
-    },
+    { "source": "/app", "destination": { "service": "app" } },
+    { "source": "/app/:path*", "destination": { "service": "app" } },
     { "source": "/(.*)", "destination": { "service": "landing" } }
   ]
 }

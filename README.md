@@ -5,7 +5,7 @@ Monorepo for [brasstally.com](https://brasstally.com) (landing) and [app.brassta
 | Path | Host | What |
 |---|---|---|
 | `landing/` | `brasstally.com`, `www.brasstally.com` | Marketing landing page + magic-link sign-in |
-| `app/` | `app.brasstally.com` | React bookkeeping app (Vite + Supabase) |
+| `app/` | `brasstally.com/app` | React bookkeeping app (Vite + Supabase) |
 
 One Vercel project deploys both via [Services](https://vercel.com/docs/services) — host-based routing in root `vercel.json`.
 
@@ -23,8 +23,8 @@ npx serve landing
 
 Push to `main`. Vercel builds `app/` (Vite) and serves `landing/` as static files.
 
-**Domains on the Vercel project:** `brasstally.com`, `www.brasstally.com`, `app.brasstally.com`
+**Domains on the Vercel project:** `brasstally.com`, `www.brasstally.com` (app at `/app`)
 
-**Supabase auth:** Site URL + redirect URLs should include `https://app.brasstally.com`.
+**Supabase auth:** Site URL + redirect URLs should include `https://brasstally.com/app`.
 
 See `app/README.md` for Supabase migrations, edge functions, and full app setup.
