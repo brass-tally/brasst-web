@@ -1,0 +1,21 @@
+{
+  "services": {
+    "landing": {
+      "root": "landing"
+    },
+    "app": {
+      "root": "app",
+      "rewrites": [
+        { "source": "/(.*)", "destination": "/index.html" }
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "app.brasstally.com" }],
+      "destination": { "service": "app" }
+    },
+    { "source": "/(.*)", "destination": { "service": "landing" } }
+  ]
+}
