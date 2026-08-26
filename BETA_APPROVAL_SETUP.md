@@ -6,7 +6,9 @@ This document outlines the 7-minute auto-approval flow for early access signups.
 
 1. **User signs up on landing page** → Email added to `beta_signups` table with status "pending"
 2. **Cron runs every minute** → Queries for signups created 7+ minutes ago
-3. **Email sent** → Uses Supabase Auth's invitation link + Resend email service
+3. **Invite sent** → `supabase.auth.admin.inviteUserByEmail()` — Supabase sends the
+   email itself via the custom SMTP (Postmark) configured on the project, using the
+   "Invite user" Auth Email Template
 4. **Status updated** → Signup marked as "approved" with timestamp
 5. **User clicks link in email** → Automatically authenticated and logged into app
 
@@ -20,8 +22,6 @@ Set these in your Vercel project:
 SUPABASE_URL=https://xwoccmgppjmgficvmogr.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 APP_URL=https://brasstally.com
-RESEND_API_KEY=<your-resend-api-key>
-RESEND_FROM_EMAIL=noreply@brasstally.com
 CRON_SECRET=<optional-security-token>
 ```
 
@@ -32,12 +32,11 @@ CRON_SECRET=<optional-security-token>
 3. Settings → API
 4. Copy the **Service Role Key** (keep it secret!)
 
-### Getting Resend API Key
+### Email delivery
 
-1. Go to [Resend Dashboard](https://resend.com)
-2. Click "API Keys" in the sidebar
-3. Create or copy your API key
-4. Set a verified sender domain (e.g., noreply@brasstally.com)
+No email-provider env vars are needed here — Supabase sends the invite email
+directly through the custom SMTP (Postmark) set up under Auth → SMTP Settings.
+Edit the branded HTML under Auth → Email Templates → "Invite user".
 
 ## Database Schema
 
@@ -79,27 +78,28 @@ To test the approval flow:
    curl -X POST http://localhost:3000/api/send-beta-approvals \
      -H "Authorization: Bearer your-secret-token"
    ```
-4. **Check emails**: Resend dashboard or email inbox
+4. **Check emails**: Postmark Activity tab or email inbox
 
 ## Verifying It Works
 
 1. Signup on landing page with test email
 2. Wait ~7 minutes
-3. Check Resend dashboard for sent emails
+3. Check Postmark's Activity tab for the sent email
 4. Click the link in the approval email
 5. Should be logged in and redirected to `/app`
 
 ## Troubleshooting
 
-- **No emails sent**: Check Vercel logs for the cron job
-- **Email sending fails**: Verify RESEND_API_KEY and sender domain
+- **No emails sent**: Check Vercel logs for the cron job, and Supabase Auth logs
+  for the `inviteUserByEmail` call
+- **Email sending fails**: Verify the custom SMTP settings under Supabase Auth →
+  SMTP Settings, and check Postmark's Activity tab for bounces/errors
 - **Approval link doesn't work**: Check APP_URL and SUPABASE_SERVICE_ROLE_KEY
 - **Signups not found**: Check database has records and schema matches above
 
 ## Files Changed
 
 - `/api/send-beta-approvals.js` - Cron handler
-- `/api/lib/email.js` - Email sender
 - `vercel.json` - Added cron schedule
 - `/landing/index.html` - Already has signup form ✓
 

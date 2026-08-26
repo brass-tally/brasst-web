@@ -11,15 +11,17 @@ Vercel serverless functions for handling:
 **Cron**: Runs every 1 minute
 
 Queries for beta signups pending approval (created 7+ minutes ago) and:
-1. Generates Supabase Auth invite links
-2. Sends approval emails with login link
-3. Updates signup status to "approved"
+1. Invites the user via Supabase Auth (`admin.inviteUserByEmail`) — Supabase sends
+   the email itself through the configured custom SMTP (Postmark)
+2. Updates signup status to "approved"
 
 **Requires**:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `RESEND_API_KEY`
 - `APP_URL`
+
+The email itself is Supabase's "Invite user" template (Dashboard → Auth →
+Email Templates), not anything in this repo.
 
 ### `/api/health`
 **Method**: GET
@@ -33,9 +35,7 @@ Health check to verify all required environment variables are configured.
   "checks": {
     "supabaseUrl": true,
     "supabaseServiceKey": true,
-    "appUrl": true,
-    "resendKey": true,
-    "resendEmail": true
+    "appUrl": true
   },
   "message": "..."
 }
@@ -61,21 +61,16 @@ curl http://localhost:3000/api/health
 api/
 ├── send-beta-approvals.js  # Main cron handler
 ├── health.js               # Health check endpoint
-├── lib/
-│   └── email.js           # Email sending utility
 ├── package.json           # Dependencies
 └── README.md              # This file
 ```
 
 ## Email Template
 
-The approval email template is at `/emails/beta-approval.html` and includes:
-- Custom branding (BrassTally colors)
-- Clickable approval link
-- Feature highlights
-- 24-hour expiration notice
-
-Template variables:
-- `{{.ConfirmationURL}}` → Magic link to create/login
-- `{{.Token}}` → Backup code
-- `{{.SiteURL}}` → Main website URL
+The approval email is Supabase Auth's **"Invite user"** template
+(Dashboard → Auth → Email Templates), sent via the custom SMTP (Postmark)
+configured on the project. It's not stored in this repo — update the
+template directly in the Supabase dashboard using Supabase's own variables:
+- `{{ .ConfirmationURL }}` → Magic link to create/login
+- `{{ .Token }}` → Backup code
+- `{{ .SiteURL }}` → Main website URL

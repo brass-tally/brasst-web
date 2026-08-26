@@ -7,8 +7,6 @@ export default async function handler(req, res) {
     supabaseUrl: !!process.env.SUPABASE_URL,
     supabaseServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
     appUrl: !!process.env.APP_URL,
-    resendKey: !!process.env.RESEND_API_KEY,
-    resendEmail: !!process.env.RESEND_FROM_EMAIL,
   };
 
   const allConfigured = Object.values(checks).every(v => v);

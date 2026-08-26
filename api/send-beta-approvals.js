@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import { sendApprovalEmail } from './lib/email.js';
 
 const SEVEN_MINUTES_MS = 7 * 60 * 1000;
 
@@ -51,38 +50,19 @@ export default async function handler(req, res) {
     const results = [];
     for (const signup of pendingSignups) {
       try {
-        // Generate an invite token/link
-        const { data, error: inviteError } = await supabase.auth.admin.generateLink({
-          type: 'signup',
-          email: signup.email,
-          options: {
-            redirectTo: `${process.env.APP_URL}/auth?mode=approve`
-          }
-        });
+        // Invite the user — Supabase sends the email itself via the
+        // configured SMTP (Postmark) using the "Invite user" template.
+        const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
+          signup.email,
+          { redirectTo: `${process.env.APP_URL}/auth?mode=approve` }
+        );
 
         if (inviteError) {
-          console.error(`Error generating invite for ${signup.email}:`, inviteError);
+          console.error(`Error inviting ${signup.email}:`, inviteError);
           results.push({
             email: signup.email,
             status: 'failed',
             error: inviteError.message
-          });
-          continue;
-        }
-
-        // Send approval email with the invite link
-        const emailResult = await sendApprovalEmail({
-          email: signup.email,
-          confirmationUrl: data.properties.action_link,
-          token: data.properties.hashed_token
-        });
-
-        if (!emailResult.success) {
-          console.error(`Failed to send email to ${signup.email}:`, emailResult.error);
-          results.push({
-            email: signup.email,
-            status: 'failed',
-            error: emailResult.error
           });
           continue;
         }
