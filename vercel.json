@@ -1,8 +1,5 @@
 {
   "services": {
-    "api": {
-      "root": "."
-    },
     "landing": {
       "root": "landing"
     },
@@ -23,7 +20,6 @@
     }
   },
   "rewrites": [
-    { "source": "/api/:path*", "destination": { "service": "api" } },
     { "source": "/app", "destination": { "service": "app" } },
     { "source": "/app/:path*", "destination": { "service": "app" } },
     { "source": "/(.*)", "destination": { "service": "landing" } }
