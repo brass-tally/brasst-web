@@ -23,6 +23,8 @@ import {
   T2_COMPANION_FORMS, T1_PACKAGE, PROVINCES, SEPARATE_PROVINCIAL_RETURN, CRA_FORMS_INDEX,
 } from "./lib/cra";
 import { GUIDES, guideOpener } from "./lib/guides";
+import { ToastContainer } from "./components/Toast";
+import { notify, createNotification } from "./lib/notifications";
 
 /* ================= palettes: midnight & daylight ledger ================= */
 const PALETTES = {
@@ -662,9 +664,16 @@ function Ledger({ onSignOut }) {
   const [matchOpen, setMatchOpen] = useState(false); // the two-column reconcile view
   const [bankConns, setBankConns] = useState([]); // Plaid connections for this ledger (balances)
   const [accountOpen, setAccountOpen] = useState(false);
-  const [toast, setToast] = useState("");
+  const [notifications, setNotifications] = useState([]);
   const inFlight = useRef(new Set()); // synchronous double-tap lock for settle/remove
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 4200); return () => clearTimeout(t); }, [toast]);
+
+  const addNotification = (notif) => {
+    setNotifications((prev) => [...prev, notif]);
+  };
+
+  const dismissNotification = (id) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
   const [setupHidden, setSetupHidden] = useState(() => Boolean(window.localStorage.getItem("setup:hidden")));
@@ -762,12 +771,16 @@ function Ledger({ onSignOut }) {
     // Money landing is worth saying out loud, whether or not the books need work.
     const arrived = plan.ask.unrecorded.filter((b) => b.direction === "credit");
     if (arrived.length) {
+      const total = arrived.reduce((s, b) => s + Number(b.amount || 0), 0);
+      addNotification(notify.success(`Money received: ${fmt(total)}`));
       setChatNudge({
         at: Date.now(),
         received: arrived.slice(0, 5).map((b) => ({ id: b.id, description: b.description, amount: b.amount, date: b.date })),
-        total: arrived.reduce((s, b) => s + Number(b.amount || 0), 0),
+        total,
       });
       setChatUnread(true);
+    } else {
+      addNotification(notify.info("Bank sync complete"));
     }
     return plan;
   };
@@ -778,16 +791,18 @@ function Ledger({ onSignOut }) {
       setLedgers((ls) => [...(ls || []), l]);
       setNewLedgerOpen(false);
       setCurrentLedger(l);
+      addNotification(notify.success(`"${name}" ledger created`));
     } catch (e) {
       console.error(e);
       setLoadErr(true);
+      addNotification(notify.error("Couldn't create ledger"));
     }
   };
 
   // local state updates immediately; the matching database write runs behind it
   // Background writes should never blow away the UI. Log, surface a soft toast, keep going.
   const dbTry = async (fn) => {
-    try { await fn(); } catch (e) { console.error("save failed:", e); setToast("Couldn't reach the server, your last change may not have saved. Check your connection."); }
+    try { await fn(); } catch (e) { console.error("save failed:", e); addNotification(notify.error("Couldn't reach the server, your last change may not have saved. Check your connection.")); }
   };
 
   /* ---- derived ---- */
@@ -930,6 +945,9 @@ function Ledger({ onSignOut }) {
     const rec = { ...tx, id: crypto.randomUUID(), recurrence: tx.recurrence === "recurring" ? "recurring" : "once" };
     setData((d) => ({ ...d, transactions: [rec, ...d.transactions] }));
     if (tx.date) setMonth(tx.date.slice(0, 7));
+    const isRecurring = tx.recurrence === "recurring";
+    const label = tx.type === "income" ? "Income" : "Expense";
+    addNotification(notify.success(`${label}${isRecurring ? " (recurring)" : ""} recorded`));
     dbTry(() => db.insertTransaction(rec));
   };
   // Deleting an entry dissolves any bank match pointing at it. The database
@@ -948,12 +966,14 @@ function Ledger({ onSignOut }) {
       const gone = data.transactions.filter((x) => x.transferId === t.transferId).map((x) => x.id);
       setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.transferId !== t.transferId) }));
       dropMatchesFor(gone);
+      addNotification(notify.info("Transfer removed"));
       dbTry(() => db.deleteTransfer(t.transferId));
       return;
     }
     if (t?.attachmentId) deleteAttachment(t.attachmentId);
     setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.id !== id) }));
     dropMatchesFor([id]);
+    addNotification(notify.info("Entry removed"));
     dbTry(() => db.deleteTransaction(id));
   };
 
@@ -986,6 +1006,7 @@ function Ledger({ onSignOut }) {
     setData((d) => ({ ...d, transactions: [out, ...d.transactions] }));
     if (date) setMonth(date.slice(0, 7));
     setTransferOpen(false);
+    addNotification(notify.success(`Transfer to ${toLedger.name} created`));
     dbTry(() => db.insertTransfer({ fromId: data.ledger.id, toId: toLedger.id, out, inn }));
   };
   const updateTx = (id, patch) => {
@@ -1022,6 +1043,9 @@ function Ledger({ onSignOut }) {
   const addAR = (kind, item) => {
     const rec = { ...item, id: crypto.randomUUID(), status: "open", recurrence: item.recurrence === "recurring" ? "recurring" : "once" };
     setData((d) => ({ ...d, [kind]: [rec, ...d[kind]] }));
+    const label = kind === "receivables" ? "Invoice" : "Bill";
+    const recurring = item.recurrence === "recurring" ? " (recurring)" : "";
+    addNotification(notify.info(`${label} added${recurring}`));
     dbTry(() => db.insertObligation(kind, rec));
   };
   const settleAR = (kind, id, actual = {}) => {
@@ -1078,6 +1102,9 @@ function Ledger({ onSignOut }) {
       };
     });
     setMonth(settledOn.slice(0, 7));
+    const label = kind === "receivables" ? "Payment received" : "Payment sent";
+    const recurring = item.recurrence === "recurring" ? " (next due in " + addInterval(item.dueDate || settledOn, item.frequency || "monthly") + ")" : "";
+    addNotification(notify.success(`${label}${recurring}`));
     dbTry(async () => {
       await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId: creditId || null, ...(obDoc || {}) });
       await db.insertTransaction(tx);
@@ -1091,6 +1118,7 @@ function Ledger({ onSignOut }) {
   const addCredit = (name, initial) => {
     const rec = { id: crypto.randomUUID(), name, initial, usedAdjustment: 0 };
     setData((d) => ({ ...d, credits: [...(d.credits || []), rec] }));
+    addNotification(notify.info(`Credit pool "${name}" created`));
     dbTry(() => db.insertCredit(rec));
     return rec.id;
   };
@@ -1099,7 +1127,9 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.updateCredit(id, patch));
   };
   const delCredit = (id) => {
+    const credit = (data.credits || []).find((c) => c.id === id);
     setData((d) => ({ ...d, credits: (d.credits || []).filter((c) => c.id !== id) }));
+    addNotification(notify.info(`Credit pool removed`));
     dbTry(() => db.deleteCredit(id));
   };
   const delAR = (kind, id) => {
@@ -1107,6 +1137,8 @@ function Ledger({ onSignOut }) {
     // keep the file if it was settled, the transaction still points at it
     if (item?.attachmentId && item.status === "open") deleteAttachment(item.attachmentId);
     setData((d) => ({ ...d, [kind]: d[kind].filter((x) => x.id !== id) }));
+    const label = kind === "receivables" ? "Invoice" : "Bill";
+    addNotification(notify.info(`${label} removed`));
     dbTry(() => db.deleteObligation(id));
   };
   // Undo a settlement: remove the settled obligation AND the transaction it created.
@@ -1136,6 +1168,7 @@ function Ledger({ onSignOut }) {
       transactions: killedTxId ? d.transactions.filter((t) => t.id !== killedTxId) : d.transactions,
     }));
     if (killedTxId) dropMatchesFor([killedTxId]);
+    addNotification(notify.info("Settlement reversed"));
     dbTry(async () => {
       await db.deleteObligation(item.id);
       if (killedTxId) await db.deleteTransaction(killedTxId);
@@ -1152,6 +1185,7 @@ function Ledger({ onSignOut }) {
     const recs = txs.map((t) => ({ ...t, id: crypto.randomUUID() }));
     if (recs.length) {
       setData((d) => ({ ...d, transactions: [...recs, ...d.transactions] }));
+      addNotification(notify.success(`${recs.length} transaction${recs.length === 1 ? "" : "s"} imported`));
       dbTry(() => db.insertTransactions(recs));
     }
     if (anchor) setAnchor(anchor.amount, anchor.date, "statement");
@@ -1287,12 +1321,18 @@ function Ledger({ onSignOut }) {
       ...d,
       consolidations: [{ ...row, id: crypto.randomUUID(), createdAt: new Date().toISOString(), items: row.items || [] }, ...(d.consolidations || [])],
     }));
+    const msgs = [];
+    if (run.matched) msgs.push(`${run.matched} matched`);
+    if (run.created) msgs.push(`${run.created} created`);
+    if (run.removed) msgs.push(`${run.removed} removed`);
+    const msg = msgs.length ? `Reconciliation: ${msgs.join(", ")}` : "Reconciliation complete";
+    addNotification(notify.success(msg));
     // A failed write here is worth naming precisely: the run still shows as
     // done on screen, but nothing will remember it after a reload — which is
     // the exact complaint this whole record exists to fix.
     db.logConsolidation(data.ledger.id, row).catch((e) => {
       console.error("consolidation log failed:", e);
-      setToast("This consolidation was applied but couldn't be filed. Run supabase/migration-consolidations.sql so it's remembered next time.");
+      addNotification(notify.error("This consolidation was applied but couldn't be filed. Run supabase/migration-consolidations.sql so it's remembered next time."));
     });
   };
 
@@ -1303,6 +1343,7 @@ function Ledger({ onSignOut }) {
       anchorHistory: [{ amount, date, source, createdAt: todayStr() }, ...(d.anchorHistory || [])],
     }));
     setReconciling(false);
+    addNotification(notify.success(`Balance anchored at ${fmt(amount)}`));
     dbTry(() => db.setAnchor(amount, date, source));
   };
 
@@ -1585,13 +1626,7 @@ function Ledger({ onSignOut }) {
         </div>
       </nav>
 
-      {toast && (
-        <div className="fixed z-50 left-1/2 toast-in" style={{ transform: "translateX(-50%)", bottom: "88px" }}>
-          <div style={{ background: P.debit, color: "#fff", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }} className="rounded-full px-4 py-2 text-sm max-w-xs text-center">
-            {toast}
-          </div>
-        </div>
-      )}
+      <ToastContainer notifications={notifications} onDismiss={dismissNotification} palette={P} />
 
       <PreviewModal preview={preview} onClose={closePreview} />
       {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll} ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />}
