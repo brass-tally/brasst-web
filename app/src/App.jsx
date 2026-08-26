@@ -1339,7 +1339,7 @@ function Ledger({ onSignOut }) {
         {/* ===== header ===== */}
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">
+            <div style={{ fontFamily: MONO, color: P.text }} className="text-xs uppercase tracking-widest">
               Brasstally
             </div>
             <div className="flex items-center gap-3 min-w-0">
