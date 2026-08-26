@@ -284,7 +284,7 @@
         <a href="#tax">Tax</a>
         <a href="#open">Join</a>
       </div>
-      <a class="navlink" href="#open">Join beta</a>
+      <a class="navlink" href="#open">Open your books</a>
     </nav>
   </div>
 </div>
@@ -293,11 +293,9 @@
 <header class="hero" id="open">
   <div class="wrap">
     <div class="herocopy">
-      <div class="kicker">Down to brass tacks</div>
-      <h1>Books that stay true to the bank &mdash; even if you missed <em>a month</em>.</h1>
-      <p class="herosub">Built for the owner who runs a company and a life. Capture a receipt in chat, confirm
-      four fields, it&rsquo;s posted. Missed a month? Anchor to the real balance and keep going. Year&#8209;end
-      becomes a T2 draft your accountant can file from.</p>
+      <div class="kicker">Bookkeeping</div>
+      <h1>Books that match the bank, even if you missed <em>months</em>.</h1>
+      <p class="herosub">Capture a receipt in chat, confirm four fields, it's posted. Anchor to the real balance and move on. Year-end is a T2 your accountant files from.</p>
 
       <div class="magic" data-magic>
         <div class="magicrow">
@@ -307,108 +305,114 @@
         <div class="magicerr"></div>
         <div class="magicsent">Thanks! Check <b></b> soon for an email.</div>
         <div class="beta-pending" style="display:none" data-pending>Wait — check soon for an email with your sign-in link.</div>
-        <div class="magicnote">early access · free · your books live in your own account</div>
+        <div class="magicnote">free · your books in your own account</div>
       </div>
 
       <div class="trust">
-        <span>Early access</span>
-        <span>Made in Toronto</span>
-        <span>Your books live in your own account</span>
+        <span>Free early access</span>
+        <span>Your books in your own account</span>
       </div>
     </div>
   </div>
 
-  <!-- product scene: the actual app, mid-capture -->
-  <div class="wide scene">
-    <div class="win" data-reveal>
-      <div class="wintop">
-        <div class="winname">Fernway Studio <span class="pill">Business</span></div>
-        <div class="winmeta">anchored $22,041.17 · Aug 24, 2026</div>
-      </div>
-      <div class="winbody">
+  <!-- product scene: animated capture flow -->
+  <div class="wide scene" data-reveal>
+    <svg class="win" viewBox="0 0 1080 360" style="background:#ffffff; border:1px solid #e5e1d6; border-radius:14px; box-shadow:var(--lift); display:block">
+      <!-- Window chrome -->
+      <g style="fill:#fbfaf6; stroke:#e5e1d6; stroke-width:1">
+        <rect width="1080" height="48" />
+        <line x1="0" y1="48" x2="1080" y2="48" />
+      </g>
+      <text x="28" y="33" style="font-family:Georgia,serif; font-size:16px; fill:#20241f">Fernway Studio <tspan style="font-family:ui-monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; fill:#9c7a2a; border:1px solid #c9a24b; padding:2.5px 8px">Business</tspan></text>
+      <text x="1052" y="33" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f; text-anchor:end">anchored $22,041.17 · Aug 24, 2026</text>
 
-        <div class="pane">
-          <div class="panehead"><span>Ledger</span><span>August</span></div>
-          <div class="balrow">
-            <div class="balval">$26,657.74</div>
-            <span class="baltag">matches the bank</span>
-          </div>
-          <div class="rows">
-            <div class="row fresh">
-              <span class="dt">Aug 21</span>
-              <span class="desc">Toner + paper</span>
-              <span class="cat">Office</span>
-              <span class="amt out">−$118.43</span>
-            </div>
-            <div class="row">
-              <span class="dt">Aug 20</span>
-              <span class="desc">Client retainer · Harlowe</span>
-              <span class="cat">Revenue</span>
-              <span class="amt in">+$4,500.00</span>
-            </div>
-            <div class="row">
-              <span class="dt">Aug 18</span>
-              <span class="desc">Vercel Inc</span>
-              <span class="cat">Software</span>
-              <span class="amt out">−$70.00</span>
-            </div>
-            <div class="row">
-              <span class="dt">Aug 15</span>
-              <span class="desc">Salary · to personal</span>
-              <span class="cat">Owner pay</span>
-              <span class="amt out">−$1,250.00</span>
-            </div>
-            <div class="row">
-              <span class="dt">Aug 12</span>
-              <span class="desc">Anthropic API</span>
-              <span class="cat">Paid via credits</span>
-              <span class="amt out">−$318.00</span>
-            </div>
-            <div class="row">
-              <span class="dt">Aug 08</span>
-              <span class="desc">Adobe subscription</span>
-              <span class="cat">Software</span>
-              <span class="amt out">−$92.79</span>
-            </div>
-            <div class="row">
-              <span class="dt">Aug 04</span>
-              <span class="desc">Deposit · Kestrel Foods</span>
-              <span class="cat">Revenue</span>
-              <span class="amt in">+$2,000.00</span>
-            </div>
-          </div>
-          <div class="never">Every entry keeps its receipt, its category, and the day you wrote it.</div>
-        </div>
+      <!-- LEFT PANE: Ledger -->
+      <g style="fill:none; stroke:#e5e1d6; stroke-width:1">
+        <line x1="550" y1="48" x2="550" y2="360" />
+      </g>
+      <text x="28" y="80" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f">Ledger</text>
+      <text x="522" y="80" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f; text-anchor:end">August</text>
 
-        <div class="pane">
-          <div class="panehead"><span>Chat</span><span>capture</span></div>
-          <div class="chat">
-            <div class="bub me">
-              <div class="attach"><span class="thumb"></span> IMG_2481.jpeg</div>
-              staples run, put it on the business
-            </div>
-            <div class="bub ai">Here&rsquo;s what I read, confirm or adjust:</div>
+      <text x="28" y="116" style="font-family:ui-monospace; font-size:26px; font-weight:bold; fill:#20241f">$26,657.74</text>
+      <text x="28" y="136" style="font-family:ui-monospace; font-size:11px; fill:#237a50">matches the bank</text>
 
-            <div class="confirm">
-              <div class="ch">✦ Log money out</div>
-              <div class="fgrid">
-                <div class="f"><label>Amount</label><div class="box num">118.43</div></div>
-                <div class="f"><label>Date</label><div class="box num">2026‑08‑21</div></div>
-                <div class="f full"><label>Description</label><div class="box">Toner + paper</div></div>
-                <div class="f full"><label>Category</label><div class="box sel">Office</div></div>
-              </div>
-              <div class="cbtns">
-                <span class="btnprim pulse">Save entry</span>
-                <span class="btnghost">Not now</span>
-              </div>
-            </div>
-          </div>
-          <div class="chatin">e.g. paid Vercel $70 today…<span class="caret"></span></div>
-          <div class="never">Nothing posts until you press it. <b>Never auto&#8209;posted.</b></div>
-        </div>
+      <!-- Fresh row (animates in with highlight) -->
+      <g style="animation:postin 8s cubic-bezier(.2,.7,.2,1) infinite">
+        <rect x="8" y="152" width="534" height="32" fill="rgba(201,162,75,.2)" rx="6" />
+        <text x="28" y="172" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Aug 21</text>
+        <text x="88" y="172" style="font-size:14px; fill:#20241f">Toner + paper</text>
+        <text x="380" y="172" style="font-family:ui-monospace; font-size:10px; fill:#6c7166">Office</text>
+        <text x="522" y="172" style="font-family:ui-monospace; font-size:13.5px; fill:#20241f; text-anchor:end">−$118.43</text>
+      </g>
 
-      </div>
-    </div>
+      <!-- Static rows -->
+      <g style="fill:#9a9c8f">
+        <line x1="28" y1="192" x2="522" y2="192" stroke="#e5e1d6" stroke-width="1" />
+        <text x="28" y="212" style="font-family:ui-monospace; font-size:11px">Aug 20</text>
+        <text x="88" y="212" style="font-size:14px; fill:#20241f">Client retainer</text>
+        <text x="380" y="212" style="font-family:ui-monospace; font-size:10px">Revenue</text>
+        <text x="522" y="212" style="font-family:ui-monospace; font-size:13.5px; fill:#237a50; text-anchor:end">+$4,500.00</text>
+      </g>
+
+      <g style="fill:#9a9c8f">
+        <line x1="28" y1="232" x2="522" y2="232" stroke="#e5e1d6" stroke-width="1" />
+        <text x="28" y="252" style="font-family:ui-monospace; font-size:11px">Aug 18</text>
+        <text x="88" y="252" style="font-size:14px; fill:#20241f">Vercel Inc</text>
+        <text x="380" y="252" style="font-family:ui-monospace; font-size:10px">Software</text>
+        <text x="522" y="252" style="font-family:ui-monospace; font-size:13.5px; fill:#20241f; text-anchor:end">−$70.00</text>
+      </g>
+
+      <text x="28" y="320" style="font-family:ui-monospace; font-size:10.5px; fill:#9a9c8f">Receipt attached · day you wrote it</text>
+
+      <!-- RIGHT PANE: Chat -->
+      <text x="578" y="80" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f">Chat</text>
+      <text x="1052" y="80" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f; text-anchor:end">capture</text>
+
+      <!-- User message (animates in) -->
+      <g style="animation:slideUp 0.6s ease 0.2s both">
+        <rect x="740" y="96" width="300" height="56" rx="10" fill="#fbfaf6" stroke="#e5e1d6" stroke-width="1" />
+        <text x="760" y="114" style="font-family:ui-monospace; font-size:12px; fill:#6c7166">IMG_2481.jpeg</text>
+        <text x="760" y="136" style="font-size:13px; fill:#20241f">staples run</text>
+      </g>
+
+      <!-- AI response (animates in) -->
+      <g style="animation:slideUp 0.6s ease 0.8s both">
+        <text x="578" y="176" style="font-size:12px; fill:#6c7166">Here's what I read:</text>
+      </g>
+
+      <!-- Confirm card (animates in) -->
+      <g style="animation:slideUp 0.6s ease 1.4s both">
+        <rect x="578" y="192" width="440" height="148" rx="10" fill="#f6f4f0" stroke="#9c7a2a" stroke-width="1" stroke-opacity=".42" />
+        <text x="596" y="212" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9c7a2a; font-weight:bold">✦ Log money out</text>
+
+        <!-- Fields grid -->
+        <text x="596" y="238" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">Amount</text>
+        <rect x="596" y="244" width="120" height="20" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="608" y="259" style="font-family:ui-monospace; font-size:13px; fill:#20241f">118.43</text>
+
+        <text x="728" y="238" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">Date</text>
+        <rect x="728" y="244" width="120" height="20" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="740" y="259" style="font-family:ui-monospace; font-size:13px; fill:#20241f">2026-08-21</text>
+
+        <text x="596" y="280" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">Description</text>
+        <rect x="596" y="286" width="252" height="20" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="608" y="301" style="font-size:13px; fill:#20241f">Toner + paper</text>
+
+        <!-- Save button with pulse -->
+        <rect x="596" y="312" width="120" height="24" rx="4" fill="#c9a24b" />
+        <text x="656" y="332" style="font-family:ui-monospace; font-size:12px; font-weight:bold; fill:#26200e; text-anchor:middle">✓ Save entry</text>
+        <circle cx="656" cy="324" r="26" fill="none" stroke="#c9a24b" stroke-width="1.5" opacity="0" style="animation:ring 8s ease-out 2.2s infinite" />
+      </g>
+
+      <!-- Chat input placeholder -->
+      <rect x="578" y="352" width="440" height="28" rx="8" fill="#fbfaf6" stroke="#e5e1d6" stroke-width="1" style="opacity:.5" />
+      <text x="588" y="372" style="font-size:13px; fill:#9a9c8f">e.g. paid Vercel $70…</text>
+
+      <style>
+        @keyframes slideUp { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
+        @keyframes ring { 0% { opacity: .9; transform: scale(.97); } 8% { opacity: 0; transform: scale(1.06); } 100% { opacity: 0; } }
+      </style>
+    </svg>
   </div>
 </header>
 
@@ -419,81 +423,109 @@
       <div class="cnum">01</div>
       <div>
         <div class="kicker" style="margin-bottom:12px">Capture</div>
-        <h2>Photograph the receipt. Confirm four fields. Done.</h2>
-        <p class="lede">Shoot a receipt into the chat, drop an invoice PDF, or paste a bank statement.
-        The AI reads it and hands back a draft with the amount, the date, what it was, and where it belongs.
-        You change what&rsquo;s wrong and press save. It never posts on its own &mdash; the books only ever say
-        what you said.</p>
+        <h2>Photograph a receipt. Confirm four fields.</h2>
+        <p class="lede">The app reads the receipt and returns a draft with the amount, date, description, and category. Edit what's wrong, then save. Nothing posts without you.</p>
       </div>
     </div>
   </div>
 
-  <div class="wide scene">
-    <div class="win" data-reveal>
-      <div class="wintop">
-        <div class="winname">Capture <span class="pill plain">receipt → draft → entry</span></div>
-        <div class="winmeta">about fifteen seconds</div>
-      </div>
-      <div class="winbody cols3">
+  <div class="wide scene" data-reveal>
+    <svg class="win" viewBox="0 0 1080 320" style="background:#ffffff; border:1px solid #e5e1d6; border-radius:14px; box-shadow:var(--lift); display:block">
+      <!-- Window chrome -->
+      <g style="fill:#fbfaf6; stroke:#e5e1d6; stroke-width:1">
+        <rect width="1080" height="48" />
+        <line x1="0" y1="48" x2="1080" y2="48" />
+      </g>
+      <text x="28" y="33" style="font-family:Georgia,serif; font-size:16px; fill:#20241f">Capture <tspan style="font-family:ui-monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; fill:#6c7166">receipt → draft → entry</tspan></text>
+      <text x="1052" y="33" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f; text-anchor:end">15 seconds</text>
 
-        <div class="pane">
-          <div class="panehead"><span>1 · Hand it over</span></div>
-          <div class="chat">
-            <div class="bub me">
-              <div class="attach"><span class="thumb"></span> statement_july.pdf</div>
-              july statement, catch me up
-            </div>
-            <div class="bub me">
-              <div class="attach"><span class="thumb"></span> IMG_2481.jpeg</div>
-              staples run
-            </div>
-            <div class="bub ai">Reading 34 lines…</div>
-          </div>
-        </div>
+      <!-- Dividers -->
+      <line x1="360" y1="48" x2="360" y2="320" stroke="#e5e1d6" stroke-width="1" />
+      <line x1="720" y1="48" x2="720" y2="320" stroke="#e5e1d6" stroke-width="1" />
 
-        <div class="pane">
-          <div class="panehead"><span>2 · Confirm four things</span></div>
-          <div class="confirm" style="max-width:none">
-            <div class="ch">✦ Log money out</div>
-            <div class="fgrid">
-              <div class="f"><label>Amount</label><div class="box num">118.43</div></div>
-              <div class="f"><label>Date</label><div class="box num">2026‑08‑21</div></div>
-              <div class="f full"><label>Description</label><div class="box">Toner + paper</div></div>
-              <div class="f full"><label>Category</label><div class="box sel">Office</div></div>
-            </div>
-            <div class="cbtns">
-              <span class="btnprim">Save entry</span>
-              <span class="btnghost">Not now</span>
-            </div>
-          </div>
-          <div class="never">Vendor, tax, and category are guesses. <b>You have the last word.</b></div>
-        </div>
+      <!-- PANE 1: Hand it over -->
+      <text x="28" y="80" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f">1 · Hand it over</text>
 
-        <div class="pane">
-          <div class="panehead"><span>3 · It&rsquo;s in the books</span></div>
-          <div class="rows">
-            <div class="row">
-              <span class="dt">Aug 21</span><span class="desc">Toner + paper</span>
-              <span class="cat">Office</span><span class="amt out">−$118.43</span>
-            </div>
-            <div class="row">
-              <span class="dt">Jul 31</span><span class="desc">Mortgage payment</span>
-              <span class="cat">Imported</span><span class="amt out">−$1,200.00</span>
-            </div>
-            <div class="row">
-              <span class="dt">Jul 30</span><span class="desc">Payroll deposit</span>
-              <span class="cat">Imported</span><span class="amt in">+$4,709.00</span>
-            </div>
-            <div class="row">
-              <span class="dt">Jul 28</span><span class="desc">Vercel Inc</span>
-              <span class="cat">Software</span><span class="amt out">−$70.00</span>
-            </div>
-          </div>
-          <div class="never">Receipt stays attached to the entry, so year&#8209;end has the paper too.</div>
-        </div>
+      <g style="animation:slideUp 0.5s ease 0.1s both">
+        <rect x="20" y="96" width="320" height="40" rx="8" fill="#fbfaf6" stroke="#e5e1d6" stroke-width="1" />
+        <text x="32" y="110" style="font-family:ui-monospace; font-size:11px; fill:#6c7166">statement_july.pdf</text>
+        <text x="32" y="128" style="font-size:12px; fill:#20241f">july statement, catch me up</text>
+      </g>
 
-      </div>
-    </div>
+      <g style="animation:slideUp 0.5s ease 0.2s both">
+        <rect x="20" y="146" width="320" height="40" rx="8" fill="#fbfaf6" stroke="#e5e1d6" stroke-width="1" />
+        <text x="32" y="160" style="font-family:ui-monospace; font-size:11px; fill:#6c7166">IMG_2481.jpeg</text>
+        <text x="32" y="178" style="font-size:12px; fill:#20241f">staples run</text>
+      </g>
+
+      <g style="animation:slideUp 0.5s ease 0.3s both">
+        <text x="28" y="214" style="font-size:12px; fill:#6c7166">Reading…</text>
+      </g>
+
+      <!-- PANE 2: Confirm -->
+      <text x="388" y="80" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f">2 · Confirm</text>
+
+      <g style="animation:slideUp 0.5s ease 0.4s both">
+        <rect x="378" y="96" width="324" height="188" rx="8" fill="#f6f4f0" stroke="#9c7a2a" stroke-width="1" stroke-opacity=".42" />
+        <text x="396" y="116" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9c7a2a">✦ Log money out</text>
+
+        <text x="396" y="140" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">Amount</text>
+        <rect x="396" y="146" width="68" height="18" rx="3" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="404" y="158" style="font-family:ui-monospace; font-size:12px; fill:#20241f">118.43</text>
+
+        <text x="476" y="140" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">Date</text>
+        <rect x="476" y="146" width="68" height="18" rx="3" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="480" y="158" style="font-family:ui-monospace; font-size:12px; fill:#20241f">08-21</text>
+
+        <text x="396" y="184" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">Description</text>
+        <rect x="396" y="190" width="148" height="18" rx="3" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="404" y="202" style="font-size:12px; fill:#20241f">Toner + paper</text>
+
+        <text x="556" y="184" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">Category</text>
+        <rect x="556" y="190" width="130" height="18" rx="3" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="564" y="202" style="font-size:12px; fill:#20241f">Office</text>
+
+        <rect x="396" y="258" width="148" height="20" rx="3" fill="#c9a24b" />
+        <text x="470" y="273" style="font-family:ui-monospace; font-size:11px; font-weight:bold; fill:#26200e; text-anchor:middle">✓ Save entry</text>
+      </g>
+
+      <!-- PANE 3: Posted -->
+      <text x="748" y="80" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f">3 · Posted</text>
+
+      <g style="animation:slideUp 0.5s ease 0.5s both">
+        <line x1="738" y1="96" x2="1052" y2="96" stroke="#e5e1d6" stroke-width="1" />
+        <text x="748" y="114" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Aug 21</text>
+        <text x="820" y="114" style="font-size:13px; fill:#20241f">Toner + paper</text>
+        <text x="1040" y="114" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">−$118.43</text>
+      </g>
+
+      <g style="animation:slideUp 0.5s ease 0.55s both">
+        <line x1="738" y1="130" x2="1052" y2="130" stroke="#e5e1d6" stroke-width="1" />
+        <text x="748" y="148" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Jul 31</text>
+        <text x="820" y="148" style="font-size:13px; fill:#20241f">Mortgage payment</text>
+        <text x="1040" y="148" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">−$1,200.00</text>
+      </g>
+
+      <g style="animation:slideUp 0.5s ease 0.6s both">
+        <line x1="738" y1="164" x2="1052" y2="164" stroke="#e5e1d6" stroke-width="1" />
+        <text x="748" y="182" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Jul 30</text>
+        <text x="820" y="182" style="font-size:13px; fill:#20241f">Payroll deposit</text>
+        <text x="1040" y="182" style="font-family:ui-monospace; font-size:12px; fill:#237a50; text-anchor:end">+$4,709.00</text>
+      </g>
+
+      <g style="animation:slideUp 0.5s ease 0.65s both">
+        <line x1="738" y1="198" x2="1052" y2="198" stroke="#e5e1d6" stroke-width="1" />
+        <text x="748" y="216" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Jul 28</text>
+        <text x="820" y="216" style="font-size:13px; fill:#20241f">Vercel Inc</text>
+        <text x="1040" y="216" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">−$70.00</text>
+      </g>
+
+      <text x="748" y="270" style="font-family:ui-monospace; font-size:10px; fill:#9a9c8f">Receipt attached · receipt date kept</text>
+
+      <style>
+        @keyframes slideUp { 0% { opacity: 0; transform: translateY(6px); } 100% { opacity: 1; transform: translateY(0); } }
+      </style>
+    </svg>
   </div>
 </section>
 
@@ -504,42 +536,72 @@
       <div class="cnum">02</div>
       <div>
         <div class="kicker" style="margin-bottom:12px">Two books</div>
-        <h2>The company&rsquo;s money and yours, kept apart and kept straight.</h2>
-        <p class="lede">A ledger for the business, a ledger for your life, another for your mother&rsquo;s
-        shop if you keep those too &mdash; all under one sign&#8209;in. Pay yourself in one motion and both
-        sides get written together: salary lands as an expense here and income there, an owner&rsquo;s draw
-        touches neither P&amp;L. Delete one side and the app tells you it&rsquo;s deleting both.</p>
+        <h2>The company's money and yours, kept apart.</h2>
+        <p class="lede">Pay yourself in one motion and both sides get written together: salary is an expense here and income there. All books under one sign-in.</p>
       </div>
     </div>
 
-    <div class="books" data-reveal data-delay="1">
-      <div class="bookcard">
-        <div class="bhead"><span class="bname">Fernway Studio</span><span class="pill">Business</span></div>
-        <div class="balrow" style="margin-bottom:12px">
-          <div class="balval" style="font-size:22px">$26,657.74</div>
-        </div>
-        <div class="rows">
-          <div class="row"><span class="dt">Aug 15</span><span class="desc">Salary · to Maya</span><span class="amt out">−$1,250.00</span></div>
-          <div class="row"><span class="dt">Aug 20</span><span class="desc">Client retainer</span><span class="amt in">+$4,500.00</span></div>
-        </div>
-      </div>
+    <svg class="books" data-reveal data-delay="1" viewBox="0 0 900 240" style="display:block; margin-top:44px">
+      <!-- LEFT BOOK: Business -->
+      <g id="business-book">
+        <rect x="20" y="20" width="300" height="200" rx="10" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="40" y="48" style="font-family:Georgia,serif; font-size:17px; fill:#20241f">Fernway Studio</text>
+        <tspan style="font-family:ui-monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; fill:#9c7a2a">Business</tspan>
 
-      <div class="link">
-        <div class="linkline"></div>
-        <div class="linklbl">one motion<br />both sides</div>
-      </div>
+        <text x="40" y="82" style="font-family:ui-monospace; font-size:20px; font-weight:bold; fill:#20241f">$26,657.74</text>
 
-      <div class="bookcard">
-        <div class="bhead"><span class="bname">Maya, personal</span><span class="pill plain">Personal</span></div>
-        <div class="balrow" style="margin-bottom:12px">
-          <div class="balval" style="font-size:22px">$6,204.90</div>
-        </div>
-        <div class="rows">
-          <div class="row"><span class="dt">Aug 15</span><span class="desc">Salary · from Fernway</span><span class="amt in">+$1,250.00</span></div>
-          <div class="row"><span class="dt">Aug 19</span><span class="desc">Groceries</span><span class="amt out">−$142.16</span></div>
-        </div>
-      </div>
-    </div>
+        <line x1="40" y1="100" x2="300" y2="100" stroke="#e5e1d6" stroke-width="1" />
+
+        <!-- Salary out (animates) -->
+        <g style="animation:rowIn 0.5s ease 0.1s both">
+          <text x="40" y="120" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Aug 15</text>
+          <text x="100" y="120" style="font-size:13px; fill:#20241f">Salary · to Maya</text>
+          <text x="300" y="120" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">−$1,250.00</text>
+        </g>
+
+        <!-- Income (animates) -->
+        <g style="animation:rowIn 0.5s ease 0.2s both">
+          <text x="40" y="148" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Aug 20</text>
+          <text x="100" y="148" style="font-size:13px; fill:#20241f">Client retainer</text>
+          <text x="300" y="148" style="font-family:ui-monospace; font-size:12px; fill:#237a50; text-anchor:end">+$4,500.00</text>
+        </g>
+      </g>
+
+      <!-- TRANSFER LINE -->
+      <line x1="340" y1="120" x2="500" y2="120" stroke="#e5e1d6" stroke-width="2" />
+      <circle cx="420" cy="120" r="6" fill="#c9a24b" style="animation:transferDot 3.2s cubic-bezier(.45,.05,.4,.95) infinite" />
+      <text x="420" y="160" style="font-family:ui-monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase; fill:#9a9c8f; text-anchor:middle">one motion</text>
+
+      <!-- RIGHT BOOK: Personal -->
+      <g id="personal-book">
+        <rect x="540" y="20" width="340" height="200" rx="10" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="560" y="48" style="font-family:Georgia,serif; font-size:17px; fill:#20241f">Maya, personal</text>
+        <tspan style="font-family:ui-monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; fill:#6c7166; border:1px solid #e5e1d6">Personal</tspan>
+
+        <text x="560" y="82" style="font-family:ui-monospace; font-size:20px; font-weight:bold; fill:#20241f">$6,204.90</text>
+
+        <line x1="560" y1="100" x2="860" y2="100" stroke="#e5e1d6" stroke-width="1" />
+
+        <!-- Salary in (animates) -->
+        <g style="animation:rowIn 0.5s ease 0.1s both">
+          <text x="560" y="120" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Aug 15</text>
+          <text x="620" y="120" style="font-size:13px; fill:#20241f">Salary · from Fernway</text>
+          <text x="860" y="120" style="font-family:ui-monospace; font-size:12px; fill:#237a50; text-anchor:end">+$1,250.00</text>
+        </g>
+
+        <!-- Groceries (animates) -->
+        <g style="animation:rowIn 0.5s ease 0.2s both">
+          <text x="560" y="148" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f">Aug 19</text>
+          <text x="620" y="148" style="font-size:13px; fill:#20241f">Groceries</text>
+          <text x="860" y="148" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">−$142.16</text>
+        </g>
+      </g>
+
+      <style>
+        @keyframes rowIn { 0% { opacity: 0; transform: translateY(4px); } 100% { opacity: 1; } }
+        @keyframes transferDot { 0% { transform: translateX(0); opacity: 0; } 14% { opacity: 1; } 86% { opacity: 1; } 100% { transform: translateX(160px); opacity: 0; } }
+      </style>
+    </svg>
   </div>
 </section>
 
@@ -549,54 +611,94 @@
     <div class="chead" data-reveal>
       <div class="cnum">03</div>
       <div>
-        <div class="kicker" style="margin-bottom:12px">Bank&#8209;true</div>
-        <h2>When the books drift, tell them the truth and move on.</h2>
-        <p class="lede">Every other ledger quietly assumes you never miss a week. This one assumes you do.
-        Set the balance to what the bank actually says on the day it said it &mdash; the months you never
-        tracked stop dragging on the number, and only what you log afterwards counts. Every anchor is kept
-        in the history, so nothing is quietly rewritten. Connect the bank through Plaid and new transactions
-        arrive as drafts you confirm, same as everything else.</p>
+        <div class="kicker" style="margin-bottom:12px">Bank-true</div>
+        <h2>Anchor to the real balance and move on.</h2>
+        <p class="lede">Set the balance to what the bank says on any day, and the months you missed stop dragging on the number. Every anchor stays in history. Connect Plaid and new transactions arrive as drafts you confirm.</p>
       </div>
     </div>
 
-    <div class="twoup">
-      <div class="panel" data-reveal>
-        <h3>Anchor the balance</h3>
-        <p class="why">Check your real accounts, enter the combined total, pick the date.</p>
-        <div class="fgrid">
-          <div class="f"><label>True balance</label><div class="box num">22,041.17</div></div>
-          <div class="f"><label>As of</label><div class="box num">2026‑08‑01</div></div>
-        </div>
-        <div class="cbtns"><span class="btnprim">Anchor balance here</span></div>
-        <p class="poolnote" style="margin-top:12px">Entries dated on or before the anchor stay in your history &mdash; they just stop counting toward the balance.</p>
-        <div style="margin-top:14px">
-          <div class="hist"><span>2026‑08‑01 · bank feed</span><span>$22,041.17</span></div>
-          <div class="hist"><span>2026‑02‑14 · manual</span><span>$9,880.42</span></div>
-          <div class="hist"><span>2025‑09‑30 · statement</span><span>$4,110.00</span></div>
-        </div>
-      </div>
+    <svg class="twoup" viewBox="0 0 900 380" style="display:block; margin-top:44px">
+      <!-- LEFT PANEL: Anchor -->
+      <g id="anchor-panel">
+        <rect x="20" y="20" width="380" height="340" rx="10" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="40" y="48" style="font-family:Georgia,serif; font-size:18px; font-weight:400; fill:#20241f">Anchor the balance</text>
+        <text x="40" y="68" style="font-size:13.5px; color:#6c7166">Enter the real balance and date.</text>
 
-      <div class="panel" data-reveal data-delay="1">
-        <h3>Credits are not cash</h3>
-        <p class="why">AWS, compute, and vendor credits are pools that drain. The P&amp;L knows the difference,
-        and so does your accountant&rsquo;s copy.</p>
+        <!-- Fields -->
+        <text x="40" y="96" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">True balance</text>
+        <rect x="40" y="102" width="160" height="24" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="50" y="122" style="font-family:ui-monospace; font-size:13px; fill:#20241f">22,041.17</text>
 
-        <div class="pool">
-          <div class="poolhead"><span class="poolname">AWS Activate</span><span class="poolval">$4,910.00 <small>/ $10,000 left</small></span></div>
-          <div class="drain" style="--w:49%"><i></i></div>
-          <div class="poolnote">used: $5,090 (2,000 pre-app + 3,090 tracked)</div>
-        </div>
+        <text x="220" y="96" style="font-family:ui-monospace; font-size:9px; letter-spacing:.12em; text-transform:uppercase; fill:#9a9c8f">As of</text>
+        <rect x="220" y="102" width="160" height="24" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="230" y="122" style="font-family:ui-monospace; font-size:13px; fill:#20241f">2026-08-01</text>
 
-        <div class="pool">
-          <div class="poolhead"><span class="poolname">Anthropic credits</span><span class="poolval">$1,182.00 <small>/ $2,500 left</small></span></div>
-          <div class="drain" style="--w:47%"><i></i></div>
-          <div class="poolnote">used: $1,318 tracked · $200 committed in open payables</div>
-        </div>
+        <!-- Button -->
+        <rect x="40" y="138" width="340" height="28" rx="4" fill="#c9a24b" />
+        <text x="210" y="158" style="font-family:ui-monospace; font-size:12px; font-weight:bold; fill:#26200e; text-anchor:middle">✓ Anchor balance</text>
 
-        <p class="poolnote" style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line)">
-          Spend a credit and the expense is recorded without pretending cash left the account.</p>
-      </div>
-    </div>
+        <!-- History -->
+        <text x="40" y="188" style="font-family:ui-monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f">History</text>
+
+        <g style="animation:historyRow 0.4s ease 0.1s both">
+          <line x1="40" y1="204" x2="360" y2="204" stroke="#e5e1d6" stroke-width="1" />
+          <text x="40" y="222" style="font-family:ui-monospace; font-size:11px; color:#6c7166">2026-08-01 · bank feed</text>
+          <text x="360" y="222" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">$22,041.17</text>
+        </g>
+
+        <g style="animation:historyRow 0.4s ease 0.2s both">
+          <line x1="40" y1="238" x2="360" y2="238" stroke="#e5e1d6" stroke-width="1" />
+          <text x="40" y="256" style="font-family:ui-monospace; font-size:11px; color:#6c7166">2026-02-14 · manual</text>
+          <text x="360" y="256" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">$9,880.42</text>
+        </g>
+
+        <g style="animation:historyRow 0.4s ease 0.3s both">
+          <line x1="40" y1="272" x2="360" y2="272" stroke="#e5e1d6" stroke-width="1" />
+          <text x="40" y="290" style="font-family:ui-monospace; font-size:11px; color:#6c7166">2025-09-30 · statement</text>
+          <text x="360" y="290" style="font-family:ui-monospace; font-size:12px; fill:#20241f; text-anchor:end">$4,110.00</text>
+        </g>
+      </g>
+
+      <!-- RIGHT PANEL: Credits -->
+      <g id="credits-panel">
+        <rect x="440" y="20" width="440" height="340" rx="10" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="460" y="48" style="font-family:Georgia,serif; font-size:18px; font-weight:400; fill:#20241f">Credits are not cash</text>
+        <text x="460" y="68" style="font-size:13.5px; color:#6c7166">Vendor credits drain from pools.</text>
+
+        <!-- AWS Pool -->
+        <g style="animation:poolIn 0.4s ease 0.1s both">
+          <text x="460" y="108" style="font-size:13.5px; fill:#20241f">AWS Activate</text>
+          <text x="840" y="108" style="font-family:ui-monospace; font-size:13px; fill:#20241f; text-anchor:end">$4,910.00</text>
+          <text x="840" y="124" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f; text-anchor:end">$10,000 left</text>
+
+          <!-- Progress bar -->
+          <rect x="460" y="132" width="360" height="6" rx="3" fill="#fbfaf6" stroke="#e5e1d6" stroke-width="1" />
+          <rect x="460" y="132" width="176" height="6" rx="3" fill="#c9a24b" opacity="0.85" />
+
+          <text x="460" y="158" style="font-family:ui-monospace; font-size:10.5px; fill:#9a9c8f">used: $5,090 (2,000 pre + 3,090 tracked)</text>
+        </g>
+
+        <!-- Anthropic Pool -->
+        <g style="animation:poolIn 0.4s ease 0.2s both">
+          <text x="460" y="200" style="font-size:13.5px; fill:#20241f">Anthropic credits</text>
+          <text x="840" y="200" style="font-family:ui-monospace; font-size:13px; fill:#20241f; text-anchor:end">$1,182.00</text>
+          <text x="840" y="216" style="font-family:ui-monospace; font-size:11px; fill:#9a9c8f; text-anchor:end">$2,500 left</text>
+
+          <!-- Progress bar -->
+          <rect x="460" y="224" width="360" height="6" rx="3" fill="#fbfaf6" stroke="#e5e1d6" stroke-width="1" />
+          <rect x="460" y="224" width="169" height="6" rx="3" fill="#c9a24b" opacity="0.85" />
+
+          <text x="460" y="250" style="font-family:ui-monospace; font-size:10.5px; fill:#9a9c8f">used: $1,318 tracked</text>
+        </g>
+
+        <text x="460" y="290" style="font-family:ui-monospace; font-size:10.5px; fill:#9a9c8f; line-height:1.6">Spend a credit and it records as<tspan x="460" dy="16">an expense without cash leaving.</tspan></text>
+      </g>
+
+      <style>
+        @keyframes historyRow { 0% { opacity: 0; transform: translateX(-4px); } 100% { opacity: 1; } }
+        @keyframes poolIn { 0% { opacity: 0; transform: translateY(4px); } 100% { opacity: 1; } }
+      </style>
+    </svg>
   </div>
 </section>
 
@@ -607,56 +709,110 @@
       <div class="cnum">04</div>
       <div>
         <div class="kicker" style="margin-bottom:12px">Tax day</div>
-        <h2>The year comes out as a tax package, not a shoebox.</h2>
-        <p class="lede">Pick your year&#8209;end and build the package. Brasstally maps your categories onto the
-        forms CRA expects, computes every deadline from your own year&#8209;end, and lays out which schedules
-        your return is actually made of. Then you email it to your accountant from the same screen &mdash;
-        working paper, figures, and a note, all attached.</p>
+        <h2>Year-end is a tax package your accountant files from.</h2>
+        <p class="lede">Pick your year-end and build the package. The app maps your categories to CRA forms, computes all deadlines, and emails everything to your accountant.</p>
       </div>
     </div>
 
-    <div class="taxgrid">
-      <div class="panel" data-reveal>
-        <h3>Deadlines, from your year&#8209;end</h3>
-        <p class="why">Fiscal year ending 2026&#8209;12&#8209;31 · Ontario · claiming the small business deduction.</p>
-        <div class="deadline">
-          <span class="dl">Balance owing due<small>three months after year end for a CCPC</small></span>
-          <span class="dd">2027‑03‑31</span>
-        </div>
-        <div class="deadline">
-          <span class="dl">T2 return due<small>six months after year end</small></span>
-          <span class="dd">2027‑06‑30</span>
-        </div>
-        <div class="deadline">
-          <span class="dl">T661 SR&amp;ED cutoff<small>eighteen months, not extendable</small></span>
-          <span class="dd">2028‑06‑30</span>
-        </div>
-      </div>
+    <svg class="taxgrid" viewBox="0 0 900 380" style="display:block; margin-top:44px">
+      <!-- LEFT PANEL: Deadlines -->
+      <g id="deadlines-panel">
+        <rect x="20" y="20" width="380" height="340" rx="10" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="40" y="48" style="font-family:Georgia,serif; font-size:18px; font-weight:400; fill:#20241f">Deadlines</text>
+        <text x="40" y="68" style="font-size:12px; color:#6c7166">Fiscal year 2026-12-31 · Ontario</text>
 
-      <div class="panel" data-reveal data-delay="1">
-        <h3>Working paper · income statement</h3>
-        <p class="why">Schedule 125 · 2026‑01‑01 → 2026‑12‑31 · Fernway Studio</p>
-        <div class="gifi"><span class="g">8000</span><span class="n">Trade sales of goods and services</span><span class="v">$182,400.00</span></div>
-        <div class="gifi strong"><span class="g">8299</span><span class="n">Total revenue</span><span class="v">$182,400.00</span></div>
-        <div class="gifi"><span class="g">8811</span><span class="n">Office expenses</span><span class="v">−$6,142.80</span></div>
-        <div class="gifi"><span class="g">8860</span><span class="n">Professional fees</span><span class="v">−$14,900.00</span></div>
-        <div class="gifi"><span class="g">9060</span><span class="n">Salaries and wages</span><span class="v">−$66,000.00</span></div>
-        <div class="gifi strong"><span class="g">9368</span><span class="n">Total expenses</span><span class="v">−$118,214.55</span></div>
-        <div class="gifi strong final"><span class="g">9999</span><span class="n">Net income before taxes</span><span class="v">$64,185.45</span></div>
-        <p class="poolnote" style="margin-top:10px">note for your accountant: $3,090 of expenses were covered by vendor credits (non-cash), flag for SR&amp;ED/ITC review</p>
+        <!-- Deadline 1 -->
+        <g style="animation:deadlineIn 0.5s ease 0.1s both">
+          <line x1="40" y1="88" x2="360" y2="88" stroke="#e5e1d6" stroke-width="1" />
+          <text x="40" y="108" style="font-size:14px; fill:#20241f">Balance owing due</text>
+          <text x="40" y="128" style="font-family:ui-monospace; font-size:10px; color:#6c7166">three months after year-end</text>
+          <text x="360" y="108" style="font-family:ui-monospace; font-size:12px; fill:#9c7a2a; font-weight:bold; text-anchor:end">2027-03-31</text>
+        </g>
 
-        <div class="sendbar">
-          <span class="btnprim" style="flex:0 0 auto; padding:8px 14px">Send to accountant</span>
-          <span class="filechip">T2_S125_GIFI_FernwayStudio_FY2026.pdf</span>
-          <span class="filechip">.csv</span>
-        </div>
-      </div>
-    </div>
+        <!-- Deadline 2 -->
+        <g style="animation:deadlineIn 0.5s ease 0.2s both">
+          <line x1="40" y1="148" x2="360" y2="148" stroke="#e5e1d6" stroke-width="1" />
+          <text x="40" y="168" style="font-size:14px; fill:#20241f">T2 return due</text>
+          <text x="40" y="188" style="font-family:ui-monospace; font-size:10px; color:#6c7166">six months after year-end</text>
+          <text x="360" y="168" style="font-family:ui-monospace; font-size:12px; fill:#9c7a2a; font-weight:bold; text-anchor:end">2027-06-30</text>
+        </g>
+
+        <!-- Deadline 3 -->
+        <g style="animation:deadlineIn 0.5s ease 0.3s both">
+          <line x1="40" y1="208" x2="360" y2="208" stroke="#e5e1d6" stroke-width="1" />
+          <text x="40" y="228" style="font-size:14px; fill:#20241f">T661 SR&D cutoff</text>
+          <text x="40" y="248" style="font-family:ui-monospace; font-size:10px; color:#6c7166">eighteen months</text>
+          <text x="360" y="228" style="font-family:ui-monospace; font-size:12px; fill:#9c7a2a; font-weight:bold; text-anchor:end">2028-06-30</text>
+        </g>
+      </g>
+
+      <!-- RIGHT PANEL: Income Statement -->
+      <g id="statement-panel">
+        <rect x="440" y="20" width="440" height="340" rx="10" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
+        <text x="460" y="48" style="font-family:Georgia,serif; font-size:18px; font-weight:400; fill:#20241f">Income statement</text>
+        <text x="460" y="68" style="font-size:12px; color:#6c7166">Schedule 125 · Fernway Studio</text>
+
+        <!-- Revenue -->
+        <g style="animation:statementRow 0.4s ease 0.1s both">
+          <text x="460" y="98" style="font-family:ui-monospace; font-size:11px; fill:#9c7a2a">8000</text>
+          <text x="490" y="98" style="font-size:13px; fill:#6c7166">Trade sales</text>
+          <text x="860" y="98" style="font-family:ui-monospace; font-size:13px; fill:#20241f; text-anchor:end">$182,400.00</text>
+        </g>
+
+        <!-- Total revenue (bold) -->
+        <g style="animation:statementRow 0.4s ease 0.15s both">
+          <line x1="460" y1="110" x2="860" y2="110" stroke="#e5e1d6" stroke-width="1" />
+          <text x="460" y="130" style="font-family:ui-monospace; font-size:11px; fill:#9c7a2a; font-weight:bold">8299</text>
+          <text x="490" y="130" style="font-size:13px; fill:#20241f; font-weight:bold">Total revenue</text>
+          <text x="860" y="130" style="font-family:ui-monospace; font-size:13px; fill:#20241f; font-weight:bold; text-anchor:end">$182,400.00</text>
+        </g>
+
+        <!-- Expenses -->
+        <g style="animation:statementRow 0.4s ease 0.2s both">
+          <text x="460" y="160" style="font-family:ui-monospace; font-size:11px; fill:#9c7a2a">8811</text>
+          <text x="490" y="160" style="font-size:13px; fill:#6c7166">Office expenses</text>
+          <text x="860" y="160" style="font-family:ui-monospace; font-size:13px; fill:#20241f; text-anchor:end">−$6,142.80</text>
+        </g>
+
+        <g style="animation:statementRow 0.4s ease 0.25s both">
+          <text x="460" y="188" style="font-family:ui-monospace; font-size:11px; fill:#9c7a2a">8860</text>
+          <text x="490" y="188" style="font-size:13px; fill:#6c7166">Professional fees</text>
+          <text x="860" y="188" style="font-family:ui-monospace; font-size:13px; fill:#20241f; text-anchor:end">−$14,900.00</text>
+        </g>
+
+        <g style="animation:statementRow 0.4s ease 0.3s both">
+          <text x="460" y="216" style="font-family:ui-monospace; font-size:11px; fill:#9c7a2a">9060</text>
+          <text x="490" y="216" style="font-size:13px; fill:#6c7166">Salaries and wages</text>
+          <text x="860" y="216" style="font-family:ui-monospace; font-size:13px; fill:#20241f; text-anchor:end">−$66,000.00</text>
+        </g>
+
+        <!-- Total expenses (bold) -->
+        <g style="animation:statementRow 0.4s ease 0.35s both">
+          <line x1="460" y1="228" x2="860" y2="228" stroke="#e5e1d6" stroke-width="1" />
+          <text x="460" y="248" style="font-family:ui-monospace; font-size:11px; fill:#9c7a2a; font-weight:bold">9368</text>
+          <text x="490" y="248" style="font-size:13px; fill:#20241f; font-weight:bold">Total expenses</text>
+          <text x="860" y="248" style="font-family:ui-monospace; font-size:13px; fill:#20241f; font-weight:bold; text-anchor:end">−$118,214.55</text>
+        </g>
+
+        <!-- Net income (bold + final) -->
+        <g style="animation:statementRow 0.4s ease 0.4s both">
+          <line x1="460" y1="260" x2="860" y2="260" stroke="#9c7a2a" stroke-width="2" />
+          <text x="460" y="280" style="font-family:ui-monospace; font-size:11px; fill:#9c7a2a; font-weight:bold">9999</text>
+          <text x="490" y="280" style="font-size:13px; fill:#20241f; font-weight:bold">Net income</text>
+          <text x="860" y="280" style="font-family:ui-monospace; font-size:13px; fill:#237a50; font-weight:bold; text-anchor:end">$64,185.45</text>
+        </g>
+
+        <text x="460" y="320" style="font-family:ui-monospace; font-size:10px; fill:#9a9c8f">Email to accountant with receipts</text>
+      </g>
+
+      <style>
+        @keyframes deadlineIn { 0% { opacity: 0; transform: translateX(-4px); } 100% { opacity: 1; } }
+        @keyframes statementRow { 0% { opacity: 0; transform: translateY(-4px); } 100% { opacity: 1; } }
+      </style>
+    </svg>
 
     <div class="alsobar" data-reveal>
-      <p class="also"><b>Also in the books:</b> receivables and payables with recurring cadences, projected onto a
-      30 and 90&#8209;day cash calendar · attachments filed against the entry that used them · anchor history kept
-      in full · transfers that stay linked on both sides · a personal ledger that knows T1 dates instead of T2 ones.</p>
+      <p class="also"><b>Also included:</b> recurring payables · 30 and 90-day cash calendar · receipt attachments · full anchor history · linked transfers · personal ledger with T1 dates.</p>
     </div>
   </div>
 </section>
@@ -676,8 +832,8 @@
 <!-- ============ CLOSE ============ -->
 <section style="border-top:1px solid var(--line)">
   <div class="wrap closing">
-    <h2>Start keeping books you can hand to anyone.</h2>
-    <p class="lede">Open your books, capture the first receipt, and let the year build itself.</p>
+    <h2>Start with the first receipt.</h2>
+    <p class="lede">Open your books and build through the year.</p>
     <div class="magic" data-magic style="width:100%; max-width:460px">
       <div class="magicrow">
         <input type="email" placeholder="you@example.com" aria-label="Email address" />
@@ -686,7 +842,7 @@
       <div class="magicerr"></div>
       <div class="magicsent">Thanks! Check <b></b> soon for an email.</div>
       <div class="beta-pending" style="display:none" data-pending>Wait — check soon for an email with your sign-in link.</div>
-      <div class="magicnote">early access · free · your books live in your own account</div>
+      <div class="magicnote">free · your books in your own account</div>
     </div>
     <a class="secondary" href="#capture">See how capture works ↑</a>
   </div>
