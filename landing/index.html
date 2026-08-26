@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Brasstally · books for people who run a company and a life</title>
-<meta name="description" content="Bookkeeping for small and mid-sized businesses, not finance teams. Capture receipts in a chat, anchor to your real bank balance, keep separate business and personal ledgers, and turn the year into a CRA-ready T2 draft." />
+<!-- Reveal-on-scroll hides content until JS says so, so only arm it once JS is actually alive. -->
+<script>document.documentElement.className += " js";</script>
+<title>Brasstally · books that stay true to the bank</title>
+<meta name="description" content="Bookkeeping for the owner who runs a company and a life. Capture a receipt in chat, confirm four fields, it's posted. Missed a month? Anchor to the real bank balance and keep going. Year-end becomes a T2 draft your accountant can file from." />
 <meta name="theme-color" content="#F6F4F0" />
 <link rel="icon" href="/favicon.ico" sizes="any" />
 <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
@@ -15,177 +17,287 @@
     --text:#20241F; --muted:#6C7166; --faint:#9A9C8F;
     --credit:#237A50; --debit:#B33B2E; --brass:#9C7A2A; --brass-fill:#C9A24B;
     --shadow:0 1px 2px rgba(32,36,31,.04), 0 10px 30px rgba(32,36,31,.06);
+    --lift:0 2px 4px rgba(32,36,31,.04), 0 24px 60px -12px rgba(32,36,31,.14);
     --serif:ui-serif, Georgia, 'Times New Roman', serif;
     --mono:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --sans:ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --measure:68ch;
   }
   *{box-sizing:border-box; margin:0}
   html{scroll-behavior:smooth}
-  body{background:var(--bg); color:var(--text); font-family:var(--sans); line-height:1.55}
-  .wrap{max-width:1000px; margin:0 auto; padding:0 20px}
+  body{background:var(--bg); color:var(--text); font-family:var(--sans); line-height:1.55; -webkit-font-smoothing:antialiased}
   a{color:inherit}
+  img{max-width:100%}
+
+  /* ---------- rails ---------- */
+  .wrap{max-width:1100px; margin:0 auto; padding:0 24px}
+  .wide{max-width:1280px; margin:0 auto; padding:0 24px}
+  @media(max-width:620px){.wrap,.wide{padding:0 18px}}
+  .measure{max-width:var(--measure)}
 
   .kicker{font-family:var(--mono); font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--brass)}
   .mutetext{color:var(--muted)} .fainttext{color:var(--faint)}
   .mono{font-family:var(--mono)}
-  section{border-top:1px solid var(--line); padding:56px 0}
 
-  /* nav */
-  nav{display:flex; justify-content:space-between; align-items:center; padding:22px 0; flex-wrap:wrap; gap:12px}
+  h1{font-family:var(--serif); font-weight:400; font-size:clamp(38px,6vw,64px); line-height:1.06; letter-spacing:-.015em; margin:16px 0 20px; max-width:16ch}
+  h1 em{font-style:normal; color:var(--brass)}
+  h2{font-family:var(--serif); font-weight:400; font-size:clamp(28px,3.6vw,42px); line-height:1.12; letter-spacing:-.012em; max-width:20ch}
+  .lede{color:var(--muted); font-family:var(--serif); font-size:18px; line-height:1.62; font-weight:300; max-width:56ch; margin-top:16px}
+  @media(max-width:620px){.lede{font-size:16.5px}}
+
+  /* ---------- nav ---------- */
+  .navbar{position:sticky; top:0; z-index:50; background:rgba(246,244,240,.86); backdrop-filter:saturate(1.4) blur(10px); border-bottom:1px solid transparent; transition:border-color .3s ease, background .3s ease}
+  .navbar.stuck{border-bottom-color:var(--line)}
+  nav{display:flex; justify-content:space-between; align-items:center; padding:16px 0; gap:16px}
   .wordmark{font-family:var(--serif); font-size:22px; text-decoration:none; display:flex; align-items:center; gap:8px}
   .wordmark img{display:block; height:24px; width:auto}
   .beta-badge{font-family:var(--mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--brass); border:1px solid var(--brass-fill); border-radius:99px; padding:3px 8px; white-space:nowrap}
-  .navlink{font-family:var(--mono); font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:7px 14px; text-decoration:none; transition:all .2s ease; background:var(--surface)}
+  .navmid{display:flex; gap:26px; align-items:center}
+  @media(max-width:820px){.navmid{display:none}}
+  .navmid a{font-family:var(--mono); font-size:12px; letter-spacing:.02em; color:var(--muted); text-decoration:none; padding:4px 0; border-bottom:1px solid transparent; transition:color .2s ease, border-color .2s ease}
+  .navmid a:hover{color:var(--text); border-bottom-color:var(--brass-fill)}
+  .navlink{font-family:var(--mono); font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:7px 14px; text-decoration:none; transition:all .2s ease; background:var(--surface); white-space:nowrap}
   .navlink:hover{color:var(--text); border-color:var(--brass-fill); box-shadow:var(--shadow)}
 
-  /* hero */
-  .hero{display:grid; grid-template-columns:1fr 1fr; gap:44px; align-items:center; padding:44px 0 64px}
-  @media(max-width:820px){.hero{grid-template-columns:1fr; padding:32px 0 48px}}
-  @media(max-width:560px){.hero{padding:24px 0 36px; gap:28px}}
-  h1{font-family:var(--serif); font-weight:400; font-size:clamp(34px,5vw,50px); line-height:1.12; margin:12px 0 16px}
-  h1 em{font-style:normal; color:var(--brass)}
-  .sub{color:var(--muted); max-width:44ch; margin-bottom:24px; font-family:var(--serif); font-size:17px; line-height:1.6; font-weight:300}
+  /* ---------- hero ---------- */
+  .hero{padding:72px 0 40px}
+  @media(max-width:820px){.hero{padding:44px 0 28px}}
+  .herocopy{max-width:60ch}
+  .herosub{color:var(--muted); font-family:var(--serif); font-size:19px; line-height:1.6; font-weight:300; max-width:52ch; margin-bottom:30px}
+  @media(max-width:620px){.herosub{font-size:17px}}
 
-  /* audience chips */
-  .forwho{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:26px}
-  .forwho span{font-family:var(--mono); font-size:11px; color:var(--muted); background:var(--surface); border:1px solid var(--line); border-radius:99px; padding:5px 12px}
+  /* trust strip */
+  .trust{display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; margin:26px 0 0; padding-top:20px; border-top:1px solid var(--line); max-width:64ch}
+  .trust span{font-family:var(--mono); font-size:11px; letter-spacing:.05em; color:var(--faint); display:flex; align-items:center; gap:7px}
+  .trust span::before{content:""; width:4px; height:4px; border-radius:99px; background:var(--brass-fill); flex-shrink:0}
 
   /* magic-link form */
-  .magic{max-width:430px}
+  .magic{max-width:460px}
   .magicrow{display:flex; gap:8px}
   @media(max-width:560px){.magicrow{flex-direction:column}}
-  .magic input{flex:1; min-width:0; background:var(--surface); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:11px 12px; font-size:14px; font-family:var(--sans); transition:all .2s ease}
-  .magic input:focus{outline:2px solid var(--brass-fill); outline-offset:1px; background:var(--surface); border-color:var(--brass-fill)}
-  .magic button{background:var(--brass-fill); color:var(--bg); border:0; border-radius:6px; padding:11px 16px; font-size:14px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all .2s ease; box-shadow:0 2px 8px rgba(156,122,42,.18)}
-  .magic button:hover:not(:disabled){transform:translateY(-1px); box-shadow:0 4px 14px rgba(156,122,42,.28)}
+  .magic input{flex:1; min-width:0; background:var(--surface); border:1px solid var(--line); color:var(--text); border-radius:7px; padding:13px 14px; font-size:15px; font-family:var(--sans); transition:all .2s ease}
+  .magic input:focus{outline:2px solid var(--brass-fill); outline-offset:1px; border-color:var(--brass-fill)}
+  .magic button{background:var(--brass-fill); color:#26200E; border:0; border-radius:7px; padding:13px 20px; font-size:15px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all .2s ease; box-shadow:0 2px 8px rgba(156,122,42,.18)}
+  .magic button:hover:not(:disabled){transform:translateY(-1px); box-shadow:0 6px 18px rgba(156,122,42,.28)}
   .magic button:active:not(:disabled){transform:translateY(0)}
   .magic button:disabled{opacity:.4; cursor:default}
-  .magicnote{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:8px}
+  .magicnote{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:10px}
   .magicerr{color:var(--debit); font-size:12px; margin-top:8px; display:none; animation:shake .3s ease}
   @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
   .magicsent{color:var(--muted); font-size:14px; display:none; padding:6px 0; animation:fadeIn .4s ease}
   @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
   .magicsent b{color:var(--text); font-weight:500}
-
-  /* hero ledger card */
-  .card{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:22px; box-shadow:var(--shadow)}
-  .stats{display:flex; flex-wrap:wrap; gap:14px 32px; margin-bottom:18px}
-  .stat .lbl{font-family:var(--mono); font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); margin-bottom:4px}
-  .stat .val{font-family:var(--mono); font-size:21px; font-variant-numeric:tabular-nums}
-  .barrow{display:flex; align-items:center; gap:10px; margin-top:9px}
-  .barrow .tag{font-family:var(--mono); font-size:11px; width:30px}
-  .track{flex:1; height:6px; border-radius:99px; background:var(--bg); overflow:hidden}
-  .fill{height:100%; width:0; border-radius:99px; opacity:.9; transition:width 1.1s cubic-bezier(.2,.7,.2,1)}
-  .anchornote{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:14px}
-  @media(prefers-reduced-motion:reduce){.fill{transition:none}}
-
-  /* beta states */
   .beta-pending{font-family:var(--mono); font-size:12px; color:var(--muted); margin-top:8px; padding:8px 12px; background:var(--surface2); border-radius:6px; border-left:2px solid var(--brass-fill)}
 
-  /* ledger deck: stacked animated cards */
-  .deckwrap{display:flex; flex-direction:column; gap:14px}
-  .deck{position:relative; height:330px}
-  @media(max-width:560px){.deck{height:280px}}
-  @media(max-width:400px){.deck{height:320px}}
-  .dcard{position:absolute; inset:0; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:22px; box-shadow:var(--shadow);
-    transition:transform .55s cubic-bezier(.2,.7,.2,1), opacity .55s ease, filter .55s ease; will-change:transform; display:flex; flex-direction:column}
-  .dcard.pos0{transform:translateY(0) scale(1); opacity:1; z-index:3}
-  .dcard.pos1{transform:translateY(-16px) scale(.955); opacity:.65; z-index:2; filter:saturate(.7)}
-  .dcard.pos2{transform:translateY(-30px) scale(.91); opacity:.35; z-index:1; filter:saturate(.5)}
-  .dcard.leaving{transform:translateY(26px) scale(1.02); opacity:0; z-index:4}
-  .dhead{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:16px}
-  .dname{font-family:var(--serif); font-size:20px}
-  .dbadge{font-family:var(--mono); font-size:10px; letter-spacing:.06em; color:var(--brass); border:1px solid var(--brass-fill); border-radius:99px; padding:3px 9px; white-space:nowrap}
+  /* ---------- product window chrome ---------- */
+  .scene{margin-top:52px}
+  @media(max-width:820px){.scene{margin-top:36px}}
+  .win{background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:var(--lift); overflow:hidden}
+  .wintop{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--surface2)}
+  .winname{font-family:var(--serif); font-size:16px; display:flex; align-items:center; gap:10px}
+  .pill{font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--brass); border:1px solid var(--brass-fill); border-radius:99px; padding:2.5px 8px; white-space:nowrap}
+  .pill.plain{color:var(--muted); border-color:var(--line); background:var(--surface)}
+  .winmeta{font-family:var(--mono); font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums; white-space:nowrap}
+  @media(max-width:520px){.winmeta{display:none}}
+  .winbody{display:grid; grid-template-columns:1.05fr .95fr}
+  .winbody.cols3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:900px){.winbody,.winbody.cols3{grid-template-columns:1fr}}
+  .pane{padding:18px}
+  .pane + .pane{border-left:1px solid var(--line)}
+  @media(max-width:900px){.pane + .pane{border-left:0; border-top:1px solid var(--line)}}
+  .panehead{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-bottom:12px; display:flex; justify-content:space-between; align-items:baseline; gap:8px}
 
-  /* transfer card internals */
-  .txgrid{display:grid; grid-template-columns:1fr 44px 1fr; align-items:center; gap:8px; flex:1}
-  .txtile{background:var(--surface2); border:1px solid var(--line); border-radius:8px; padding:12px 10px; text-align:center}
-  .txtile .n{font-family:var(--serif); font-size:14px; margin-bottom:8px}
-  .txlbl{display:inline-block; font-family:var(--mono); font-size:9px; background:var(--brass-fill); color:#26200E; border-radius:4px; padding:2px 6px; margin-bottom:8px}
-  .txamt{font-family:var(--mono); font-size:15px; font-variant-numeric:tabular-nums}
-  .txlane{position:relative; height:2px; background:var(--line); border-radius:99px}
-  .txdot{position:absolute; top:50%; left:0; width:8px; height:8px; border-radius:99px; background:var(--brass-fill);
-    transform:translate(-50%,-50%); animation:lane 1.9s cubic-bezier(.4,.1,.4,.9) infinite}
-  @keyframes lane{0%{left:4%; opacity:0}12%{opacity:1}88%{opacity:1}100%{left:96%; opacity:0}}
-  .txfoot{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:14px}
+  /* balance header inside product */
+  .balrow{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:16px}
+  .balval{font-family:var(--mono); font-size:26px; font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+  .baltag{font-family:var(--mono); font-size:10.5px; color:var(--credit); border:1px solid rgba(35,122,80,.3); background:rgba(35,122,80,.06); border-radius:99px; padding:2px 8px}
 
-  /* deck tabs */
-  .decktabs{display:flex; gap:6px; flex-wrap:wrap}
-  .decktabs button{font-family:var(--mono); font-size:11px; color:var(--muted); background:var(--surface); border:1px solid var(--line); border-radius:99px; padding:6px 12px; cursor:pointer}
-  .decktabs button.on{color:var(--text); border-color:var(--brass-fill); background:var(--surface2)}
-  @media(prefers-reduced-motion:reduce){.dcard{transition:none} .txdot{animation:none; left:50%}}
+  /* ledger rows */
+  .rows{display:flex; flex-direction:column}
+  .row{display:flex; align-items:center; gap:12px; padding:11px 10px; margin:0 -10px; border-top:1px solid var(--line); border-radius:6px}
+  .row:first-child{border-top:0}
+  .row .dt{font-family:var(--mono); font-size:11px; color:var(--faint); width:46px; flex-shrink:0}
+  .row .desc{flex:1; min-width:0; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .row .cat{font-family:var(--mono); font-size:10px; color:var(--muted); background:var(--surface2); border:1px solid var(--line); border-radius:4px; padding:2px 7px; white-space:nowrap}
+  @media(max-width:400px){.row .cat{display:none}}
+  .row .amt{font-family:var(--mono); font-size:13.5px; font-variant-numeric:tabular-nums; text-align:right; flex-shrink:0}
+  .amt.in{color:var(--credit)} .amt.out{color:var(--text)}
+  .row.fresh{animation:postin 8s cubic-bezier(.2,.7,.2,1) infinite}
+  /* the row lands just after the Save press pulses, so the two read as one motion */
+  @keyframes postin{
+    0%{opacity:0; transform:translateY(-8px); background:rgba(201,162,75,.20)}
+    5%{opacity:0; transform:translateY(-8px); background:rgba(201,162,75,.20)}
+    11%{opacity:1; transform:translateY(0); background:rgba(201,162,75,.20)}
+    30%{opacity:1; transform:none; background:rgba(201,162,75,0)}
+    100%{opacity:1; transform:none; background:rgba(201,162,75,0)}
+  }
 
-  /* steps */
-  h2{font-family:var(--serif); font-weight:400; font-size:26px; margin-bottom:28px}
-  .steps{display:grid; grid-template-columns:repeat(3,1fr); gap:32px}
-  @media(max-width:820px){.steps{grid-template-columns:1fr}}
-  .step .n{font-family:var(--mono); font-size:13px; color:var(--brass); margin-bottom:8px}
-  .step .t{font-family:var(--serif); font-size:18px; margin-bottom:4px}
-  .step p{color:var(--muted); font-size:14px}
+  /* chat pane */
+  .chat{display:flex; flex-direction:column; gap:10px}
+  .bub{max-width:88%; font-size:13.5px; line-height:1.5; padding:9px 12px; border-radius:10px}
+  .bub.me{align-self:flex-end; background:var(--surface2); border:1px solid var(--line); border-bottom-right-radius:3px}
+  .bub.ai{align-self:flex-start; color:var(--muted); padding-left:0; padding-right:0}
+  .attach{display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11px; color:var(--muted); background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:6px 9px; margin-bottom:7px}
+  .attach .thumb{width:20px; height:24px; border-radius:3px; background:linear-gradient(160deg,#EFEBE0,#DCD6C6); border:1px solid var(--line); flex-shrink:0; position:relative; overflow:hidden}
+  .attach .thumb::after{content:""; position:absolute; left:3px; right:3px; top:5px; height:1px; background:var(--faint); box-shadow:0 4px 0 var(--faint), 0 8px 0 var(--faint), 0 12px 0 rgba(154,156,143,.5)}
 
-  /* features as ledger entries */
-  .lhead{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:20px}
-  .lhead .cols{font-family:var(--mono); font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint)}
-  .ledger{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:0 18px; box-shadow:var(--shadow)}
-  .entry{display:flex; align-items:baseline; gap:16px; padding:15px 0; border-top:1px solid var(--line)}
-  .entry:first-child{border-top:0}
-  .entry .code{font-family:var(--mono); font-size:11px; color:var(--brass); width:38px; flex-shrink:0}
-  .entry .body{flex:1; min-width:0; font-size:14px}
-  .entry .body .name{font-family:var(--serif); font-size:16px}
-  .entry .body .desc{color:var(--muted)}
-  .entry .fig{font-family:var(--mono); font-size:11px; font-variant-numeric:tabular-nums; flex-shrink:0; color:var(--faint)}
-  @media(max-width:560px){.entry .fig{display:none}}
+  /* confirm card — the real one */
+  .confirm{border:1px solid rgba(156,122,42,.42); background:var(--bg); border-radius:10px; padding:13px; max-width:min(320px,100%); align-self:flex-start}
+  .confirm .ch{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--brass); display:flex; align-items:center; gap:6px; margin-bottom:10px}
+  .fgrid{display:grid; grid-template-columns:1fr 1fr; gap:9px}
+  .f{min-width:0}
+  .f.full{grid-column:1/-1}
+  .f label{display:block; font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); margin-bottom:4px}
+  .f .box{background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .f .box.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  .f .box.sel{display:flex; align-items:center; justify-content:space-between; gap:6px; color:var(--text)}
+  .f .box.sel::after{content:"⌄"; color:var(--faint); font-size:13px; line-height:1; transform:translateY(-2px)}
+  .cbtns{display:flex; gap:7px; margin-top:11px}
+  .btnprim{flex:1; text-align:center; background:var(--brass-fill); color:#26200E; border-radius:6px; padding:7px 10px; font-size:12.5px; font-weight:600; position:relative}
+  .btnprim::before{content:"✓  "; font-weight:400}
+  .btnghost{border:1px solid var(--line); border-radius:6px; padding:7px 12px; font-size:12.5px; color:var(--muted); background:var(--surface)}
+  .btnprim.pulse::after{content:""; position:absolute; inset:-3px; border-radius:9px; border:1.5px solid var(--brass-fill); opacity:0; animation:ring 8s ease-out infinite}
+  @keyframes ring{0%{opacity:.9; transform:scale(.97)} 8%{opacity:0; transform:scale(1.06)} 100%{opacity:0}}
+  .never{font-family:var(--mono); font-size:10.5px; color:var(--faint); margin-top:12px; padding-top:12px; border-top:1px solid var(--line)}
+  .never b{color:var(--brass); font-weight:400}
 
-  /* straight talk */
-  .talk{display:grid; grid-template-columns:1fr 1fr; gap:32px}
-  @media(max-width:820px){.talk{grid-template-columns:1fr}}
-  .talk p{color:var(--muted); font-size:14px; max-width:46ch; margin-top:8px}
+  /* fake chat input */
+  .chatin{display:flex; align-items:center; gap:8px; margin-top:14px; border:1px solid var(--line); background:var(--surface2); border-radius:8px; padding:9px 11px; font-size:13px; color:var(--faint)}
+  .caret{display:inline-block; width:1.5px; height:14px; background:var(--brass); animation:blink 1.15s step-end infinite; vertical-align:-2px}
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
 
-  /* closing */
-  .closing{display:flex; flex-direction:column; align-items:center; text-align:center; padding:64px 0}
-  .closing h2{font-size:32px; margin-bottom:8px}
-  .closing .sub{margin-bottom:22px}
+  /* ---------- chapters ---------- */
+  .chapter{padding:96px 0}
+  @media(max-width:820px){.chapter{padding:64px 0}}
+  .chapter.tint{background:var(--surface2); border-top:1px solid var(--line); border-bottom:1px solid var(--line)}
+  .chead{display:grid; grid-template-columns:auto 1fr; gap:0 34px; align-items:start}
+  @media(max-width:700px){.chead{grid-template-columns:1fr; gap:14px}}
+  .cnum{font-family:var(--mono); font-size:12px; letter-spacing:.2em; color:var(--brass); padding-top:12px; position:relative}
+  @media(min-width:701px){.cnum::after{content:""; position:absolute; left:0; right:-14px; top:0; height:1px; background:var(--brass-fill); opacity:.5}}
+  @media(max-width:700px){.cnum{padding-top:0}}
+
+  /* two books */
+  .books{display:grid; grid-template-columns:1fr auto 1fr; gap:0; align-items:center; margin-top:44px}
+  @media(max-width:860px){.books{grid-template-columns:1fr; gap:0}}
+  .bookcard{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px; box-shadow:var(--shadow)}
+  .bhead{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px}
+  .bname{font-family:var(--serif); font-size:17px}
+  .link{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:0 22px}
+  @media(max-width:860px){.link{padding:18px 0; flex-direction:column}}
+  .linkline{position:relative; width:88px; height:1px; background:var(--line)}
+  @media(max-width:860px){.linkline{width:1px; height:56px}}
+  .linkline::after{content:""; position:absolute; width:7px; height:7px; border-radius:99px; background:var(--brass-fill); top:50%; left:0; transform:translate(-50%,-50%); animation:lane 3.2s cubic-bezier(.45,.05,.4,.95) infinite}
+  @media(max-width:860px){.linkline::after{left:50%; top:0; animation:lanev 3.2s cubic-bezier(.45,.05,.4,.95) infinite}}
+  @keyframes lane{0%{left:2%; opacity:0}14%{opacity:1}86%{opacity:1}100%{left:98%; opacity:0}}
+  @keyframes lanev{0%{top:2%; opacity:0}14%{opacity:1}86%{opacity:1}100%{top:98%; opacity:0}}
+  .linklbl{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); text-align:center; line-height:1.5}
+
+  /* anchor + credits */
+  .twoup{display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:44px; align-items:start}
+  @media(max-width:860px){.twoup{grid-template-columns:1fr}}
+  .panel{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px; box-shadow:var(--shadow)}
+  .panel h3{font-family:var(--serif); font-weight:400; font-size:18px; margin-bottom:4px}
+  .panel .why{color:var(--muted); font-size:13.5px; margin-bottom:16px}
+  .hist{font-family:var(--mono); font-size:11px; color:var(--faint); display:flex; justify-content:space-between; gap:10px; padding:6px 0; border-top:1px solid var(--line)}
+  .pool{margin-top:14px}
+  .poolhead{display:flex; justify-content:space-between; align-items:baseline; gap:10px}
+  .poolname{font-size:13.5px}
+  .poolval{font-family:var(--mono); font-size:15px; font-variant-numeric:tabular-nums; color:var(--credit)}
+  .poolval small{color:var(--faint); font-size:11px}
+  .drain{height:6px; border-radius:99px; background:var(--surface2); border:1px solid var(--line); overflow:hidden; margin-top:7px}
+  .drain i{display:block; height:100%; background:var(--brass-fill); opacity:.85; width:var(--w); transition:width 1.3s cubic-bezier(.2,.7,.2,1)}
+  .poolnote{font-family:var(--mono); font-size:10.5px; color:var(--faint); margin-top:6px}
+
+  /* tax */
+  .taxgrid{display:grid; grid-template-columns:1fr 1.15fr; gap:28px; margin-top:44px; align-items:start}
+  @media(max-width:900px){.taxgrid{grid-template-columns:1fr}}
+  .deadline{display:flex; align-items:baseline; justify-content:space-between; gap:14px; padding:12px 0; border-top:1px solid var(--line)}
+  .deadline:first-of-type{border-top:0}
+  .deadline .dl{font-size:14px}
+  .deadline .dl small{display:block; color:var(--faint); font-size:11.5px; font-family:var(--mono); margin-top:2px}
+  .deadline .dd{font-family:var(--mono); font-size:12px; color:var(--brass); white-space:nowrap; font-variant-numeric:tabular-nums}
+  .gifi{display:flex; align-items:center; gap:12px; padding:7px 0; font-size:13.5px; border-top:1px solid var(--line)}
+  .gifi:first-of-type{border-top:0}
+  .gifi .g{font-family:var(--mono); font-size:11px; color:var(--brass); width:38px; flex-shrink:0}
+  .gifi .n{flex:1; min-width:0; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .gifi .v{font-family:var(--mono); font-size:13px; font-variant-numeric:tabular-nums; flex-shrink:0}
+  .gifi.strong .n{color:var(--text)}
+  .gifi.final{border-top:1px double var(--brass-fill); margin-top:4px; padding-top:10px}
+  .gifi.final .v{color:var(--credit)}
+  .sendbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:16px; padding-top:16px; border-top:1px solid var(--line)}
+  .filechip{font-family:var(--mono); font-size:10.5px; color:var(--muted); border:1px solid var(--line); background:var(--surface2); border-radius:5px; padding:4px 8px}
+
+  /* footnote strip (demoted spec sheet) */
+  .alsobar{margin-top:56px; padding-top:22px; border-top:1px solid var(--line)}
+  .also{font-size:14px; color:var(--muted); max-width:78ch; line-height:1.75}
+  .also b{color:var(--text); font-weight:400; font-family:var(--serif); font-size:15px}
 
   /* manifesto */
-  .manifesto{text-align:center; padding:26px 0}
-  .mline{font-family:var(--serif); font-size:clamp(28px,5vw,50px); line-height:1.22; opacity:0; transform:translateY(16px);
-    transition:opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1)}
-  .mline:nth-child(2){transition-delay:.05s}
-  .mline:nth-child(3){transition-delay:.25s}
-  .mline:nth-child(4){transition-delay:.45s}
+  .manifesto{text-align:center; padding:110px 0}
+  @media(max-width:820px){.manifesto{padding:76px 0}}
+  .mline{font-family:var(--serif); font-size:clamp(30px,5.4vw,58px); line-height:1.2}
+  .js .mline{opacity:0; transform:translateY(16px); transition:opacity .8s ease, transform .8s cubic-bezier(.2,.7,.2,1)}
+  .mline:nth-of-type(2){transition-delay:.12s}
+  .mline:nth-of-type(3){transition-delay:.34s}
   .mline.dim{color:var(--muted)}
-  .mline.brassline{color:var(--brass); margin-top:10px}
+  .mline.brassline{color:var(--brass); margin-top:14px}
   .manifesto.show .mline{opacity:1; transform:none}
-  @media(prefers-reduced-motion:reduce){.mline{opacity:1; transform:none; transition:none}}
 
-  footer{border-top:1px solid var(--line); padding:28px 0}
+  /* closing */
+  .closing{display:flex; flex-direction:column; align-items:center; text-align:center; padding:100px 0}
+  @media(max-width:820px){.closing{padding:70px 0}}
+  .closing h2{max-width:18ch}
+  .closing .lede{margin:16px auto 30px; text-align:center}
+  .secondary{margin-top:22px; font-family:var(--mono); font-size:12px; color:var(--muted); text-decoration:none; border-bottom:1px solid var(--line); padding-bottom:3px; transition:border-color .2s ease, color .2s ease}
+  .secondary:hover{color:var(--text); border-bottom-color:var(--brass-fill)}
+
+  footer{border-top:1px solid var(--line); padding:30px 0}
   .foot{display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px}
   .foot .fine{font-family:var(--mono); font-size:11px; color:var(--faint)}
+
+  /* ---------- scroll reveal (only when JS is running; see the .js flag in <head>) ---------- */
+  .js [data-reveal]{opacity:0; transform:translateY(22px); transition:opacity .8s ease, transform .8s cubic-bezier(.2,.7,.2,1)}
+  .js [data-reveal].reveal-in{opacity:1; transform:none}
+  .js [data-reveal][data-delay="1"]{transition-delay:.1s}
+  .js [data-reveal][data-delay="2"]{transition-delay:.2s}
+  .js .drain i{width:0}
+  .js .reveal-in .drain i{width:var(--w)}
+
+  @media(prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    *,*::before,*::after{animation:none !important; transition:none !important}
+    .js [data-reveal],[data-reveal]{opacity:1; transform:none}
+    .js .mline,.mline{opacity:1; transform:none}
+    .js .drain i,.drain i{width:var(--w)}
+  }
 </style>
 </head>
 <body>
 
-<div class="wrap">
-  <nav>
-    <a class="wordmark" href="#"><img src="/brasstally-wordmark.png" alt="Brasstally" /><span class="beta-badge">Beta</span></a>
-    <a class="navlink" href="#open">Join beta</a>
-  </nav>
-
-  <header class="hero" id="open">
-    <div>
-      <div class="kicker">Down to brass tacks</div>
-      <h1>Books for people who run a company <em>and</em> a life.</h1>
-      <p class="sub">Brasstally is built for the business with one owner and no finance team &mdash; not the one
-      with a CFO dashboard nobody opens. Capture receipts in a chat, anchor to your real bank balance, and turn
-      the year into a tax draft your accountant will thank you for.</p>
-
-      <div class="forwho">
-        <span>Solo founders</span>
-        <span>Family shops</span>
-        <span>Contractors</span>
-        <span>Small agencies</span>
-        <span>Side businesses</span>
+<div class="navbar" id="navbar">
+  <div class="wrap">
+    <nav>
+      <a class="wordmark" href="#"><img src="/brasstally-wordmark.png" alt="Brasstally" /><span class="beta-badge">Beta</span></a>
+      <div class="navmid">
+        <a href="#capture">Product</a>
+        <a href="#books">How it works</a>
+        <a href="#tax">Tax</a>
+        <a href="#open">Join</a>
       </div>
+      <a class="navlink" href="#open">Join beta</a>
+    </nav>
+  </div>
+</div>
+
+<!-- ============ HERO ============ -->
+<header class="hero" id="open">
+  <div class="wrap">
+    <div class="herocopy">
+      <div class="kicker">Down to brass tacks</div>
+      <h1>Books that stay true to the bank &mdash; even if you missed <em>a month</em>.</h1>
+      <p class="herosub">Built for the owner who runs a company and a life. Capture a receipt in chat, confirm
+      four fields, it&rsquo;s posted. Missed a month? Anchor to the real balance and keep going. Year&#8209;end
+      becomes a T2 draft your accountant can file from.</p>
 
       <div class="magic" data-magic>
         <div class="magicrow">
@@ -197,123 +309,376 @@
         <div class="beta-pending" style="display:none" data-pending>Wait — check soon for an email with your sign-in link.</div>
         <div class="magicnote">early access · free · your books live in your own account</div>
       </div>
+
+      <div class="trust">
+        <span>Early access</span>
+        <span>Made in Toronto</span>
+        <span>Your books live in your own account</span>
+      </div>
     </div>
+  </div>
 
-    <div class="deckwrap">
-      <div class="deck" id="deck">
+  <!-- product scene: the actual app, mid-capture -->
+  <div class="wide scene">
+    <div class="win" data-reveal>
+      <div class="wintop">
+        <div class="winname">Fernway Studio <span class="pill">Business</span></div>
+        <div class="winmeta">anchored $22,041.17 · Aug 24, 2026</div>
+      </div>
+      <div class="winbody">
 
-        <div class="dcard" data-card="0">
-          <div class="dhead"><span class="dname">Fernway Studio</span><span class="dbadge">Business Ledger</span></div>
-          <div class="stats">
-            <div class="stat"><div class="lbl">Money in</div><div class="val" style="color:var(--credit)">$14,250.00</div></div>
-            <div class="stat"><div class="lbl">Money out</div><div class="val" style="color:var(--debit)">$9,883.55</div></div>
+        <div class="pane">
+          <div class="panehead"><span>Ledger</span><span>August</span></div>
+          <div class="balrow">
+            <div class="balval">$26,657.74</div>
+            <span class="baltag">matches the bank</span>
           </div>
-          <div class="barrow"><span class="tag" style="color:var(--credit)">IN</span><div class="track"><div class="fill" style="background:var(--credit)" data-w="100%"></div></div></div>
-          <div class="barrow"><span class="tag" style="color:var(--debit)">OUT</span><div class="track"><div class="fill" style="background:var(--debit); transition-delay:.12s" data-w="69%"></div></div></div>
-          <div class="anchornote">anchored: $22,041.17 · <span style="color:var(--brass)">credits left: $4,910.00</span> · T2 draft ready</div>
+          <div class="rows">
+            <div class="row fresh">
+              <span class="dt">Aug 21</span>
+              <span class="desc">Toner + paper</span>
+              <span class="cat">Office</span>
+              <span class="amt out">−$118.43</span>
+            </div>
+            <div class="row">
+              <span class="dt">Aug 20</span>
+              <span class="desc">Client retainer · Harlowe</span>
+              <span class="cat">Revenue</span>
+              <span class="amt in">+$4,500.00</span>
+            </div>
+            <div class="row">
+              <span class="dt">Aug 18</span>
+              <span class="desc">Vercel Inc</span>
+              <span class="cat">Software</span>
+              <span class="amt out">−$70.00</span>
+            </div>
+            <div class="row">
+              <span class="dt">Aug 15</span>
+              <span class="desc">Salary · to personal</span>
+              <span class="cat">Owner pay</span>
+              <span class="amt out">−$1,250.00</span>
+            </div>
+            <div class="row">
+              <span class="dt">Aug 12</span>
+              <span class="desc">Anthropic API</span>
+              <span class="cat">Paid via credits</span>
+              <span class="amt out">−$318.00</span>
+            </div>
+            <div class="row">
+              <span class="dt">Aug 08</span>
+              <span class="desc">Adobe subscription</span>
+              <span class="cat">Software</span>
+              <span class="amt out">−$92.79</span>
+            </div>
+            <div class="row">
+              <span class="dt">Aug 04</span>
+              <span class="desc">Deposit · Kestrel Foods</span>
+              <span class="cat">Revenue</span>
+              <span class="amt in">+$2,000.00</span>
+            </div>
+          </div>
+          <div class="never">Every entry keeps its receipt, its category, and the day you wrote it.</div>
         </div>
 
-        <div class="dcard" data-card="1">
-          <div class="dhead"><span class="dname">Maya Osei</span><span class="dbadge">Personal Ledger</span></div>
-          <div class="stats">
-            <div class="stat"><div class="lbl">Money in</div><div class="val" style="color:var(--credit)">$5,450.00</div></div>
-            <div class="stat"><div class="lbl">Money out</div><div class="val" style="color:var(--debit)">$3,118.40</div></div>
-          </div>
-          <div class="barrow"><span class="tag" style="color:var(--credit)">IN</span><div class="track"><div class="fill" style="background:var(--credit)" data-w="86%"></div></div></div>
-          <div class="barrow"><span class="tag" style="color:var(--debit)">OUT</span><div class="track"><div class="fill" style="background:var(--debit); transition-delay:.12s" data-w="49%"></div></div></div>
-          <div class="anchornote">anchored: $6,204.90 · same sign-in, separate books</div>
-        </div>
+        <div class="pane">
+          <div class="panehead"><span>Chat</span><span>capture</span></div>
+          <div class="chat">
+            <div class="bub me">
+              <div class="attach"><span class="thumb"></span> IMG_2481.jpeg</div>
+              staples run, put it on the business
+            </div>
+            <div class="bub ai">Here&rsquo;s what I read, confirm or adjust:</div>
 
-        <div class="dcard" data-card="2">
-          <div class="dhead"><span class="dname">One motion</span><span class="dbadge">Transfer</span></div>
-          <div class="txgrid">
-            <div class="txtile">
-              <div class="n">Fernway Studio</div>
-              <span class="txlbl">⇄ transferred out</span>
-              <div class="txamt" style="color:var(--debit)">−$1,250.00</div>
-            </div>
-            <div class="txlane"><div class="txdot"></div></div>
-            <div class="txtile">
-              <div class="n">Maya Osei</div>
-              <span class="txlbl">⇄ transferred in</span>
-              <div class="txamt" style="color:var(--credit)">+$1,250.00</div>
+            <div class="confirm">
+              <div class="ch">✦ Log money out</div>
+              <div class="fgrid">
+                <div class="f"><label>Amount</label><div class="box num">118.43</div></div>
+                <div class="f"><label>Date</label><div class="box num">2026‑08‑21</div></div>
+                <div class="f full"><label>Description</label><div class="box">Toner + paper</div></div>
+                <div class="f full"><label>Category</label><div class="box sel">Office</div></div>
+              </div>
+              <div class="cbtns">
+                <span class="btnprim pulse">Save entry</span>
+                <span class="btnghost">Not now</span>
+              </div>
             </div>
           </div>
-          <div class="txfoot">July salary · expense for the business, income for you · written together, linked forever</div>
+          <div class="chatin">e.g. paid Vercel $70 today…<span class="caret"></span></div>
+          <div class="never">Nothing posts until you press it. <b>Never auto&#8209;posted.</b></div>
         </div>
 
       </div>
-      <div class="decktabs" id="decktabs" role="tablist" aria-label="Ledger examples">
-        <button data-i="0" class="on">Business Ledger</button>
-        <button data-i="1">Personal Ledger</button>
-        <button data-i="2">One-tap transfer</button>
+    </div>
+  </div>
+</header>
+
+<!-- ============ 01 CAPTURE ============ -->
+<section class="chapter" id="capture">
+  <div class="wrap">
+    <div class="chead" data-reveal>
+      <div class="cnum">01</div>
+      <div>
+        <div class="kicker" style="margin-bottom:12px">Capture</div>
+        <h2>Photograph the receipt. Confirm four fields. Done.</h2>
+        <p class="lede">Shoot a receipt into the chat, drop an invoice PDF, or paste a bank statement.
+        The AI reads it and hands back a draft with the amount, the date, what it was, and where it belongs.
+        You change what&rsquo;s wrong and press save. It never posts on its own &mdash; the books only ever say
+        what you said.</p>
       </div>
     </div>
-  </header>
-</div>
+  </div>
 
-<section>
+  <div class="wide scene">
+    <div class="win" data-reveal>
+      <div class="wintop">
+        <div class="winname">Capture <span class="pill plain">receipt → draft → entry</span></div>
+        <div class="winmeta">about fifteen seconds</div>
+      </div>
+      <div class="winbody cols3">
+
+        <div class="pane">
+          <div class="panehead"><span>1 · Hand it over</span></div>
+          <div class="chat">
+            <div class="bub me">
+              <div class="attach"><span class="thumb"></span> statement_july.pdf</div>
+              july statement, catch me up
+            </div>
+            <div class="bub me">
+              <div class="attach"><span class="thumb"></span> IMG_2481.jpeg</div>
+              staples run
+            </div>
+            <div class="bub ai">Reading 34 lines…</div>
+          </div>
+        </div>
+
+        <div class="pane">
+          <div class="panehead"><span>2 · Confirm four things</span></div>
+          <div class="confirm" style="max-width:none">
+            <div class="ch">✦ Log money out</div>
+            <div class="fgrid">
+              <div class="f"><label>Amount</label><div class="box num">118.43</div></div>
+              <div class="f"><label>Date</label><div class="box num">2026‑08‑21</div></div>
+              <div class="f full"><label>Description</label><div class="box">Toner + paper</div></div>
+              <div class="f full"><label>Category</label><div class="box sel">Office</div></div>
+            </div>
+            <div class="cbtns">
+              <span class="btnprim">Save entry</span>
+              <span class="btnghost">Not now</span>
+            </div>
+          </div>
+          <div class="never">Vendor, tax, and category are guesses. <b>You have the last word.</b></div>
+        </div>
+
+        <div class="pane">
+          <div class="panehead"><span>3 · It&rsquo;s in the books</span></div>
+          <div class="rows">
+            <div class="row">
+              <span class="dt">Aug 21</span><span class="desc">Toner + paper</span>
+              <span class="cat">Office</span><span class="amt out">−$118.43</span>
+            </div>
+            <div class="row">
+              <span class="dt">Jul 31</span><span class="desc">Mortgage payment</span>
+              <span class="cat">Imported</span><span class="amt out">−$1,200.00</span>
+            </div>
+            <div class="row">
+              <span class="dt">Jul 30</span><span class="desc">Payroll deposit</span>
+              <span class="cat">Imported</span><span class="amt in">+$4,709.00</span>
+            </div>
+            <div class="row">
+              <span class="dt">Jul 28</span><span class="desc">Vercel Inc</span>
+              <span class="cat">Software</span><span class="amt out">−$70.00</span>
+            </div>
+          </div>
+          <div class="never">Receipt stays attached to the entry, so year&#8209;end has the paper too.</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 02 TWO BOOKS ============ -->
+<section class="chapter tint" id="books">
   <div class="wrap">
-    <h2>Three motions, kept honest</h2>
-    <div class="steps">
-      <div class="step"><div class="n">1</div><div class="t">Capture</div>
-        <p>Photograph the receipt into the chat, drop the invoice PDF, or paste a bank statement. The AI reads it; you confirm four things; it's posted.</p></div>
-      <div class="step"><div class="n">2</div><div class="t">Anchor</div>
-        <p>Didn't track for a month? Set the balance to what the bank actually says and move forward. The books stay true instead of pretending.</p></div>
-      <div class="step"><div class="n">3</div><div class="t">File</div>
-        <p>One tap turns the year into a GIFI-coded T2 draft with your CRA deadlines computed, email it to your accountant from the same screen.</p></div>
+    <div class="chead" data-reveal>
+      <div class="cnum">02</div>
+      <div>
+        <div class="kicker" style="margin-bottom:12px">Two books</div>
+        <h2>The company&rsquo;s money and yours, kept apart and kept straight.</h2>
+        <p class="lede">A ledger for the business, a ledger for your life, another for your mother&rsquo;s
+        shop if you keep those too &mdash; all under one sign&#8209;in. Pay yourself in one motion and both
+        sides get written together: salary lands as an expense here and income there, an owner&rsquo;s draw
+        touches neither P&amp;L. Delete one side and the app tells you it&rsquo;s deleting both.</p>
+      </div>
+    </div>
+
+    <div class="books" data-reveal data-delay="1">
+      <div class="bookcard">
+        <div class="bhead"><span class="bname">Fernway Studio</span><span class="pill">Business</span></div>
+        <div class="balrow" style="margin-bottom:12px">
+          <div class="balval" style="font-size:22px">$26,657.74</div>
+        </div>
+        <div class="rows">
+          <div class="row"><span class="dt">Aug 15</span><span class="desc">Salary · to Maya</span><span class="amt out">−$1,250.00</span></div>
+          <div class="row"><span class="dt">Aug 20</span><span class="desc">Client retainer</span><span class="amt in">+$4,500.00</span></div>
+        </div>
+      </div>
+
+      <div class="link">
+        <div class="linkline"></div>
+        <div class="linklbl">one motion<br />both sides</div>
+      </div>
+
+      <div class="bookcard">
+        <div class="bhead"><span class="bname">Maya, personal</span><span class="pill plain">Personal</span></div>
+        <div class="balrow" style="margin-bottom:12px">
+          <div class="balval" style="font-size:22px">$6,204.90</div>
+        </div>
+        <div class="rows">
+          <div class="row"><span class="dt">Aug 15</span><span class="desc">Salary · from Fernway</span><span class="amt in">+$1,250.00</span></div>
+          <div class="row"><span class="dt">Aug 19</span><span class="desc">Groceries</span><span class="amt out">−$142.16</span></div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<section>
+<!-- ============ 03 BANK-TRUE ============ -->
+<section class="chapter" id="truth">
   <div class="wrap">
-    <div class="lhead">
-      <h2 style="margin:0">What's in the books</h2>
-      <span class="cols">entry · description · figure</span>
+    <div class="chead" data-reveal>
+      <div class="cnum">03</div>
+      <div>
+        <div class="kicker" style="margin-bottom:12px">Bank&#8209;true</div>
+        <h2>When the books drift, tell them the truth and move on.</h2>
+        <p class="lede">Every other ledger quietly assumes you never miss a week. This one assumes you do.
+        Set the balance to what the bank actually says on the day it said it &mdash; the months you never
+        tracked stop dragging on the number, and only what you log afterwards counts. Every anchor is kept
+        in the history, so nothing is quietly rewritten. Connect the bank through Plaid and new transactions
+        arrive as drafts you confirm, same as everything else.</p>
+      </div>
     </div>
-    <div class="ledger">
-      <div class="entry"><span class="code">0001</span><div class="body"><span class="name">Ledgers</span><span class="desc">, one for the company, one for your life, one for your mom's shop. Separate books under one sign-in.</span></div><span class="fig">× many</span></div>
-      <div class="entry"><span class="code">0002</span><div class="body"><span class="name">Transfers</span><span class="desc">, pay yourself in one motion. A salary posts as expense and income; an owner's draw touches neither P&amp;L. Both sides stay linked.</span></div><span class="fig">2 rows</span></div>
-      <div class="entry"><span class="code">0003</span><div class="body"><span class="name">Capture</span><span class="desc">, receipts, invoices, and statements read by AI into a review you confirm. Never auto-posted.</span></div><span class="fig">~15 s</span></div>
-      <div class="entry"><span class="code">0004</span><div class="body"><span class="name">The Anchor</span><span class="desc">, reconcile to reality whenever you drift. Every anchor is kept in history.</span></div><span class="fig">true</span></div>
-      <div class="entry"><span class="code">0005</span><div class="body"><span class="name">Credits</span><span class="desc">, AWS, compute, and MongoDB credits tracked as pools that drain instead of cash. The P&amp;L knows the difference.</span></div><span class="fig">non-cash</span></div>
-      <div class="entry"><span class="code">0006</span><div class="body"><span class="name">Open books</span><span class="desc">, receivables and payables with recurring cadences, projected onto a 30/90-day cash calendar.</span></div><span class="fig">30/90 d</span></div>
-      <div class="entry"><span class="code">0007</span><div class="body"><span class="name">Tax day</span><span class="desc">, GIFI-coded T2 draft, deadlines computed from your year-end, three filing routes explained plainly.</span></div><span class="fig">9999</span></div>
+
+    <div class="twoup">
+      <div class="panel" data-reveal>
+        <h3>Anchor the balance</h3>
+        <p class="why">Check your real accounts, enter the combined total, pick the date.</p>
+        <div class="fgrid">
+          <div class="f"><label>True balance</label><div class="box num">22,041.17</div></div>
+          <div class="f"><label>As of</label><div class="box num">2026‑08‑01</div></div>
+        </div>
+        <div class="cbtns"><span class="btnprim">Anchor balance here</span></div>
+        <p class="poolnote" style="margin-top:12px">Entries dated on or before the anchor stay in your history &mdash; they just stop counting toward the balance.</p>
+        <div style="margin-top:14px">
+          <div class="hist"><span>2026‑08‑01 · bank feed</span><span>$22,041.17</span></div>
+          <div class="hist"><span>2026‑02‑14 · manual</span><span>$9,880.42</span></div>
+          <div class="hist"><span>2025‑09‑30 · statement</span><span>$4,110.00</span></div>
+        </div>
+      </div>
+
+      <div class="panel" data-reveal data-delay="1">
+        <h3>Credits are not cash</h3>
+        <p class="why">AWS, compute, and vendor credits are pools that drain. The P&amp;L knows the difference,
+        and so does your accountant&rsquo;s copy.</p>
+
+        <div class="pool">
+          <div class="poolhead"><span class="poolname">AWS Activate</span><span class="poolval">$4,910.00 <small>/ $10,000 left</small></span></div>
+          <div class="drain" style="--w:49%"><i></i></div>
+          <div class="poolnote">used: $5,090 (2,000 pre-app + 3,090 tracked)</div>
+        </div>
+
+        <div class="pool">
+          <div class="poolhead"><span class="poolname">Anthropic credits</span><span class="poolval">$1,182.00 <small>/ $2,500 left</small></span></div>
+          <div class="drain" style="--w:47%"><i></i></div>
+          <div class="poolnote">used: $1,318 tracked · $200 committed in open payables</div>
+        </div>
+
+        <p class="poolnote" style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line)">
+          Spend a credit and the expense is recorded without pretending cash left the account.</p>
+      </div>
     </div>
   </div>
 </section>
 
-<section>
-  <div class="wrap talk">
-    <div>
-      <div class="kicker">Not built for the 40th floor</div>
-      <p>Most bookkeeping software is designed for a finance team: a month-end close checklist, a controller,
-      a CFO dashboard nobody outside the department opens. Brasstally is designed for the business with one
-      owner, doing the books between everything else.</p>
+<!-- ============ 04 TAX DAY ============ -->
+<section class="chapter tint" id="tax">
+  <div class="wrap">
+    <div class="chead" data-reveal>
+      <div class="cnum">04</div>
+      <div>
+        <div class="kicker" style="margin-bottom:12px">Tax day</div>
+        <h2>The year comes out as a tax package, not a shoebox.</h2>
+        <p class="lede">Pick your year&#8209;end and build the package. Brasstally maps your categories onto the
+        forms CRA expects, computes every deadline from your own year&#8209;end, and lays out which schedules
+        your return is actually made of. Then you email it to your accountant from the same screen &mdash;
+        working paper, figures, and a note, all attached.</p>
+      </div>
     </div>
-    <div>
-      <div class="kicker">Amnesty, built in</div>
-      <p>Every other ledger quietly assumes you never miss a week. Brasstally assumes you do. Anchor to the real
-      balance, keep the history, carry on, truth over tidiness.</p>
+
+    <div class="taxgrid">
+      <div class="panel" data-reveal>
+        <h3>Deadlines, from your year&#8209;end</h3>
+        <p class="why">Fiscal year ending 2026&#8209;12&#8209;31 · Ontario · claiming the small business deduction.</p>
+        <div class="deadline">
+          <span class="dl">Balance owing due<small>three months after year end for a CCPC</small></span>
+          <span class="dd">2027‑03‑31</span>
+        </div>
+        <div class="deadline">
+          <span class="dl">T2 return due<small>six months after year end</small></span>
+          <span class="dd">2027‑06‑30</span>
+        </div>
+        <div class="deadline">
+          <span class="dl">T661 SR&amp;ED cutoff<small>eighteen months, not extendable</small></span>
+          <span class="dd">2028‑06‑30</span>
+        </div>
+      </div>
+
+      <div class="panel" data-reveal data-delay="1">
+        <h3>Working paper · income statement</h3>
+        <p class="why">Schedule 125 · 2026‑01‑01 → 2026‑12‑31 · Fernway Studio</p>
+        <div class="gifi"><span class="g">8000</span><span class="n">Trade sales of goods and services</span><span class="v">$182,400.00</span></div>
+        <div class="gifi strong"><span class="g">8299</span><span class="n">Total revenue</span><span class="v">$182,400.00</span></div>
+        <div class="gifi"><span class="g">8811</span><span class="n">Office expenses</span><span class="v">−$6,142.80</span></div>
+        <div class="gifi"><span class="g">8860</span><span class="n">Professional fees</span><span class="v">−$14,900.00</span></div>
+        <div class="gifi"><span class="g">9060</span><span class="n">Salaries and wages</span><span class="v">−$66,000.00</span></div>
+        <div class="gifi strong"><span class="g">9368</span><span class="n">Total expenses</span><span class="v">−$118,214.55</span></div>
+        <div class="gifi strong final"><span class="g">9999</span><span class="n">Net income before taxes</span><span class="v">$64,185.45</span></div>
+        <p class="poolnote" style="margin-top:10px">note for your accountant: $3,090 of expenses were covered by vendor credits (non-cash), flag for SR&amp;ED/ITC review</p>
+
+        <div class="sendbar">
+          <span class="btnprim" style="flex:0 0 auto; padding:8px 14px">Send to accountant</span>
+          <span class="filechip">T2_S125_GIFI_FernwayStudio_FY2026.pdf</span>
+          <span class="filechip">.csv</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="alsobar" data-reveal>
+      <p class="also"><b>Also in the books:</b> receivables and payables with recurring cadences, projected onto a
+      30 and 90&#8209;day cash calendar · attachments filed against the entry that used them · anchor history kept
+      in full · transfers that stay linked on both sides · a personal ledger that knows T1 dates instead of T2 ones.</p>
     </div>
   </div>
 </section>
 
-<section>
-  <div class="wrap manifesto" id="manifesto">
-    <div class="kicker" style="margin-bottom:18px">The position</div>
-    <p class="mline dim">Bankers don't run my business.</p>
-    <p class="mline dim">Accountants don't run my life.</p>
+<!-- ============ 05 POSITION ============ -->
+<section class="manifesto" id="manifesto">
+  <div class="wrap">
+    <div class="chead" style="justify-content:center; grid-template-columns:1fr; text-align:center; margin-bottom:34px">
+      <div class="kicker">05 · The position</div>
+    </div>
+    <p class="mline dim">Bankers don&rsquo;t run my business.</p>
+    <p class="mline dim">Accountants don&rsquo;t run my life.</p>
     <p class="mline brassline">I run both.</p>
   </div>
 </section>
 
-<section style="border-bottom:0">
+<!-- ============ CLOSE ============ -->
+<section style="border-top:1px solid var(--line)">
   <div class="wrap closing">
-    <h2>Ready to run your books honestly?</h2>
-    <p class="sub mutetext">Open your books, check soon for an email, start keeping honest books.</p>
-    <div class="magic" data-magic style="width:100%; max-width:430px">
+    <h2>Start keeping books you can hand to anyone.</h2>
+    <p class="lede">Open your books, capture the first receipt, and let the year build itself.</p>
+    <div class="magic" data-magic style="width:100%; max-width:460px">
       <div class="magicrow">
         <input type="email" placeholder="you@example.com" aria-label="Email address" />
         <button type="button">Open your books</button>
@@ -323,6 +688,7 @@
       <div class="beta-pending" style="display:none" data-pending>Wait — check soon for an email with your sign-in link.</div>
       <div class="magicnote">early access · free · your books live in your own account</div>
     </div>
+    <a class="secondary" href="#capture">See how capture works ↑</a>
   </div>
 </section>
 
@@ -339,64 +705,34 @@
   const SUPABASE_URL = "https://xwoccmgppjmgficvmogr.supabase.co";
   const SUPABASE_KEY = "sb_publishable_KYf7h0SuGIIDM7Fj_L0fWw_xbinzUC_";
 
-  // ---- ledger deck: cycle the cards, animate the front card's bars ----
-  const deck = document.getElementById("deck");
-  const tabs = document.getElementById("decktabs");
-  const cards = [...deck.querySelectorAll(".dcard")];
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let order = [0, 1, 2];
-  let timer = null;
 
-  const fillBars = (card) => {
-    card.querySelectorAll(".fill").forEach((el) => {
-      el.style.width = "0%";
-      void el.offsetWidth; // reflow so the transition re-triggers
-      el.style.width = el.dataset.w;
-    });
-  };
+  // ---- nav hairline once you leave the top ----
+  const navbar = document.getElementById("navbar");
+  const onScroll = () => navbar.classList.toggle("stuck", window.scrollY > 12);
+  window.addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
 
-  const render = () => {
-    order.forEach((cardIdx, pos) => {
-      const el = cards[cardIdx];
-      el.classList.remove("pos0", "pos1", "pos2", "leaving");
-      el.classList.add("pos" + pos);
-    });
-    tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.i) === order[0]));
-    fillBars(cards[order[0]]);
-  };
-
-  const advance = () => {
-    const front = cards[order[0]];
-    front.classList.add("leaving");
-    setTimeout(() => { order.push(order.shift()); render(); }, reduced ? 0 : 320);
-  };
-
-  const start = () => { if (!reduced && !timer) timer = setInterval(advance, 3800); };
-  const stop = () => { clearInterval(timer); timer = null; };
-
-  tabs.addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (!b) return;
-    const i = Number(b.dataset.i);
-    if (i === order[0]) return;
-    order = [i, ...order.filter((x) => x !== i)];
-    render();
-    stop(); start(); // reset the clock so the chosen card gets full time
-  });
-  deck.addEventListener("mouseenter", stop);
-  deck.addEventListener("mouseleave", start);
-
-  render();
-  start();
-
-  // ---- manifesto reveal on scroll ----
+  // ---- scroll reveal for chapters and product scenes ----
+  const revealables = [...document.querySelectorAll("[data-reveal]")];
   const manifesto = document.getElementById("manifesto");
-  if ("IntersectionObserver" in window) {
+
+  if ("IntersectionObserver" in window && !reduced) {
     const io = new IntersectionObserver((entries) => {
-      entries.forEach((en) => { if (en.isIntersecting) { manifesto.classList.add("show"); io.disconnect(); } });
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        en.target.classList.add("reveal-in");
+        io.unobserve(en.target);
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
+    revealables.forEach((el) => io.observe(el));
+
+    const mio = new IntersectionObserver((entries) => {
+      entries.forEach((en) => { if (en.isIntersecting) { manifesto.classList.add("show"); mio.disconnect(); } });
     }, { threshold: 0.4 });
-    io.observe(manifesto);
+    mio.observe(manifesto);
   } else {
+    revealables.forEach((el) => el.classList.add("reveal-in"));
     manifesto.classList.add("show");
   }
 
