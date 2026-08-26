@@ -447,7 +447,7 @@ function AuthCard({ children }) {
     <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }} className="flex items-center justify-center p-4">
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-6 w-full max-w-sm">
         <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">Down to brass tacks</div>
-        <h1 style={{ fontFamily: SERIF }} className="text-2xl mb-4">Brass<span style={{ color: P.brass }}>t</span>ally</h1>
+        <img src="/app/brasstally-wordmark.png" alt="Brasstally" className="mb-4" style={{ height: 28, width: "auto", display: "block" }} />
         {children}
       </div>
     </div>
@@ -1342,15 +1342,15 @@ function Ledger({ onSignOut }) {
             <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">
               Brasstally
             </div>
-            <div className="flex items-center gap-3">
-              <div className="relative">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="relative min-w-0">
                 <button
                   onClick={() => setLedgerMenuOpen((o) => !o)}
                   title="Switch ledger"
-                  className="flex items-center gap-1.5 text-left"
+                  className="flex items-center gap-1.5 text-left min-w-0 max-w-[70vw] sm:max-w-xs"
                 >
-                  <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight">{data.ledger.name}</h1>
-                  <ChevronDown size={20} style={{ color: P.brass, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                  <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight truncate">{data.ledger.name}</h1>
+                  <ChevronDown size={20} style={{ color: P.brass, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} className="shrink-0" />
                 </button>
                 {ledgerMenuOpen && (
                   <>
@@ -1725,7 +1725,7 @@ function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate,
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-1">
           <h3 style={{ fontFamily: SERIF }} className="text-lg">Correct the balance</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
@@ -3789,7 +3789,8 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
       <button
         onClick={() => openPreview(tx.attachmentId, tx.attachmentName)}
         title={`View ${tx.attachmentName || "filed document"}`}
-        style={{ color: P.brass }}
+        style={{ color: P.brass, padding: 6, margin: -6 }}
+        className="shrink-0"
       >
         <Paperclip size={14} />
       </button>
@@ -3801,8 +3802,8 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
       <button
         onClick={() => fileRef.current.click()}
         title={state === "error" ? "Couldn't save that file (max 8 MB)" : "Attach invoice / receipt"}
-        style={{ color: state === "error" ? P.debit : P.faint }}
-        className={state === "error" ? "" : "opacity-0 group-hover:opacity-100"}
+        style={{ color: state === "error" ? P.debit : P.faint, padding: 6, margin: -6 }}
+        className="shrink-0"
       >
         {state === "busy" ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
       </button>
@@ -3983,44 +3984,46 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 onCancel={() => setEditingId(null)}
               />
             ) : (
-              <div key={t.id} className="flex items-center gap-3 py-2" style={{ borderColor: P.line }}>
-                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs w-12 shrink-0">{t.date?.slice(5)}</div>
+              <div key={t.id} className="flex items-center gap-2 sm:gap-3 py-2.5" style={{ borderColor: P.line }}>
+                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs w-10 sm:w-12 shrink-0">{t.date?.slice(5)}</div>
                 <button onClick={() => setEditingId(t.id)} className="flex-1 min-w-0 text-left" title="Edit this entry">
                   <div className="text-sm truncate">{t.description}</div>
-                  <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1">
+                  <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs flex items-center gap-1 flex-wrap">
                     {isRec(t) && <RecMark />}
                     {t.category}{t.subcategory ? " / " + t.subcategory : ""}{isRec(t) ? " · recurring" : ""}{t.plExclude ? " · transfer (not in P&L)" : ""}
+                    {t.transferId && (
+                      <span
+                        style={{ fontFamily: MONO, color: P.bg, background: P.brass }}
+                        className="rounded px-1.5 py-0.5 shrink-0 inline-flex items-center gap-1"
+                        title={t.plExclude ? "Transferred between your ledgers. Excluded from P&L." : "Paid across ledgers as a real expense/income. Counted in P&L."}
+                      >
+                        <ArrowLeftRight size={10} /> {t.type === "expense" ? "transferred out" : "transferred in"}
+                      </span>
+                    )}
+                    {isCredits(t) && (
+                      <span style={{ color: P.brass, border: `1px solid ${P.brass}` }} className="rounded px-1 shrink-0" title="Paid with credits, doesn't affect cash balance">
+                        {creditName(data, t.creditId)}
+                      </span>
+                    )}
                   </div>
                 </button>
-                {t.transferId && (
-                  <span
-                    style={{ fontFamily: MONO, color: P.bg, background: P.brass }}
-                    className="text-xs rounded px-1.5 py-0.5 shrink-0 inline-flex items-center gap-1"
-                    title={t.plExclude ? "Transferred between your ledgers. Excluded from P&L." : "Paid across ledgers as a real expense/income. Counted in P&L."}
-                  >
-                    <ArrowLeftRight size={10} /> {t.type === "expense" ? "transferred out" : "transferred in"}
-                  </span>
-                )}
-                {isCredits(t) && (
-                  <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1 shrink-0" title="Paid with credits, doesn't affect cash balance">
-                    {creditName(data, t.creditId)}
-                  </span>
-                )}
-                {cleared?.has(t.id) && (
-                  <span style={{ color: P.credit }} className="shrink-0" title={`Cleared the bank on ${cleared.get(t.id).date}`}>
-                    <Check size={13} />
-                  </span>
-                )}
-                <TxAttachment tx={t} setTxAttachment={setTxAttachment} openPreview={openPreview} />
-                <div style={{ fontFamily: MONO, color: t.type === "income" ? P.credit : P.text }} className="text-sm tabular-nums">
-                  {t.type === "income" ? "+" : "−"}{fmt(t.amount)}
+                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                  {cleared?.has(t.id) && (
+                    <span style={{ color: P.credit }} className="shrink-0" title={`Cleared the bank on ${cleared.get(t.id).date}`}>
+                      <Check size={13} />
+                    </span>
+                  )}
+                  <TxAttachment tx={t} setTxAttachment={setTxAttachment} openPreview={openPreview} />
+                  <div style={{ fontFamily: MONO, color: t.type === "income" ? P.credit : P.text }} className="text-sm tabular-nums">
+                    {t.type === "income" ? "+" : "−"}{fmt(t.amount)}
+                  </div>
+                  <button onClick={() => setEditingId(t.id)} style={{ color: P.faint, padding: 6, margin: -6 }} title="Edit">
+                    <Pencil size={14} />
+                  </button>
+                  <button onClick={() => delTx(t.id)} style={{ color: P.faint, padding: 6, margin: -6 }} title="Delete">
+                    <Trash2 size={14} />
+                  </button>
                 </div>
-                <button onClick={() => setEditingId(t.id)} style={{ color: P.faint }} title="Edit">
-                  <Pencil size={14} />
-                </button>
-                <button onClick={() => delTx(t.id)} style={{ color: P.faint }} title="Delete">
-                  <Trash2 size={14} />
-                </button>
               </div>
             )
           )}
@@ -4577,17 +4580,17 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         </button>
         <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
         {i.attachmentId && (
-          <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brass }}>
+          <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brass, padding: 6, margin: -6 }}>
     <Paperclip size={13} />
           </button>
         )}
-        <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint }} title="Edit">
+        <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint, padding: 6, margin: -6 }} title="Edit">
           <Pencil size={13} />
         </button>
         <Btn tone="ghost" onClick={() => setSettleFor(i)} title={`${action}: confirm the actual amount, date, payment, and file the receipt`}>
           <Check size={13} />
         </Btn>
-        <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint }}><Trash2 size={13} /></button>
+        <button onClick={() => delAR(kind, i.id)} style={{ color: P.faint, padding: 6, margin: -6 }}><Trash2 size={13} /></button>
       </div>
     );
   };
@@ -4782,7 +4785,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-sm p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-1">
           <h3 style={{ fontFamily: SERIF }} className="text-lg">{action}</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
@@ -4941,8 +4944,8 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
                     {c.name}
                   </button>
                   <div className="flex gap-1 shrink-0">
-                    <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} style={{ color: P.faint }} title="Edit"><Pencil size={12} /></button>
-                    <button onClick={() => { if (window.confirm(`Remove the ${c.name} pool? Past entries keep their credit tag.`)) delCredit(c.id); }} style={{ color: P.faint }} title="Remove"><Trash2 size={12} /></button>
+                    <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} style={{ color: P.faint, padding: 6, margin: -6 }} title="Edit"><Pencil size={12} /></button>
+                    <button onClick={() => { if (window.confirm(`Remove the ${c.name} pool? Past entries keep their credit tag.`)) delCredit(c.id); }} style={{ color: P.faint, padding: 6, margin: -6 }} title="Remove"><Trash2 size={12} /></button>
                   </div>
                 </div>
                 <div style={{ fontFamily: MONO, color: remaining > 0 ? P.credit : P.debit }} className="text-lg tabular-nums">
@@ -5240,7 +5243,7 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
   };
 
   const body = (
-    <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+    <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
       <div className="flex justify-between items-start mb-1">
         <h3 style={{ fontFamily: SERIF }} className="text-xl">{onboarding ? "Set up your first ledger" : "New ledger"}</h3>
         {!onboarding && <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>}
@@ -6084,7 +6087,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-1">
           <h3 style={{ fontFamily: SERIF }} className="text-xl">Move money between ledgers</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
@@ -6447,7 +6450,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
                 : <Btn tone="ghost" onClick={() => sync(c.id)} disabled={syncing === c.id}>
                     {syncing === c.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Sync now
                   </Btn>}
-              <button onClick={() => disconnect(c.id)} style={{ color: P.faint }} title="Disconnect"><Trash2 size={13} /></button>
+              <button onClick={() => disconnect(c.id)} style={{ color: P.faint, padding: 6, margin: -6 }} title="Disconnect"><Trash2 size={13} /></button>
             </div>
             );
           })}
