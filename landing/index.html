@@ -107,20 +107,23 @@
   .hero-scene{
     width:100vw;
     max-width:none;
-    margin:72px 0 -96px;
+    margin:72px 0 -120px;
     margin-left:calc(50% - 50vw);
     padding:0;
   }
-  @media(max-width:1000px){.hero-scene{margin-top:48px; margin-bottom:-64px}}
-  @media(max-width:620px){.hero-scene{margin-top:36px; margin-bottom:-40px}}
+  @media(max-width:1000px){.hero-scene{margin-top:48px; margin-bottom:-72px}}
+  @media(max-width:620px){.hero-scene{margin-top:36px; margin-bottom:-48px}}
   .hero-scene .win{
     width:100%;
     height:auto;
     display:block;
-    border-radius:16px 16px 0 0;
+    background:var(--surface);
+    border:1px solid var(--line);
     border-left:none;
     border-right:none;
     border-bottom:none;
+    border-radius:18px 18px 0 0;
+    box-shadow:var(--lift);
   }
   .win{background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:var(--lift); overflow:hidden}
   .wintop{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--surface2)}
@@ -357,8 +360,8 @@
   </div>
 
   <!-- product scene: full-bleed capture flow -->
-  <div class="hero-scene scene" data-reveal>
-    <svg class="win" viewBox="0 0 1080 430" style="background:#ffffff; border:1px solid #e5e1d6; box-shadow:var(--lift); display:block; width:100%">
+  <div class="hero-scene scene">
+    <svg class="win" viewBox="0 0 1080 430" preserveAspectRatio="xMidYMin meet">
       <!-- Window chrome -->
       <g style="fill:#fbfaf6; stroke:#e5e1d6; stroke-width:1">
         <rect width="1080" height="48" />
@@ -369,7 +372,7 @@
 
       <!-- LEFT PANE: Ledger -->
       <g style="fill:none; stroke:#e5e1d6; stroke-width:1">
-        <line x1="550" y1="48" x2="550" y2="400" />
+        <line x1="550" y1="48" x2="550" y2="430" />
       </g>
       <text x="28" y="80" style="font-family:'Josefin Sans',sans-serif; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f">Ledger</text>
       <text x="522" y="80" style="font-family:'Josefin Sans',sans-serif; font-size:10px; letter-spacing:.16em; text-transform:uppercase; fill:#9a9c8f; text-anchor:end">August</text>
