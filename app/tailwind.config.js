@@ -4,18 +4,23 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Josefin Sans', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        serif: ['Cardo', 'serif'],
+        // One grotesque for everything. Hierarchy comes from weight and
+        // tracking, not from a second, more traditional-looking family.
+        sans: ['Geist', 'Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
+        serif: ['Geist', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
+      // The single source of truth for the type scale — index.html no longer
+      // patches these sizes, so there is one place to tune them.
       fontSize: {
-        xs: ['12px', { lineHeight: '16px', fontWeight: '500' }],
-        sm: ['14px', { lineHeight: '20px', fontWeight: '500' }],
-        base: ['16px', { lineHeight: '24px', fontWeight: '400' }],
-        lg: ['18px', { lineHeight: '28px', fontWeight: '500' }],
-        xl: ['20px', { lineHeight: '28px', fontWeight: '600' }],
-        '2xl': ['24px', { lineHeight: '32px', fontWeight: '600' }],
-        '3xl': ['30px', { lineHeight: '36px', fontWeight: '700' }],
-        '4xl': ['36px', { lineHeight: '44px', fontWeight: '700' }],
+        xs: ['12.5px', { lineHeight: '17px', fontWeight: '400', letterSpacing: '-0.002em' }],
+        sm: ['13.5px', { lineHeight: '19px', fontWeight: '400', letterSpacing: '-0.004em' }],
+        base: ['15px', { lineHeight: '23px', fontWeight: '400', letterSpacing: '-0.008em' }],
+        lg: ['17px', { lineHeight: '24px', fontWeight: '500', letterSpacing: '-0.014em' }],
+        xl: ['20px', { lineHeight: '26px', fontWeight: '600', letterSpacing: '-0.02em' }],
+        '2xl': ['24px', { lineHeight: '30px', fontWeight: '600', letterSpacing: '-0.024em' }],
+        '3xl': ['30px', { lineHeight: '35px', fontWeight: '600', letterSpacing: '-0.028em' }],
+        '4xl': ['36px', { lineHeight: '41px', fontWeight: '600', letterSpacing: '-0.03em' }],
       },
       colors: {
         brass: "#C9A24B",

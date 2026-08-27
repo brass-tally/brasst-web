@@ -59,8 +59,10 @@ const PALETTES = {
 // its values and re-rendering the tree re-themes the whole app.
 const P = { ...PALETTES.dark };
 const MONO = "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-const SERIF = "'Cardo', serif"; // elegant headings
-const SANS = "'Josefin Sans', ui-sans-serif, system-ui, sans-serif";
+const SANS = "'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
+// Headings use the same grotesque as the UI — weight and tracking carry the
+// hierarchy instead of a second, more traditional-looking family.
+const SERIF = SANS;
 
 
 /* ================= helpers ================= */
@@ -180,24 +182,28 @@ function downloadCSV(filename, rows) {
 
 /* ================= tiny UI atoms ================= */
 const Label = ({ children }) => (
-  <div style={{ color: P.muted, fontFamily: MONO, letterSpacing: "0.12em" }} className="text-xs uppercase mb-1">
+  <div style={{ color: P.muted, letterSpacing: "0.07em" }} className="text-xs uppercase font-medium mb-1.5">
     {children}
   </div>
 );
 
+// Controls share one shape: a soft rectangle with room to breathe and a focus
+// ring that reads as a ring rather than a browser outline.
+const CONTROL = "rounded-lg px-3 py-2.5 text-sm w-full outline-none transition-shadow duration-150 focus:shadow-[0_0_0_3px_var(--focus-ring)]";
+
 const Input = (props) => (
   <input
     {...props}
-    style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, ...props.style }}
-    className={"rounded px-2 py-1.5 text-sm w-full outline-none " + (props.className || "")}
+    style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, "--focus-ring": P.brass + "33", ...props.style }}
+    className={CONTROL + " " + (props.className || "")}
   />
 );
 
 const Select = ({ children, ...props }) => (
   <select
     {...props}
-    style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text }}
-    className="rounded px-2 py-1.5 text-sm w-full outline-none"
+    style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, "--focus-ring": P.brass + "33" }}
+    className={CONTROL}
   >
     {children}
   </select>
@@ -209,8 +215,17 @@ const Btn = ({ children, tone = "brass", ...props }) => {
   return (
     <button
       {...props}
-      style={{ background: bg, color: fg, border: tone === "ghost" ? `1px solid ${P.line}` : "none" }}
-      className={"rounded px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-40 " + (props.className || "")}
+      style={{
+        background: bg,
+        color: fg,
+        border: tone === "ghost" ? `1px solid ${P.line}` : "1px solid transparent",
+        ...props.style,
+      }}
+      className={
+        "rounded-lg px-3.5 py-2 text-sm font-medium inline-flex items-center gap-1.5 " +
+        "transition-[transform,opacity] duration-150 active:scale-[.97] disabled:opacity-40 disabled:active:scale-100 " +
+        (props.className || "")
+      }
     >
       {children}
     </button>
@@ -403,7 +418,7 @@ class Boundary extends React.Component {
     return (
       <div style={{ background: "#101613", color: "#EAE7DA", minHeight: "100vh", fontFamily: SANS }} className="flex items-center justify-center p-6">
         <div style={{ maxWidth: 480 }}>
-          <h1 style={{ fontFamily: "ui-serif, Georgia, serif" }} className="text-xl mb-2">Something broke</h1>
+          <h1 style={{ fontFamily: SANS }} className="text-xl mb-2">Something broke</h1>
           <p style={{ color: "#8B9389" }} className="text-sm mb-3">
             The app hit an error instead of rendering. Reloading usually clears it, if it keeps happening, send this to whoever maintains the app:
           </p>
@@ -416,15 +431,61 @@ class Boundary extends React.Component {
 }
 
 /* ================= auth gate ================= */
+// Where a sign-in email has to land. The books live under /app/, so the redirect
+// must name that path: pointing it at the bare origin drops people on the
+// marketing page holding the token, which is why signing in took two clicks.
+const appUrl = () => `${window.location.origin}/app/`;
+
+// An installed PWA gets its own storage jar on iOS, so a link opened from Mail
+// signs you in inside Safari while the home-screen app still looks signed out.
+// A typed code is the only handoff that crosses that boundary.
+const isInstalledApp = () => {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(display-mode: standalone)")?.matches === true || window.navigator?.standalone === true;
+};
+
+// Supabase returns the session in the URL (hash for magic links, ?code= for
+// PKCE). Read any failure it reports, then scrub the params once the client has
+// consumed them so a refresh or a shared URL can't replay a spent token.
+const readLinkError = () => {
+  if (typeof window === "undefined") return "";
+  const hash = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+  const query = new URLSearchParams(window.location.search || "");
+  const raw = hash.get("error_description") || query.get("error_description") || "";
+  if (!raw) return "";
+  return /expired|invalid/i.test(raw)
+    ? "That sign-in link has already been used or has expired. Enter your email below and we'll send a fresh code."
+    : raw;
+};
+
+const scrubAuthParams = () => {
+  if (typeof window === "undefined") return;
+  const hash = window.location.hash || "";
+  const query = new URLSearchParams(window.location.search || "");
+  const hadHash = /access_token|refresh_token|error_description|error_code/.test(hash);
+  const hadQuery = ["code", "error_description", "error", "error_code", "token_hash"].some((k) => query.has(k));
+  if (!hadHash && !hadQuery) return;
+  ["code", "error_description", "error", "error_code", "token_hash", "type"].forEach((k) => query.delete(k));
+  const search = query.toString();
+  window.history.replaceState({}, "", window.location.pathname + (search ? `?${search}` : ""));
+};
+
 export default function App() {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [recovery, setRecovery] = useState(false);   // arrived via a password-reset link
+  const [linkError, setLinkError] = useState(readLinkError);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
+    // getSession() waits on the client's own init, which is what parses the URL,
+    // so by the time it resolves the token in the address bar is already spent.
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session ?? null);
+      scrubAuthParams();
+    });
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       if (event === "PASSWORD_RECOVERY") setRecovery(true);
+      if (s) { setLinkError(""); scrubAuthParams(); }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -435,7 +496,7 @@ export default function App() {
         <Loader2 className="animate-spin mr-2" size={18} /> Connecting…
       </div>
     );
-  if (!session) return <AuthScreen />;
+  if (!session) return <AuthScreen linkError={linkError} />;
   if (recovery) return <SetNewPassword onDone={() => setRecovery(false)} />;
   return (
     <Boundary>
@@ -447,137 +508,238 @@ export default function App() {
 function AuthCard({ children }) {
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }} className="flex items-center justify-center p-4">
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-6 w-full max-w-sm">
-        <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest">Down to brass tacks</div>
-        <img src="/app/brasstally-wordmark.png" alt="Brasstally" className="mb-4" style={{ height: 28, width: "auto", display: "block" }} />
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 1px 2px rgba(0,0,0,.04), 0 24px 60px -24px rgba(0,0,0,.35)" }} className="rounded-2xl p-7 w-full max-w-sm">
+        <div style={{ fontFamily: MONO, color: P.brass, letterSpacing: "0.1em" }} className="text-xs uppercase mb-2">Down to brass tacks</div>
+        <img src="/app/brasstally-wordmark.png" alt="Brasstally" style={{ height: 26, width: "auto", display: "block" }} />
         {children}
       </div>
     </div>
   );
 }
 
-function AuthScreen() {
-  const [mode, setMode] = useState("signin"); // signin | signup | magic | forgot
+function AuthScreen({ linkError = "" }) {
+  // step: email → code is the default road. Password is kept as a side door for
+  // people who already set one, and forgot hangs off it.
+  const [step, setStep] = useState("email"); // email | code | password | signup | forgot
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useState(linkError);
   const [notice, setNotice] = useState("");
+  const [resentAt, setResentAt] = useState(0);
+  const installed = useMemo(isInstalledApp, []);
 
-  const switchMode = (m) => { setMode(m); setErr(""); setNotice(""); setPw(""); setPw2(""); };
+  const goTo = (s) => { setStep(s); setErr(""); setNotice(""); setCode(""); setPw(""); setPw2(""); };
 
-  const go = async () => {
+  // One request sends both halves: a tappable link for whoever is reading mail
+  // on the same browser, and a six-digit code for everyone else — the installed
+  // app, a desktop inbox, a phone that opens links in a different browser.
+  const sendCode = async (resend = false) => {
     const em = email.trim();
     if (!em || busy) return;
     setErr(""); setNotice(""); setBusy(true);
     try {
-      if (mode === "signup") {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: em,
+        options: { emailRedirectTo: appUrl(), shouldCreateUser: true },
+      });
+      if (error) { setErr(error.message); return; }
+      setStep("code");
+      setCode("");
+      if (resend) { setResentAt(Date.now()); setNotice(`A fresh code is on its way to ${em}.`); }
+    } finally { setBusy(false); }
+  };
+
+  const verifyCode = async () => {
+    const token = code.replace(/\D/g, "");
+    if (token.length < 6 || busy) return;
+    setErr(""); setBusy(true);
+    try {
+      const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token, type: "email" });
+      if (error) {
+        setErr(/expired/i.test(error.message)
+          ? "That code has expired. Send a new one and try again."
+          : "That code doesn't match. Check the last email — codes expire after an hour.");
+      }
+      // On success the auth listener in App() swaps this screen out.
+    } finally { setBusy(false); }
+  };
+
+  const passwordGo = async () => {
+    const em = email.trim();
+    if (!em || busy) return;
+    setErr(""); setNotice(""); setBusy(true);
+    try {
+      if (step === "signup") {
         if (pw.length < 8) { setErr("Use at least 8 characters for your password."); return; }
         if (pw !== pw2) { setErr("The two passwords don't match."); return; }
         const { data, error } = await supabase.auth.signUp({
-          email: em, password: pw, options: { emailRedirectTo: window.location.origin },
+          email: em, password: pw, options: { emailRedirectTo: appUrl() },
         });
         if (error) setErr(error.message);
         else if (!data.session) setNotice(`Almost there. A verification link is on its way to ${em}. Tap it to confirm your email, then sign in here.`);
-      } else if (mode === "signin") {
+      } else if (step === "password") {
         const { error } = await supabase.auth.signInWithPassword({ email: em, password: pw });
         if (error) {
           setErr(/confirm/i.test(error.message)
             ? "This email isn't verified yet. Check your inbox for the verification link, then try again."
-            : "That email and password don't match. Reset the password below, or use a sign-in link instead.");
+            : "That email and password don't match. Reset it below, or go back and use a code instead.");
         }
-      } else if (mode === "magic") {
-        const { error } = await supabase.auth.signInWithOtp({ email: em, options: { emailRedirectTo: window.location.origin } });
-        if (error) setErr(error.message);
-        else setNotice(`Check ${em} for a one-tap sign-in link. It verifies your email automatically, and it works for new accounts too.`);
-      } else if (mode === "forgot") {
-        const { error } = await supabase.auth.resetPasswordForEmail(em, { redirectTo: window.location.origin });
+      } else if (step === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(em, { redirectTo: appUrl() });
         if (error) setErr(error.message);
         else setNotice(`A password reset link is on its way to ${em}. It brings you back here to set a new one.`);
       }
     } finally { setBusy(false); }
   };
 
-  const linkStyle = { color: P.faint, fontFamily: MONO };
+  // Utility links read as text, not as terminal output — the mono face made
+  // them look like a config file.
+  const linkStyle = { color: P.muted };
+  const emailValid = /\S+@\S+\.\S+/.test(email.trim());
 
-  return (
-    <AuthCard>
-      {(mode === "signin" || mode === "signup") && (
-        <div className="flex gap-1 mb-4">
-          {[["signin", "Sign in"], ["signup", "Create account"]].map(([k, label]) => (
-            <button key={k} onClick={() => switchMode(k)}
-              style={{ fontFamily: MONO, background: mode === k ? P.surface2 : "transparent", border: `1px solid ${mode === k ? P.brass : P.line}`, color: mode === k ? P.text : P.muted }}
-              className="flex-1 rounded px-2 py-1.5 text-xs">
+  if (notice && step !== "code") {
+    return (
+      <AuthCard>
+        <p style={{ color: P.muted }} className="text-sm">{notice}</p>
+        <button onClick={() => goTo("email")} style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2 mt-3">back</button>
+      </AuthCard>
+    );
+  }
+
+  /* ---- step 2: type the code ---- */
+  if (step === "code") {
+    return (
+      <AuthCard>
+        <p style={{ color: P.text }} className="text-sm mt-3">
+          Enter the 6-digit code we sent to <span style={{ fontFamily: MONO }}>{email.trim()}</span>.
+        </p>
+        <p style={{ color: P.muted }} className="text-xs mt-1">
+          {installed
+            ? "Typing the code signs you in right here in the app — tapping the link in your email would open a browser instead, and that signs in the browser, not the app."
+            : "The same email also has a one-tap link, if you'd rather use that."}
+        </p>
+
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onKeyDown={(e) => e.key === "Enter" && verifyCode()}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          autoFocus
+          maxLength={6}
+          aria-label="Six-digit sign-in code"
+          style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, fontFamily: MONO, letterSpacing: "0.4em" }}
+          className="rounded-lg px-3 py-3 w-full outline-none text-center text-xl mt-4"
+        />
+
+        {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
+        {notice && <p style={{ color: P.credit }} className="text-xs mt-2">{notice}</p>}
+
+        <Btn className="w-full justify-center mt-3" onClick={verifyCode} disabled={busy || code.length < 6}>
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+          Sign in
+        </Btn>
+
+        <div className="flex justify-between mt-3">
+          <button onClick={() => sendCode(true)} disabled={busy || Date.now() - resentAt < 20000}
+            style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2 disabled:opacity-40">Send a new code</button>
+          <button onClick={() => goTo("email")} style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2">Use a different email</button>
+        </div>
+      </AuthCard>
+    );
+  }
+
+  /* ---- password side door ---- */
+  if (step === "password" || step === "signup" || step === "forgot") {
+    return (
+      <AuthCard>
+        <div className="flex gap-1 mt-3 mb-4">
+          {[["password", "Sign in"], ["signup", "Create account"]].map(([k, label]) => (
+            <button key={k} onClick={() => goTo(k)}
+              style={{ fontFamily: MONO, background: step === k ? P.surface2 : "transparent", border: `1px solid ${step === k ? P.brass : P.line}`, color: step === k ? P.text : P.muted }}
+              className="flex-1 rounded-lg px-2 py-2 text-xs">
               {label}
             </button>
           ))}
         </div>
-      )}
 
-      {notice ? (
-        <>
-          <p style={{ color: P.muted }} className="text-sm">{notice}</p>
-          <button onClick={() => setNotice("")} style={linkStyle} className="text-xs underline decoration-dotted mt-3">back</button>
-        </>
-      ) : (
-        <>
-          <Label>Email</Label>
-          <Input type="email" placeholder="you@example.com" value={email} autoComplete="email"
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && (mode === "magic" || mode === "forgot") && go()} />
+        <Label>Email</Label>
+        <Input type="email" placeholder="you@example.com" value={email} autoComplete="email"
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && step === "forgot" && passwordGo()} />
 
-          {(mode === "signin" || mode === "signup") && (
-            <div className="mt-2">
-              <Label>Password</Label>
-              <Input type="password" placeholder={mode === "signup" ? "At least 8 characters" : "Your password"} value={pw}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                onChange={(e) => setPw(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && mode === "signin" && go()} />
-            </div>
-          )}
-          {mode === "signup" && (
-            <div className="mt-2">
-              <Label>Password, again</Label>
-              <Input type="password" placeholder="Same password" value={pw2} autoComplete="new-password"
-                onChange={(e) => setPw2(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && go()} />
-            </div>
-          )}
-          {mode === "forgot" && (
-            <p style={{ color: P.muted }} className="text-xs mt-2">Enter your email and we'll send a link to set a new password.</p>
-          )}
-          {mode === "magic" && (
-            <p style={{ color: P.muted }} className="text-xs mt-2">No password needed. A one-tap link lands in your inbox and opens your books.</p>
-          )}
-
-          {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
-
-          <Btn className="w-full justify-center mt-3" onClick={go}
-            disabled={busy || !email.trim() || ((mode === "signin" || mode === "signup") && !pw)}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
-            {mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : mode === "magic" ? "Send sign-in link" : "Send reset link"}
-          </Btn>
-
-          <div className="flex justify-between mt-3">
-            {mode !== "magic" ? (
-              <button onClick={() => switchMode("magic")} style={linkStyle} className="text-xs underline decoration-dotted">Email me a sign-in link instead</button>
-            ) : (
-              <button onClick={() => switchMode("signin")} style={linkStyle} className="text-xs underline decoration-dotted">Use a password instead</button>
-            )}
-            {mode === "signin" && (
-              <button onClick={() => switchMode("forgot")} style={linkStyle} className="text-xs underline decoration-dotted">Forgot password?</button>
-            )}
-            {(mode === "forgot") && (
-              <button onClick={() => switchMode("signin")} style={linkStyle} className="text-xs underline decoration-dotted">Back to sign in</button>
-            )}
+        {step !== "forgot" && (
+          <div className="mt-2">
+            <Label>Password</Label>
+            <Input type="password" placeholder={step === "signup" ? "At least 8 characters" : "Your password"} value={pw}
+              autoComplete={step === "signup" ? "new-password" : "current-password"}
+              onChange={(e) => setPw(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && step === "password" && passwordGo()} />
           </div>
+        )}
+        {step === "signup" && (
+          <div className="mt-2">
+            <Label>Password, again</Label>
+            <Input type="password" placeholder="Same password" value={pw2} autoComplete="new-password"
+              onChange={(e) => setPw2(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && passwordGo()} />
+          </div>
+        )}
+        {step === "forgot" && (
+          <p style={{ color: P.muted }} className="text-xs mt-2">Enter your email and we'll send a link to set a new password.</p>
+        )}
 
-          <p style={{ color: P.faint }} className="text-xs mt-4">
-            Verified email, encrypted connection, and your books are isolated to your account.
-          </p>
-        </>
-      )}
+        {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
+
+        <Btn className="w-full justify-center mt-3" onClick={passwordGo}
+          disabled={busy || !emailValid || (step !== "forgot" && !pw)}>
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+          {step === "password" ? "Sign in" : step === "signup" ? "Create account" : "Send reset link"}
+        </Btn>
+
+        <div className="flex justify-between mt-3">
+          <button onClick={() => goTo("email")} style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2">Email me a code instead</button>
+          {step === "password" && (
+            <button onClick={() => goTo("forgot")} style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2">Forgot password?</button>
+          )}
+          {step === "forgot" && (
+            <button onClick={() => goTo("password")} style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2">Back to sign in</button>
+          )}
+        </div>
+      </AuthCard>
+    );
+  }
+
+  /* ---- step 1: email ---- */
+  return (
+    <AuthCard>
+      <p style={{ color: P.muted }} className="text-sm mt-3 mb-4">
+        Enter your email and we'll send a 6-digit code. New here? The same code creates your account.
+      </p>
+
+      <Label>Email</Label>
+      <Input type="email" placeholder="you@example.com" value={email} autoComplete="email" autoFocus
+        inputMode="email"
+        onChange={(e) => setEmail(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && emailValid && sendCode()} />
+
+      {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
+
+      <Btn className="w-full justify-center mt-3" onClick={() => sendCode()} disabled={busy || !emailValid}>
+        {busy ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+        Email me a code
+      </Btn>
+
+      <div className="flex justify-between mt-3">
+        <button onClick={() => goTo("password")} style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2">Use a password instead</button>
+      </div>
+
+      <p style={{ color: P.faint }} className="text-xs mt-4">
+        Verified email, encrypted connection, and your books are isolated to your account.
+      </p>
     </AuthCard>
   );
 }
@@ -2111,7 +2273,7 @@ function MatchView({
               <Btn onClick={runPlan} disabled={fixing}>
                 {fixing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Go ahead
               </Btn>
-              <button onClick={() => setShowManual(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+              <button onClick={() => setShowManual(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
                 let me look at each one first
               </button>
             </div>
@@ -2162,7 +2324,7 @@ function MatchView({
                   title={`Did you pay ${g.description || g.keep.category} once or ${g.extras.length + 1} times?`}
                   detail={`${g.extras.length + 1} entries, ${g.reason}. A copy counts twice in the profit and loss, the budget, and the difference against the bank.`}>
                   <Btn onClick={() => doRemoveDup(g)}><Trash2 size={13} /> Once, remove the {g.extras.length === 1 ? "other" : `other ${g.extras.length}`}</Btn>
-                  <button onClick={() => setOpenDup(openDup === g.id ? null : g.id)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+                  <button onClick={() => setOpenDup(openDup === g.id ? null : g.id)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
                     {openDup === g.id ? "hide" : "show me"} the copies
                   </button>
                   {openDup === g.id && (
@@ -2244,7 +2406,7 @@ function MatchView({
         )}
 
         {/* ---- the old two-column screen, for when you do want to drive ---- */}
-        <button onClick={() => setShowManual(!showManual)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+        <button onClick={() => setShowManual(!showManual)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
           {showManual ? "hide" : "show"} everything line by line
         </button>
 
@@ -2290,7 +2452,7 @@ function MatchView({
 
             {(matched.length > 0 || ignored.length > 0) && (
               <div className="mb-4">
-                <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
                   {showMatched ? "hide" : "show"} {matched.length} already paired, {ignored.length} set aside
                 </button>
                 {showMatched && (
@@ -2316,7 +2478,7 @@ function MatchView({
               </div>
             )}
 
-            <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+            <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
               or force the books to the bank balance, which sets the difference to zero without explaining it
             </button>
           </div>
@@ -2325,7 +2487,7 @@ function MatchView({
         {/* ---- what past consolidations did, in sentences ---- */}
         {consolidation?.history?.length > 0 && (
           <div className="mt-4">
-            <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+            <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
               <History size={11} className="inline mb-0.5" /> {showHistory ? "hide" : "show"} what past consolidations did
             </button>
             {showHistory && (
@@ -3402,7 +3564,7 @@ function Capture({
             {GUIDES[guideId].avatar}
           </span>
           <span style={{ fontFamily: MONO, color: P.muted }} className="text-xs flex-1 truncate">{GUIDES[guideId].title}</span>
-          <button onClick={() => setGuideId(null)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+          <button onClick={() => setGuideId(null)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
             leave the guide
           </button>
         </div>
@@ -3592,7 +3754,7 @@ function NudgeCard({ nudge, data, apply, onDone }) {
             );
           })}
           {outstanding.length > 0 && (
-            <button onClick={() => setDismissed(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+            <button onClick={() => setDismissed(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
               later
             </button>
           )}
@@ -5388,7 +5550,7 @@ function SetupChecklist({ data, bankConns, onGo, openGuide, onDismiss }) {
           <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Getting set up</h2>
           <p style={{ color: P.muted }} className="text-sm">{doneCount} of {steps.length} done. This card goes away by itself.</p>
         </div>
-        <button onClick={onDismiss} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted shrink-0">
+        <button onClick={onDismiss} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 shrink-0">
           hide it
         </button>
       </div>
@@ -5652,7 +5814,7 @@ function FormRow({ f, checked, onToggle }) {
           <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">not in this year</span>
         ) : (
           <a href={f.url} target="_blank" rel="noreferrer"
-            style={{ fontFamily: MONO, color: P.brass }} className="text-xs underline decoration-dotted whitespace-nowrap">
+            style={{ fontFamily: MONO, color: P.brass }} className="text-xs underline decoration-dotted underline-offset-2 whitespace-nowrap">
             {f.version} issue ↗
           </a>
         )}
@@ -5696,7 +5858,7 @@ function FilingPackage({ taxYear, province, done, setDone }) {
 
       {changed > 0 && (
         <div className="mt-3">
-          <button onClick={() => setShowDiff(!showDiff)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted">
+          <button onClick={() => setShowDiff(!showDiff)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
             {showDiff ? "hide" : "show"} what changed from {taxYear - 1} to {taxYear} ({changed})
           </button>
           {showDiff && (
@@ -6557,7 +6719,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
       })()}
 
       {!connected && (
-        <button onClick={() => setShowSetup(!showSetup)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted mt-4">
+        <button onClick={() => setShowSetup(!showSetup)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 mt-4">
           {showSetup ? "hide" : "show"} one-time server setup
         </button>
       )}
@@ -6926,7 +7088,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
                 <div className="text-sm truncate">{sw.name}</div>
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">{sw.platform || "certified software"}{sw.gifiImport ? " · spreadsheet import" : " · manual GIFI entry"}</div>
               </div>
-              <button onClick={() => setPicking(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">change</button>
+              <button onClick={() => setPicking(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">change</button>
             </div>
           )}
           {route === "accountant" && (
@@ -6935,7 +7097,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
                 <div className="text-sm">Filed by your accountant</div>
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs truncate">{accountantEmail || "add their email below"}</div>
               </div>
-              <button onClick={() => save({ route: null, software: null })} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">change</button>
+              <button onClick={() => save({ route: null, software: null })} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">change</button>
             </div>
           )}
 
@@ -6953,7 +7115,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
                   <div style={{ fontFamily: MONO, color: P.credit }} className="text-xs">filed {rec.filed_on || ""}</div>
                   <div style={{ fontFamily: MONO, color: P.text }} className="text-sm">confirmation {rec.confirmation_number}</div>
                 </div>
-                <button onClick={() => setRecording(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted">edit</button>
+                <button onClick={() => setRecording(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">edit</button>
               </div>
             ) : recording ? (
               <div className="grid sm:grid-cols-3 gap-2 items-end">

@@ -2,6 +2,40 @@
 
 All transactional emails (welcome, beta approvals, password resets, etc.) are now sent via **Resend** instead of Supabase's built-in SMTP.
 
+## ⚠️ One dashboard change is required
+
+The app now signs people in with a **six-digit code** as well as a link. The code
+is the only thing that works inside an installed home-screen app: on iOS a link
+opened from Mail lands in Safari, Safari has its own storage jar, and the app
+icon still shows the signed-out screen. Typing a code keeps the whole sign-in
+inside the app.
+
+Supabase's stock auth emails contain only a link, so **paste
+`emails/supabase-magic-link.html` into both templates** at
+Supabase → Authentication → Emails:
+
+- **Magic Link** — sent to people who already have an account
+- **Confirm signup** — sent the first time an address is seen, and a first-time
+  user is exactly who gets stranded without a code
+
+The important line in each is `{{ .Token }}` — that renders the code. Until both
+templates carry it, the "Email me a code" button sends an email with no code in
+it and the code screen can't be completed.
+
+Also confirm the redirect allowlist at Supabase → Authentication → URL
+Configuration:
+- **Site URL**: `https://brasstally.com/app/`
+- **Redirect URLs**: `https://brasstally.com/app/**` (plus your preview domains)
+
+The app asks Supabase to return people to `/app/`, not to the bare origin.
+Pointing it at the origin was what made signing in take two clicks: the first
+click dropped you on the marketing page holding the token, and you had to
+navigate into the app yourself.
+
+The beta-approval invite is unaffected by all of this — it mints its link and
+code server-side with the service-role key, so it carries a working code no
+matter what the dashboard templates say.
+
 ## Email Flows
 
 ### 1. **Beta Approval Flow** ✅ (Fully Configured)
@@ -9,13 +43,16 @@ All transactional emails (welcome, beta approvals, password resets, etc.) are no
 - **Email**: `emails/beta-approval.html`
 - **Function**: `/api/send-beta-approvals`
 - **Service**: Resend API
+- **Contents**: a real Supabase magic link **and** the matching six-digit code,
+  both minted by `supabase.auth.admin.generateLink`. If the address has no auth
+  user yet, one is created (pre-confirmed) on the first pass.
 - **Status**: Ready to deploy
 
-### 2. **Sign-Up Confirmation** (Supabase Native)
-- **Trigger**: User signs up via `/app`
-- **Email**: Supabase Auth's built-in "Confirm email" template
+### 2. **Sign-in code** (Supabase Native)
+- **Trigger**: "Email me a code" on the sign-in screen (`signInWithOtp`)
+- **Email**: Supabase "Magic Link" / "Confirm signup" templates
 - **Service**: Supabase Auth (native)
-- **Note**: Sent automatically by Supabase when user creates account
+- **Requires**: `{{ .Token }}` in both templates — see the section above
 
 ### 3. **Password Reset** (Supabase Native)
 - **Trigger**: User clicks "Forgot password?" on sign-in screen
@@ -41,6 +78,7 @@ All transactional emails (welcome, beta approvals, password resets, etc.) are no
 |----------|------|----------|---------|
 | Beta Approval | `emails/beta-approval.html` | Beta signup approvals | Resend |
 | Welcome Invite | `emails/brasstally-welcome-invite.html` | New user welcome | Resend |
+| Sign-in code | `emails/supabase-magic-link.html` | Paste into Supabase "Magic Link" **and** "Confirm signup" | Supabase Auth |
 
 ### Customizing Templates
 

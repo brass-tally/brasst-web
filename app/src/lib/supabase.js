@@ -6,4 +6,16 @@ import { createClient } from "@supabase/supabase-js";
 const url = import.meta.env.VITE_SUPABASE_URL || "https://xwoccmgppjmgficvmogr.supabase.co";
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_KYf7h0SuGIIDM7Fj_L0fWw_xbinzUC_";
 
-export const supabase = createClient(url, key);
+export const supabase = createClient(url, key, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    // Read the token Supabase appends to the return URL, so arriving from a
+    // sign-in email lands you straight in the books.
+    detectSessionInUrl: true,
+    // Implicit, not PKCE: the code verifier lives in the storage of whichever
+    // browser asked for the link, and mail apps routinely open links somewhere
+    // else. PKCE would fail that hop; the six-digit code covers the rest.
+    flowType: "implicit",
+  },
+});

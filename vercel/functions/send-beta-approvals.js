@@ -8,32 +8,75 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEVEN_MINUTES_MS = 7 * 60 * 1000;
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+// Where the books live. APP_URL is the bare origin, and pointing an invite at
+// the origin drops people on the marketing page holding their token — the app
+// is at /app/, so say so.
+const appHref = () => `${String(process.env.APP_URL || '').replace(/\/+$/, '')}/app/`;
+
+// Mint a real Supabase sign-in for one beta email: a one-tap link for whoever
+// reads mail in the same browser, and the six-digit code that goes with it for
+// everyone else — an installed home-screen app, a desktop inbox, a phone that
+// opens links in a different browser than the one it signed up in. Beta signups
+// live in beta_signups, not auth.users, so create the auth user on first pass.
+async function mintSignIn(supabase, email) {
+  const options = { redirectTo: appHref() };
+  let { data, error } = await supabase.auth.admin.generateLink({ type: 'magiclink', email, options });
+
+  if (error && /not found|no user/i.test(error.message || '')) {
+    const { error: createError } = await supabase.auth.admin.createUser({
+      email,
+      email_confirm: true, // the invite itself is the proof of address
+    });
+    if (createError && !/already (been )?registered|exists/i.test(createError.message || '')) throw createError;
+    ({ data, error } = await supabase.auth.admin.generateLink({ type: 'magiclink', email, options }));
+  }
+  if (error) throw error;
+
+  return {
+    approvalUrl: data?.properties?.action_link || appHref(),
+    code: data?.properties?.email_otp || '',
+  };
+}
+
 // Load email template
-function getEmailTemplate(approvalUrl) {
+function getEmailTemplate(approvalUrl, code) {
   try {
     const templatePath = path.join(__dirname, '../../emails/beta-approval.html');
     const html = fs.readFileSync(templatePath, 'utf-8');
-    // Replace placeholder with actual URL
-    return html.replace(/{{approvalUrl}}/g, approvalUrl).replace(/{{APPROVAL_URL}}/g, approvalUrl);
+    return applyTemplate(html, approvalUrl, code);
   } catch (error) {
     console.error('Error loading email template:', error);
     // Fallback to inline template if file not found
-    return getDefaultTemplate(approvalUrl);
+    return getDefaultTemplate(approvalUrl, code);
   }
 }
 
-function getDefaultTemplate(approvalUrl) {
+// The code block is wrapped in {{#code}}…{{/code}} so a send without a code
+// (generateLink didn't return one) drops the section instead of printing an
+// empty box.
+function applyTemplate(html, approvalUrl, code) {
+  const out = html
+    .replace(/{{approvalUrl}}/g, approvalUrl)
+    .replace(/{{APPROVAL_URL}}/g, approvalUrl)
+    .replace(/{{code}}/g, code || '');
+  return code
+    ? out.replace(/{{#code}}|{{\/code}}/g, '')
+    : out.replace(/{{#code}}[\s\S]*?{{\/code}}/g, '');
+}
+
+function getDefaultTemplate(approvalUrl, code) {
   return `
     <html>
-      <body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #333;">
+      <body style="font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; line-height: 1.5; color: #333;">
         <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
           <h1>Welcome to BrassTally Beta!</h1>
           <p>We're excited to have you join our beta program.</p>
           <p>
             <a href="${approvalUrl}" style="display: inline-block; padding: 12px 24px; background-color: #000; color: #fff; text-decoration: none; border-radius: 6px;">
-              Accept Invitation
+              Open BrassTally
             </a>
           </p>
+          ${code ? `<p>Using the app from your home screen? Open it and enter this code instead: <strong style="font-size:20px; letter-spacing:4px;">${code}</strong></p>` : ''}
           <p>If you have any questions, please don't hesitate to reach out.</p>
           <p>Best regards,<br/>The BrassTally Team</p>
         </div>
@@ -90,8 +133,8 @@ export default async function handler(req, res) {
     const results = [];
     for (const signup of pendingSignups) {
       try {
-        const approvalUrl = `${process.env.APP_URL}/auth?mode=approve`;
-        const emailHtml = getEmailTemplate(approvalUrl);
+        const { approvalUrl, code } = await mintSignIn(supabase, signup.email);
+        const emailHtml = getEmailTemplate(approvalUrl, code);
 
         // Send invitation email via Resend
         const { data: emailData, error: emailError } = await resend.emails.send({
