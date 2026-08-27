@@ -1,7 +1,7 @@
 # BrassTally API Functions
 
 Vercel serverless functions for handling:
-- Beta approval email automation
+- Beta approval email automation (via Resend)
 - Health checks
 - Future features (email verification, webhooks, etc.)
 
@@ -11,17 +11,20 @@ Vercel serverless functions for handling:
 **Cron**: Runs every 1 minute
 
 Queries for beta signups pending approval (created 7+ minutes ago) and:
-1. Invites the user via Supabase Auth (`admin.inviteUserByEmail`) — Supabase sends
-   the email itself through the configured custom SMTP (Postmark)
+1. Sends an approval email via Resend API with a verification link
 2. Updates signup status to "approved"
 
 **Requires**:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
 - `APP_URL`
 
-The email itself is Supabase's "Invite user" template (Dashboard → Auth →
-Email Templates), not anything in this repo.
+**How it works**:
+- Queries the `beta_signups` table for pending signups older than 7 minutes
+- Sends an invitation email via Resend with a clickable approval link
+- Updates the signup status to "approved" in the database
 
 ### `/api/health`
 **Method**: GET
@@ -35,6 +38,8 @@ Health check to verify all required environment variables are configured.
   "checks": {
     "supabaseUrl": true,
     "supabaseServiceKey": true,
+    "resendApiKey": true,
+    "resendFromEmail": true,
     "appUrl": true
   },
   "message": "..."
@@ -67,10 +72,14 @@ api/
 
 ## Email Template
 
-The approval email is Supabase Auth's **"Invite user"** template
-(Dashboard → Auth → Email Templates), sent via the custom SMTP (Postmark)
-configured on the project. It's not stored in this repo — update the
-template directly in the Supabase dashboard using Supabase's own variables:
-- `{{ .ConfirmationURL }}` → Magic link to create/login
-- `{{ .Token }}` → Backup code
-- `{{ .SiteURL }}` → Main website URL
+The approval email is generated and sent via Resend API. The HTML template is defined
+in `send-beta-approvals.js` in the `resend.emails.send()` call. To customize:
+
+1. Edit the HTML template in `send-beta-approvals.js`
+2. Variables available:
+   - `approvalUrl` → Dynamic link from `APP_URL` + approval path
+   - `signup.email` → Recipient's email address
+
+Or use custom templates from `/emails/` directory:
+- `beta-approval.html` → Custom beta approval template (can be loaded if needed)
+- `brasstally-welcome-invite.html` → Welcome email template

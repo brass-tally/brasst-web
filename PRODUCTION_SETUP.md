@@ -2,18 +2,28 @@
 
 ## Environment Variables for Vercel
 
-The app requires two Supabase environment variables to be set in Vercel for authentication to work. These must be set in your Vercel project settings.
+The app requires several environment variables to be set in Vercel for authentication and email delivery. These must be set in your Vercel project settings.
 
 ### Step 1: Set Environment Variables in Vercel Dashboard
 
 Go to your project settings on Vercel and add these environment variables:
 
+**Frontend (required for build):**
 ```
 VITE_SUPABASE_URL=https://your-supabase-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
 
-**Important**: The `VITE_` prefix is required for Vite to inject them during the build process.
+**Backend (required for cron jobs):**
+```
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+RESEND_API_KEY=your-resend-api-key
+RESEND_FROM_EMAIL=noreply@yourdomain.com
+APP_URL=https://yourdomain.com
+CRON_SECRET=your-optional-cron-secret
+```
+
+**Important**: The `VITE_` prefix is required for Vite to inject frontend vars during the build process.
 
 ### Step 2: Verify Supabase Configuration
 
@@ -26,6 +36,14 @@ VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
    - email (text, unique)
    - status (text: pending/approved)
    - created_at (timestamp)
+   - approved_at (timestamp)
+
+### Step 2b: Set Up Resend
+
+1. Go to [Resend](https://resend.com) and create an account
+2. Get your API key from the API Keys section
+3. Verify your sender domain or email address in the Domains section
+4. Add the verified email to `RESEND_FROM_EMAIL` environment variable
 
 ### Step 3: Deploy
 
@@ -37,7 +55,7 @@ git commit -m "Update production configuration"
 git push
 ```
 
-Vercel will pick up the environment variables and rebuild the app. The sign-in screen should now appear at your app URL.
+Vercel will pick up the environment variables and rebuild the app. The sign-in screen should now appear at your app URL. The automated approval cron job will also be active and send emails via Resend.
 
 ### Troubleshooting
 

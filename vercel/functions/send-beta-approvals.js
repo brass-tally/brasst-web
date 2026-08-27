@@ -1,6 +1,46 @@
 import { createClient } from '@supabase/supabase-js';
+import { Resend } from 'resend';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEVEN_MINUTES_MS = 7 * 60 * 1000;
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// Load email template
+function getEmailTemplate(approvalUrl) {
+  try {
+    const templatePath = path.join(__dirname, '../../emails/beta-approval.html');
+    const html = fs.readFileSync(templatePath, 'utf-8');
+    // Replace placeholder with actual URL
+    return html.replace(/{{approvalUrl}}/g, approvalUrl).replace(/{{APPROVAL_URL}}/g, approvalUrl);
+  } catch (error) {
+    console.error('Error loading email template:', error);
+    // Fallback to inline template if file not found
+    return getDefaultTemplate(approvalUrl);
+  }
+}
+
+function getDefaultTemplate(approvalUrl) {
+  return `
+    <html>
+      <body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #333;">
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h1>Welcome to BrassTally Beta!</h1>
+          <p>We're excited to have you join our beta program.</p>
+          <p>
+            <a href="${approvalUrl}" style="display: inline-block; padding: 12px 24px; background-color: #000; color: #fff; text-decoration: none; border-radius: 6px;">
+              Accept Invitation
+            </a>
+          </p>
+          <p>If you have any questions, please don't hesitate to reach out.</p>
+          <p>Best regards,<br/>The BrassTally Team</p>
+        </div>
+      </body>
+    </html>
+  `;
+}
 
 export default async function handler(req, res) {
   // Verify this is a cron request or internal call
@@ -50,19 +90,23 @@ export default async function handler(req, res) {
     const results = [];
     for (const signup of pendingSignups) {
       try {
-        // Invite the user — Supabase sends the email itself via the
-        // configured SMTP (Postmark) using the "Invite user" template.
-        const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
-          signup.email,
-          { redirectTo: `${process.env.APP_URL}/auth?mode=approve` }
-        );
+        const approvalUrl = `${process.env.APP_URL}/auth?mode=approve`;
+        const emailHtml = getEmailTemplate(approvalUrl);
 
-        if (inviteError) {
-          console.error(`Error inviting ${signup.email}:`, inviteError);
+        // Send invitation email via Resend
+        const { data: emailData, error: emailError } = await resend.emails.send({
+          from: process.env.RESEND_FROM_EMAIL || 'noreply@brasstally.com',
+          to: signup.email,
+          subject: 'You\'re Invited to BrassTally Beta',
+          html: emailHtml
+        });
+
+        if (emailError) {
+          console.error(`Error sending email to ${signup.email}:`, emailError);
           results.push({
             email: signup.email,
             status: 'failed',
-            error: inviteError.message
+            error: emailError.message
           });
           continue;
         }

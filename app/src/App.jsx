@@ -59,8 +59,8 @@ const PALETTES = {
 // its values and re-rendering the tree re-themes the whole app.
 const P = { ...PALETTES.dark };
 const MONO = "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-const SERIF = "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif"; // display: soft sans, headings pick up weight via CSS
-const SANS = "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif";
+const SERIF = "'Inter', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif"; // modern, readable display
+const SANS = "'Inter', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif";
 
 
 /* ================= helpers ================= */
@@ -1376,7 +1376,7 @@ function Ledger({ onSignOut }) {
 
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }}>
-      <div className="max-w-5xl mx-auto px-4" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
+      <div className="px-4" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
         {/* ===== header ===== */}
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
           <div>

@@ -1,14 +1,12 @@
 # Beta Approval Flow Setup
 
-This document outlines the 7-minute auto-approval flow for early access signups.
+This document outlines the 7-minute auto-approval flow for early access signups using Resend for email delivery.
 
 ## How It Works
 
 1. **User signs up on landing page** → Email added to `beta_signups` table with status "pending"
 2. **Cron runs every minute** → Queries for signups created 7+ minutes ago
-3. **Invite sent** → `supabase.auth.admin.inviteUserByEmail()` — Supabase sends the
-   email itself via the custom SMTP (Postmark) configured on the project, using the
-   "Invite user" Auth Email Template
+3. **Invite sent** → Resend API sends the approval email with a verification link
 4. **Status updated** → Signup marked as "approved" with timestamp
 5. **User clicks link in email** → Automatically authenticated and logged into app
 
@@ -22,21 +20,28 @@ Set these in your Vercel project:
 SUPABASE_URL=https://xwoccmgppjmgficvmogr.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 APP_URL=https://brasstally.com
+RESEND_API_KEY=<your-resend-api-key>
+RESEND_FROM_EMAIL=noreply@brasstally.com
 CRON_SECRET=<optional-security-token>
 ```
 
-### Getting the Service Role Key
+### Getting the Keys
 
+**Supabase Service Role Key:**
 1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
 2. Select your project
 3. Settings → API
 4. Copy the **Service Role Key** (keep it secret!)
 
-### Email delivery
+**Resend API Key:**
+1. Go to [Resend Dashboard](https://resend.com)
+2. Navigate to API Keys
+3. Create a new API key and copy it
 
-No email-provider env vars are needed here — Supabase sends the invite email
-directly through the custom SMTP (Postmark) set up under Auth → SMTP Settings.
-Edit the branded HTML under Auth → Email Templates → "Invite user".
+**Resend Sender Email:**
+1. In Resend dashboard, go to Domains
+2. Verify your domain or email address
+3. Use the verified email/domain in `RESEND_FROM_EMAIL`
 
 ## Database Schema
 
@@ -71,31 +76,37 @@ create policy "Service role can update" on beta_signups
 
 To test the approval flow:
 
-1. **Start the app**: `npm run dev` in `/app`
-2. **Test signup**: Go to landing page, enter an email
-3. **Manually trigger cron**: 
+1. **Set up environment**: Copy `.env.example` to `.env.local` and add:
+   ```
+   SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
+   RESEND_API_KEY=<your-api-key>
+   RESEND_FROM_EMAIL=noreply@brasstally.com
+   APP_URL=http://localhost:3000
+   ```
+2. **Start the app**: `npm run dev` in `/app`
+3. **Test signup**: Go to landing page, enter an email
+4. **Manually trigger cron**: 
    ```bash
    curl -X POST http://localhost:3000/api/send-beta-approvals \
      -H "Authorization: Bearer your-secret-token"
    ```
-4. **Check emails**: Postmark Activity tab or email inbox
+5. **Check emails**: Resend dashboard Activity or email inbox
 
 ## Verifying It Works
 
 1. Signup on landing page with test email
-2. Wait ~7 minutes
-3. Check Postmark's Activity tab for the sent email
+2. Wait ~7 minutes (or manually trigger the cron)
+3. Check Resend's Activity tab for the sent email
 4. Click the link in the approval email
 5. Should be logged in and redirected to `/app`
 
 ## Troubleshooting
 
-- **No emails sent**: Check Vercel logs for the cron job, and Supabase Auth logs
-  for the `inviteUserByEmail` call
-- **Email sending fails**: Verify the custom SMTP settings under Supabase Auth →
-  SMTP Settings, and check Postmark's Activity tab for bounces/errors
+- **No emails sent**: Check Vercel logs for the cron job (`vercel logs`)
+- **Email sending fails**: Verify RESEND_API_KEY is correct and the sender email is verified in Resend dashboard
 - **Approval link doesn't work**: Check APP_URL and SUPABASE_SERVICE_ROLE_KEY
 - **Signups not found**: Check database has records and schema matches above
+- **401 Unauthorized**: Verify CRON_SECRET matches what Vercel sends
 
 ## Files Changed
 

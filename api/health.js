@@ -6,6 +6,8 @@ export default async function handler(req, res) {
   const checks = {
     supabaseUrl: !!process.env.SUPABASE_URL,
     supabaseServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    resendApiKey: !!process.env.RESEND_API_KEY,
+    resendFromEmail: !!process.env.RESEND_FROM_EMAIL,
     appUrl: !!process.env.APP_URL,
   };
 
