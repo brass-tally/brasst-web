@@ -4,7 +4,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        sans: ['Josefin Sans', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        serif: ['Cardo', 'serif'],
       },
       fontSize: {
         xs: ['12px', { lineHeight: '16px', fontWeight: '500' }],

@@ -59,8 +59,8 @@ const PALETTES = {
 // its values and re-rendering the tree re-themes the whole app.
 const P = { ...PALETTES.dark };
 const MONO = "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-const SERIF = "'Inter', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif"; // modern, readable display
-const SANS = "'Inter', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif";
+const SERIF = "'Cardo', serif"; // elegant headings
+const SANS = "'Josefin Sans', ui-sans-serif, system-ui, sans-serif";
 
 
 /* ================= helpers ================= */

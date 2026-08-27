@@ -21,13 +21,13 @@
   .save-pulse { animation: pulse 8s ease-out 2.2s infinite; }
 
   /* SVG text rendering */
-  .label-mono { font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; fill: #9c7a2a; }
-  .text-muted { fill: #6c7166; font-size: 11px; font-family: ui-monospace, monospace; }
-  .text-faint { fill: #9a9c8f; font-size: 11px; font-family: ui-monospace, monospace; }
-  .text-main { fill: #20241f; font-size: 14px; }
-  .text-number { fill: #20241f; font-family: ui-monospace, monospace; font-size: 13.5px; font-variant-numeric: tabular-nums; }
-  .text-amount-out { fill: #20241f; font-family: ui-monospace, monospace; font-size: 13.5px; }
-  .text-amount-in { fill: #237a50; font-family: ui-monospace, monospace; font-size: 13.5px; }
+  .label-mono { font-family: 'Josefin Sans', sans-serif; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; fill: #9c7a2a; }
+  .text-muted { fill: #6c7166; font-size: 11px; font-family: 'Josefin Sans', sans-serif; }
+  .text-faint { fill: #9a9c8f; font-size: 11px; font-family: 'Josefin Sans', sans-serif; }
+  .text-main { fill: #20241f; font-size: 14px; font-family: 'Cardo', serif; }
+  .text-number { fill: #20241f; font-family: 'Josefin Sans', sans-serif; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .text-amount-out { fill: #20241f; font-family: 'Josefin Sans', sans-serif; font-size: 13.5px; }
+  .text-amount-in { fill: #237a50; font-family: 'Josefin Sans', sans-serif; font-size: 13.5px; }
 </style>
 
 <!-- HERO: Receipt capture to ledger entry -->
@@ -38,7 +38,7 @@
     <text x="280" y="24" class="label-mono" text-anchor="end">August</text>
 
     <!-- Balance -->
-    <text x="20" y="52" style="font-family: ui-monospace; font-size: 26px; font-weight: bold; fill: #20241f;">$26,657.74</text>
+    <text x="20" y="52" style="font-family: 'Josefin Sans', sans-serif; font-size: 26px; font-weight: bold; fill: #20241f;">$26,657.74</text>
     <text x="20" y="72" class="text-muted" style="font-size: 11px; fill: #237a50;">matches the bank</text>
 
     <!-- Fresh row (animates in) -->
@@ -64,7 +64,7 @@
     <text x="280" y="180" class="text-amount-out" text-anchor="end">−$70.00</text>
 
     <!-- Footer note -->
-    <text x="20" y="220" style="font-family: ui-monospace; font-size: 10.5px; fill: #9a9c8f;">Every entry keeps its receipt and the day you wrote it.</text>
+    <text x="20" y="220" style="font-family: 'Josefin Sans', sans-serif; font-size: 10.5px; fill: #9a9c8f;">Every entry keeps its receipt and the day you wrote it.</text>
   </g>
 
   <!-- DIVIDER -->
@@ -78,7 +78,7 @@
     <!-- User message -->
     <g class="chat-msg-user">
       <rect x="410" y="40" width="160" height="48" rx="10" fill="#fbfaf6" stroke="#e5e1d6" stroke-width="1" />
-      <text x="425" y="58" style="font-size: 12px; fill: #6c7166; font-family: ui-monospace;">IMG_2481.jpeg</text>
+      <text x="425" y="58" style="font-size: 12px; fill: #6c7166; font-family: 'Josefin Sans', sans-serif;">IMG_2481.jpeg</text>
       <text x="425" y="76" style="font-size: 13px; fill: #20241f;">staples run</text>
     </g>
 
@@ -95,23 +95,23 @@
       <text x="358" y="154" class="label-mono">✦ Log money out</text>
 
       <!-- Fields -->
-      <text x="358" y="176" style="font-family: ui-monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">Amount</text>
+      <text x="358" y="176" style="font-family: 'Josefin Sans', sans-serif; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">Amount</text>
       <rect x="358" y="182" width="98" height="20" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
       <text x="365" y="197" class="text-number">118.43</text>
 
       <!-- Date field -->
-      <text x="468" y="176" style="font-family: ui-monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">Date</text>
+      <text x="468" y="176" style="font-family: 'Josefin Sans', sans-serif; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">Date</text>
       <rect x="468" y="182" width="90" height="20" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
       <text x="475" y="197" class="text-number">2026-08-21</text>
 
       <!-- Description -->
-      <text x="358" y="222" style="font-family: ui-monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">Description</text>
+      <text x="358" y="222" style="font-family: 'Josefin Sans', sans-serif; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">Description</text>
       <rect x="358" y="228" width="200" height="20" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
       <text x="365" y="243" class="text-main">Toner + paper</text>
 
       <!-- Save button -->
       <rect x="358" y="256" width="98" height="24" rx="4" fill="#c9a24b" />
-      <text x="407" y="273" style="font-family: ui-monospace; font-size: 12px; font-weight: bold; fill: #26200e; text-anchor: middle;">✓ Save entry</text>
+      <text x="407" y="273" style="font-family: 'Josefin Sans', sans-serif; font-size: 12px; font-weight: bold; fill: #26200e; text-anchor: middle;">✓ Save entry</text>
 
       <!-- Pulse ring around button -->
       <circle cx="407" cy="268" r="24" fill="none" stroke="#c9a24b" stroke-width="1.5" opacity="0" class="save-pulse" />
@@ -130,7 +130,7 @@
   <!-- Similar structure but stacked vertically for mobile -->
   <g id="mobile-ledger">
     <text x="20" y="24" class="label-mono">Ledger</text>
-    <text x="20" y="52" style="font-family: ui-monospace; font-size: 22px; font-weight: bold; fill: #20241f;">$26,657.74</text>
+    <text x="20" y="52" style="font-family: 'Josefin Sans', sans-serif; font-size: 22px; font-weight: bold; fill: #20241f;">$26,657.74</text>
     <text x="20" y="68" class="text-muted" style="font-size: 11px; fill: #237a50;">matches the bank</text>
     <!-- ... rows ... -->
   </g>
@@ -150,7 +150,7 @@
     <rect x="20" y="20" width="200" height="160" rx="8" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
     <text x="40" y="44" class="label-mono">Fernway Studio</text>
 
-    <text x="40" y="68" style="font-family: ui-monospace; font-size: 20px; font-weight: bold; fill: #20241f;">$26,657.74</text>
+    <text x="40" y="68" style="font-family: 'Josefin Sans', sans-serif; font-size: 20px; font-weight: bold; fill: #20241f;">$26,657.74</text>
 
     <line x1="40" y1="84" x2="200" y2="84" stroke="#e5e1d6" stroke-width="1" />
 
@@ -170,14 +170,14 @@
   <!-- Transfer line with dot animation -->
   <line x1="240" y1="100" x2="360" y2="100" stroke="#e5e1d6" stroke-width="2" />
   <circle cx="300" cy="100" r="5" fill="#c9a24b" style="animation: lane 3.2s cubic-bezier(0.45, 0.05, 0.4, 0.95) infinite;" />
-  <text x="300" y="130" style="font-family: ui-monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; fill: #9a9c8f; text-anchor: middle;">one motion</text>
+  <text x="300" y="130" style="font-family: 'Josefin Sans', sans-serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; fill: #9a9c8f; text-anchor: middle;">one motion</text>
 
   <!-- Right book: Personal -->
   <g id="book-right">
     <rect x="380" y="20" width="200" height="160" rx="8" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
     <text x="400" y="44" class="label-mono">Maya, personal</text>
 
-    <text x="400" y="68" style="font-family: ui-monospace; font-size: 20px; font-weight: bold; fill: #20241f;">$6,204.90</text>
+    <text x="400" y="68" style="font-family: 'Josefin Sans', sans-serif; font-size: 20px; font-weight: bold; fill: #20241f;">$6,204.90</text>
 
     <line x1="400" y1="84" x2="560" y2="84" stroke="#e5e1d6" stroke-width="1" />
 
@@ -209,20 +209,20 @@
   <text x="20" y="28" class="label-mono">Anchor the balance</text>
 
   <!-- Input fields -->
-  <text x="20" y="54" style="font-family: ui-monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">True balance</text>
+  <text x="20" y="54" style="font-family: 'Josefin Sans', sans-serif; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">True balance</text>
   <rect x="20" y="60" width="140" height="24" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
   <text x="28" y="80" class="text-number">22,041.17</text>
 
-  <text x="170" y="54" style="font-family: ui-monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">As of</text>
+  <text x="170" y="54" style="font-family: 'Josefin Sans', sans-serif; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; fill: #9a9c8f;">As of</text>
   <rect x="170" y="60" width="120" height="24" rx="4" fill="#ffffff" stroke="#e5e1d6" stroke-width="1" />
   <text x="178" y="80" class="text-number">2026-08-01</text>
 
   <!-- Button -->
   <rect x="20" y="98" width="270" height="28" rx="4" fill="#c9a24b" />
-  <text x="155" y="118" style="font-family: ui-monospace; font-size: 12px; font-weight: bold; fill: #26200e; text-anchor: middle;">✓ Anchor balance</text>
+  <text x="155" y="118" style="font-family: 'Josefin Sans', sans-serif; font-size: 12px; font-weight: bold; fill: #26200e; text-anchor: middle;">✓ Anchor balance</text>
 
   <!-- History (staggered) -->
-  <text x="20" y="150" style="font-family: ui-monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; fill: #9a9c8f;">History</text>
+  <text x="20" y="150" style="font-family: 'Josefin Sans', sans-serif; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; fill: #9a9c8f;">History</text>
 
   <g style="animation: slideUp 0.4s ease 0.1s both;">
     <line x1="20" y1="162" x2="300" y2="162" stroke="#e5e1d6" stroke-width="1" />
