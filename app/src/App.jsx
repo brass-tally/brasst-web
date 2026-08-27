@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, Copy, History
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -2084,6 +2084,8 @@ function MatchView({
   const [openDup, setOpenDup] = useState(null); // duplicate group expanded to its copies
   const [fixing, setFixing] = useState(false);
   const [fixedSummary, setFixedSummary] = useState(null); // what the approved plan actually did
+  const [skipped, setSkipped] = useState([]);   // keys pushed to the back, in skip order
+  const [showAllAsks, setShowAllAsks] = useState(false);   // the old wall, on request
   // Everything this session did, in order. It becomes the history record on the
   // way out, so a consolidation can be read back line by line months later.
   const [log, setLog] = useState([]);
@@ -2103,6 +2105,50 @@ function MatchView({
   const ignored = bankTxns.filter((b) => b.status === "ignored");
   const txById = useMemo(() => new Map(data.transactions.map((t) => [t.id, t])), [data.transactions]);
 
+  /* ---- the questions, as a queue rather than a wall ----
+     Answering one changes the books, which recomputes the plan, which drops the
+     answered item out of this list. So "what to ask next" is always the head of
+     what is still open — there is no cursor to keep in sync, and nothing can be
+     asked twice. Skipped items go to the back instead of disappearing, so
+     finishing the easy ones never loses the hard ones. */
+  const asks = useMemo(() => [
+    ...plan.ask.changed.map((b) => ({ key: `changed:${b.id}`, kind: "changed", item: b })),
+    ...plan.ask.maybeDuplicates.map((g) => ({ key: `dup:${g.id}`, kind: "dup", item: g })),
+    ...plan.ask.pairs.map((p) => ({ key: `pair:${p.bankId}`, kind: "pair", item: p })),
+    ...plan.ask.unrecorded.map((b) => ({ key: `new:${b.id}`, kind: "new", item: b })),
+  ], [plan]);
+
+  // Every question this session has ever put up, so progress counts against the
+  // pile someone actually walked in with and doesn't shrink as they answer.
+  const seen = useRef(new Set());
+  for (const a of asks) seen.current.add(a.key);
+  const totalAsked = seen.current.size;
+  const answered = Math.max(0, totalAsked - asks.length);
+
+  // Skipped keys are held in the order they were skipped, not as a set: once
+  // everything else is answered the only way to move off a card is to send it
+  // to the back, and a set has no back.
+  const byKey = useMemo(() => new Map(asks.map((a) => [a.key, a])), [asks]);
+  const pending = asks.filter((a) => !skipped.includes(a.key));
+  const deferred = skipped.map((k) => byKey.get(k)).filter(Boolean);
+  // Skipped items come back once everything else is done, rather than being a
+  // way to never deal with them.
+  const current = pending[0] || deferred[0] || null;
+  const onLastLap = !pending.length && deferred.length > 0;
+
+  // Sending the current card to the back covers both laps: on the first it
+  // leaves `pending`, on the last it moves behind the other skipped ones.
+  const skipCurrent = () => {
+    if (!current) return;
+    setSkipped((s) => [...s.filter((k) => k !== current.key), current.key]);
+  };
+
+  // Stale keys pile up as the books change underneath the queue; drop the ones
+  // that no longer name a live question so `deferred` can actually empty out.
+  useEffect(() => {
+    setSkipped((s) => (s.every((k) => byKey.has(k)) ? s : s.filter((k) => byKey.has(k))));
+  }, [byKey]);
+
   /* ---- every action goes through here, so nothing happens off the record ---- */
   const note = (entry) => setLog((l) => [...l, { at: new Date().toISOString(), ...entry }]);
 
@@ -2111,7 +2157,7 @@ function MatchView({
     const t = txById.get(txId);
     actions.match(bankId, txId, source);
     note({
-      kind: "matched", date: b?.date, amount: b?.amount,
+      kind: "matched", bankId, date: b?.date, amount: b?.amount,
       description: b?.description || "bank line",
       detail: `paired with ${t?.description || t?.category || "an entry"}${t?.date && t.date !== b?.date ? ` dated ${t.date}` : ""}`,
     });
@@ -2126,7 +2172,32 @@ function MatchView({
   const doIgnore = (bankId) => {
     const b = bankTxns.find((x) => x.id === bankId);
     actions.ignore(bankId);
-    note({ kind: "ignored", date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "set aside, it will never have an entry" });
+    note({ kind: "ignored", bankId, date: b?.date, amount: b?.amount, description: b?.description || "bank line", detail: "set aside, it will never have an entry" });
+  };
+
+  /* ---- taking the last answer back ----
+     Only pairing and setting aside are genuinely reversible. Removing a
+     duplicate deletes rows and adding an entry creates one, so neither is
+     offered here: the button disappears rather than promising an undo it
+     cannot honour. Undoing also drops the entry from the log, so the run
+     that gets filed is what was actually decided, not a decision and its
+     retraction. */
+  const undoable = (() => {
+    const last = log[log.length - 1];
+    if (!last || !last.bankId) return null;
+    if (last.kind === "matched") return { last, verb: "pairing" };
+    if (last.kind === "ignored") return { last, verb: "set-aside" };
+    return null;
+  })();
+
+  const undoLast = () => {
+    if (!undoable) return;
+    const { last } = undoable;
+    if (last.kind === "matched") actions.unmatch(last.bankId);
+    else actions.unignore(last.bankId);
+    setLog((l) => l.slice(0, -1));
+    // It came back as a question; don't let a stale skip bury it at the back.
+    setSkipped((s) => s.filter((k) => k !== `pair:${last.bankId}` && k !== `new:${last.bankId}`));
   };
 
   const doCreate = (b, opts) => {
@@ -2232,6 +2303,89 @@ function MatchView({
           ? `I went through ${plan.scanned.bank} bank ${plan.scanned.bank === 1 ? "line" : "lines"} and found ${plan.fix.count} ${plan.fix.count === 1 ? "thing" : "things"} I can sort out myself. Nothing else needs you.`
           : `Nothing for me to fix automatically. ${plan.ask.count} ${plan.ask.count === 1 ? "thing needs" : "things need"} a decision from you.`;
 
+  /* ---- one question, drawn the same whether it arrives alone or in a list ----
+     The stepper and the show-everything view render from this, so the wording
+     and the buttons can never drift apart between the two. */
+  const renderAsk = (a) => {
+    const { kind, item } = a;
+
+    if (kind === "changed") return (
+      <AskCard key={a.key} tone="debit" amount={item.amount} date={item.date}
+        title={`The bank changed this after you had already dealt with it: ${item.description}`}
+        detail={item.reviewReason}>
+        {item.matchedTxId && <Btn tone="ghost" onClick={() => doUnmatch(item.id)}>Undo the pairing</Btn>}
+        <Btn tone="ghost" onClick={() => actions.dismissFlag(item.id)}>It is fine, leave it</Btn>
+      </AskCard>
+    );
+
+    if (kind === "dup") return (
+      <AskCard key={a.key} tone="brass" amount={item.amount} date={item.date}
+        title={`Did you pay ${item.description || item.keep.category} once or ${item.extras.length + 1} times?`}
+        detail={`${item.extras.length + 1} entries, ${item.reason}. A copy counts twice in the profit and loss, the budget, and the difference against the bank.`}>
+        <Btn onClick={() => doRemoveDup(item)}><Trash2 size={13} /> Once, remove the {item.extras.length === 1 ? "other" : `other ${item.extras.length}`}</Btn>
+        <button onClick={() => setOpenDup(openDup === item.id ? null : item.id)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+          {openDup === item.id ? "hide" : "show me"} the copies
+        </button>
+        {openDup === item.id && (
+          <div className="w-full mt-1 space-y-1">
+            {[item.keep, ...item.extras].map((t, i) => (
+              <div key={t.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: i === 0 ? P.text : P.faint }}>
+                <span className="shrink-0" style={{ color: i === 0 ? P.credit : P.debit }}>{i === 0 ? "keep" : "drop"}</span>
+                <span className="flex-1 truncate">
+                  {t.date}{fmtEntryTime(t.createdAt) ? ` ${fmtEntryTime(t.createdAt)}` : ""} · {t.description || t.category}{t.subcategory ? ` / ${t.subcategory}` : ""}
+                </span>
+                {t.attachmentId && <Paperclip size={11} className="shrink-0" />}
+                <span className="tabular-nums shrink-0">{fmt(t.amount)}</span>
+              </div>
+            ))}
+            <div style={{ color: P.faint }} className="text-xs">Keeping the wrong one? Delete the other from Transactions instead.</div>
+          </div>
+        )}
+      </AskCard>
+    );
+
+    if (kind === "pair") return (
+      <AskCard key={a.key} amount={item.bank.amount} date={item.bank.date}
+        title={`Is "${item.bank.description}" the same thing as "${item.tx.description || item.tx.category}"?`}
+        detail={item.ambiguous
+          ? "Another entry fits this line just as well, so I will not guess. Check which one it is."
+          : `${item.gap === 0 ? "Same day" : `${item.gap} ${item.gap === 1 ? "day" : "days"} apart`}, and the descriptions ${item.text >= 0.5 ? "roughly agree" : "do not agree"}.`}>
+        <Btn onClick={() => doMatch(item.bankId, item.txId, "manual")}><Check size={13} /> Yes, same thing</Btn>
+        <Btn tone="ghost" onClick={() => setAdding(adding?.id === item.bank.id ? null : item.bank)}>No, it is new</Btn>
+        <Btn tone="ghost" onClick={() => doIgnore(item.bankId)}>Not mine, set it aside</Btn>
+        {adding?.id === item.bank.id && (
+          <div className="w-full">
+            <AddFromBank
+              bankTxn={item.bank} data={data} bankTxns={bankTxns}
+              onMatchInstead={(txId) => { doMatch(item.bank.id, txId, "manual"); setAdding(null); }}
+              onCancel={() => setAdding(null)}
+              onAdd={(opts) => { doCreate(item.bank, opts); setAdding(null); }}
+            />
+          </div>
+        )}
+      </AskCard>
+    );
+
+    return (
+      <AskCard key={a.key} amount={item.amount} date={item.date}
+        title={`${item.direction === "credit" ? "Money came in" : "Money went out"} and the books have nothing for it: ${item.description}`}
+        detail={item.pending ? "Still pending at the bank, so it may change." : "Add it to the books, or set it aside if it belongs to another ledger."}>
+        <Btn onClick={() => setAdding(adding?.id === item.id ? null : item)}><Plus size={13} /> Add it to the books</Btn>
+        <Btn tone="ghost" onClick={() => doIgnore(item.id)}>Set it aside</Btn>
+        {adding?.id === item.id && (
+          <div className="w-full">
+            <AddFromBank
+              bankTxn={item} data={data} bankTxns={bankTxns}
+              onMatchInstead={(txId) => { doMatch(item.id, txId, "manual"); setAdding(null); }}
+              onCancel={() => setAdding(null)}
+              onAdd={(opts) => { doCreate(item, opts); setAdding(null); }}
+            />
+          </div>
+        )}
+      </AskCard>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 overflow-y-auto" style={{ background: P.overlay }} onClick={closeView}>
       <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-3xl p-5 my-6" onClick={(e) => e.stopPropagation()}>
@@ -2299,100 +2453,85 @@ function MatchView({
           </div>
         )}
 
-        {/* ---- the questions ---- */}
-        {plan.ask.count > 0 && (
+        {/* ---- the questions, one at a time ----
+             The pile is the thing that makes people close this screen, so only
+             the question at the head of the queue is on screen. Everything
+             behind it is a count, not a wall. The full list is still one tap
+             away for anyone who would rather triage than answer. */}
+        {asks.length > 0 && (
           <div className="mb-4">
             <div className="flex items-baseline justify-between gap-2 mb-2">
               <Label>Over to you</Label>
-              <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">{plan.ask.count} left</span>
+              <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs tabular-nums">
+                {showAllAsks
+                  ? `${asks.length} left`
+                  : `question ${Math.min(answered + 1, totalAsked)} of ${totalAsked}`}
+              </span>
             </div>
-            <div className="space-y-2">
 
-              {/* the bank changed something already settled */}
-              {plan.ask.changed.map((b) => (
-                <AskCard key={b.id} tone="debit" amount={b.amount} date={b.date}
-                  title={`The bank changed this after you had already dealt with it: ${b.description}`}
-                  detail={b.reviewReason}>
-                  {b.matchedTxId && <Btn tone="ghost" onClick={() => doUnmatch(b.id)}>Undo the pairing</Btn>}
-                  <Btn tone="ghost" onClick={() => actions.dismissFlag(b.id)}>It is fine, leave it</Btn>
-                </AskCard>
-              ))}
+            {/* how far along, without a number to decode */}
+            {!showAllAsks && totalAsked > 1 && (
+              <div className="flex gap-1 mb-3" aria-hidden="true">
+                {Array.from({ length: Math.min(totalAsked, 24) }, (_, i) => (
+                  <div key={i} className="h-1 flex-1 rounded-full"
+                    style={{ background: i < answered ? P.brass : P.line }} />
+                ))}
+              </div>
+            )}
 
-              {/* recorded twice, but not identically */}
-              {plan.ask.maybeDuplicates.map((g) => (
-                <AskCard key={g.id} tone="brass" amount={g.amount} date={g.date}
-                  title={`Did you pay ${g.description || g.keep.category} once or ${g.extras.length + 1} times?`}
-                  detail={`${g.extras.length + 1} entries, ${g.reason}. A copy counts twice in the profit and loss, the budget, and the difference against the bank.`}>
-                  <Btn onClick={() => doRemoveDup(g)}><Trash2 size={13} /> Once, remove the {g.extras.length === 1 ? "other" : `other ${g.extras.length}`}</Btn>
-                  <button onClick={() => setOpenDup(openDup === g.id ? null : g.id)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
-                    {openDup === g.id ? "hide" : "show me"} the copies
+            {showAllAsks ? (
+              <div className="space-y-2">
+                {asks.slice(0, 50).map(renderAsk)}
+                {asks.length > 50 && (
+                  <div style={{ color: P.faint }} className="text-xs">
+                    and {asks.length - 50} more. Deal with these first and the rest will still be here.
+                  </div>
+                )}
+              </div>
+            ) : current ? (
+              <>
+                {onLastLap && (
+                  <p style={{ color: P.faint }} className="text-xs mb-2">
+                    That is everything else dealt with. These are the {deferred.length} you passed on.
+                  </p>
+                )}
+                {renderAsk(current)}
+                <div className="flex items-center gap-3 mt-2 flex-wrap">
+                  {undoable && (
+                    <button onClick={undoLast} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                      <ChevronLeft size={11} className="inline mb-0.5" /> undo the last {undoable.verb}
+                    </button>
+                  )}
+                  {asks.length > 1 && (
+                    <button onClick={skipCurrent} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                      {onLastLap ? "still not sure, next one" : "skip for now"}
+                    </button>
+                  )}
+                  <button onClick={() => setShowAllAsks(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 ml-auto">
+                    show all {asks.length} at once
                   </button>
-                  {openDup === g.id && (
-                    <div className="w-full mt-1 space-y-1">
-                      {[g.keep, ...g.extras].map((t, i) => (
-                        <div key={t.id} className="flex items-center gap-2 text-xs" style={{ fontFamily: MONO, color: i === 0 ? P.text : P.faint }}>
-                          <span className="shrink-0" style={{ color: i === 0 ? P.credit : P.debit }}>{i === 0 ? "keep" : "drop"}</span>
-                          <span className="flex-1 truncate">
-                            {t.date}{fmtEntryTime(t.createdAt) ? ` ${fmtEntryTime(t.createdAt)}` : ""} · {t.description || t.category}{t.subcategory ? ` / ${t.subcategory}` : ""}
-                          </span>
-                          {t.attachmentId && <Paperclip size={11} className="shrink-0" />}
-                          <span className="tabular-nums shrink-0">{fmt(t.amount)}</span>
-                        </div>
-                      ))}
-                      <div style={{ color: P.faint }} className="text-xs">Keeping the wrong one? Delete the other from Transactions instead.</div>
-                    </div>
-                  )}
-                </AskCard>
-              ))}
-
-              {/* two entries fit the same bank line, or the text does not agree */}
-              {plan.ask.pairs.slice(0, 12).map((p) => (
-                <AskCard key={p.bankId} amount={p.bank.amount} date={p.bank.date}
-                  title={`Is "${p.bank.description}" the same thing as "${p.tx.description || p.tx.category}"?`}
-                  detail={p.ambiguous
-                    ? "Another entry fits this line just as well, so I will not guess. Check which one it is."
-                    : `${p.gap === 0 ? "Same day" : `${p.gap} ${p.gap === 1 ? "day" : "days"} apart`}, and the descriptions ${p.text >= 0.5 ? "roughly agree" : "do not agree"}.`}>
-                  <Btn onClick={() => doMatch(p.bankId, p.txId, "manual")}><Check size={13} /> Yes, same thing</Btn>
-                  <Btn tone="ghost" onClick={() => setAdding(adding?.id === p.bank.id ? null : p.bank)}>No, it is new</Btn>
-                  <Btn tone="ghost" onClick={() => doIgnore(p.bankId)}>Not mine, set it aside</Btn>
-                  {adding?.id === p.bank.id && (
-                    <div className="w-full">
-                      <AddFromBank
-                        bankTxn={p.bank} data={data} bankTxns={bankTxns}
-                        onMatchInstead={(txId) => { doMatch(p.bank.id, txId, "manual"); setAdding(null); }}
-                        onCancel={() => setAdding(null)}
-                        onAdd={(opts) => { doCreate(p.bank, opts); setAdding(null); }}
-                      />
-                    </div>
-                  )}
-                </AskCard>
-              ))}
-
-              {/* the bank saw money move and the books never heard about it */}
-              {plan.ask.unrecorded.slice(0, 20).map((b) => (
-                <AskCard key={b.id} amount={b.amount} date={b.date}
-                  title={`${b.direction === "credit" ? "Money came in" : "Money went out"} and the books have nothing for it: ${b.description}`}
-                  detail={b.pending ? "Still pending at the bank, so it may change." : "Add it to the books, or set it aside if it belongs to another ledger."}>
-                  <Btn onClick={() => setAdding(adding?.id === b.id ? null : b)}><Plus size={13} /> Add it to the books</Btn>
-                  <Btn tone="ghost" onClick={() => doIgnore(b.id)}>Set it aside</Btn>
-                  {adding?.id === b.id && (
-                    <div className="w-full">
-                      <AddFromBank
-                        bankTxn={b} data={data} bankTxns={bankTxns}
-                        onMatchInstead={(txId) => { doMatch(b.id, txId, "manual"); setAdding(null); }}
-                        onCancel={() => setAdding(null)}
-                        onAdd={(opts) => { doCreate(b, opts); setAdding(null); }}
-                      />
-                    </div>
-                  )}
-                </AskCard>
-              ))}
-
-              {plan.ask.unrecorded.length > 20 && (
-                <div style={{ color: P.faint }} className="text-xs">
-                  and {plan.ask.unrecorded.length - 20} more bank lines. Deal with these first and the rest will still be here.
                 </div>
-              )}
+              </>
+            ) : null}
+
+            {showAllAsks && (
+              <button onClick={() => setShowAllAsks(false)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 mt-3">
+                back to one at a time
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ---- the queue just emptied ----
+             Only worth saying if there was a queue to empty: someone who opened
+             a clean ledger already read that in the headline. */}
+        {asks.length === 0 && answered > 0 && (
+          <div style={{ background: P.bg, border: `1px solid ${P.credit}` }} className="rounded-lg p-3 mb-4">
+            <div style={{ color: P.credit }} className="text-sm">
+              <Check size={13} className="inline mb-0.5" /> That is all of them. You answered {answered} {answered === 1 ? "question" : "questions"}.
+            </div>
+            <div style={{ color: P.faint }} className="text-xs mt-1">
+              Nothing else is waiting on you. Save below and the app stops asking until the bank or the books move.
             </div>
           </div>
         )}

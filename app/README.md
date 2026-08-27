@@ -8,6 +8,31 @@
 >    redeploying the `plaid` function without it will make **Sync now** fail.
 >    Then run `supabase/migration-consolidations.sql` ΓÇö without it the app can't remember that
 >    you've already consolidated a ledger, and will keep asking on every switch.
+>
+>    **Order matters.** Do not run the migrations alphabetically: `migration-multi-ledger.sql`
+>    creates the `ledgers` table that five later files point at, and it sorts after four of them.
+>    Run them in this order, top to bottom (every file is idempotent, so re-running is safe):
+>
+>    ```
+>    schema.sql                          <- fresh installs only
+>    migration-balance-anchor.sql        <- older databases only
+>    migration-subcategories.sql
+>    migration-credits-calendar.sql
+>    migration-credits-used.sql
+>    migration-multi-ledger.sql          <- REQUIRED, and required before everything below
+>    migration-balance-history.sql
+>    migration-settle-link.sql
+>    migration-transfers.sql
+>    migration-bank-connections.sql
+>    migration-bank-balances.sql
+>    migration-bank-connection-health.sql
+>    migration-bank-transactions.sql
+>    migration-consolidations.sql
+>    migration-filings.sql
+>    migration-beta-signups.sql
+>    migration-beta-feedback.sql
+>    migration-autorefresh-cron.sql      <- needs pg_cron; skip if you don't want scheduled syncs
+>    ```
 > 2. **AI function**: dashboard ΓåÆ Edge Functions ΓåÆ **Deploy a new function ΓåÆ Via Editor** ΓåÆ name it exactly `extract`,
 >    paste the contents of `supabase/functions/extract/index.ts`, Deploy.
 > 3. **API key secret**: Edge Functions ΓåÆ **Secrets** ΓåÆ add `ANTHROPIC_API_KEY` = your key. (Never put this in the code or repo.)

@@ -20,6 +20,7 @@ create table public.categories (
   name text not null,
   planned numeric not null default 0,
   account text not null default 'personal',
+  subcategories text[] not null default '{}',
   sort integer not null default 0,
   unique (user_id, type, name)
 );
@@ -34,6 +35,9 @@ create table public.transactions (
   description text not null default '',
   account text not null default 'business',
   recurrence text not null default 'once' check (recurrence in ('once', 'recurring')),
+  subcategory text,
+  pay_method text not null default 'cash',
+  credit_id uuid,
   attachment_path text,
   attachment_name text,
   created_at timestamptz not null default now()
@@ -51,13 +55,40 @@ create table public.obligations (
   due_date date,
   status text not null default 'open' check (status in ('open', 'paid')),
   settled_on date,
+  settled_tx_id uuid,
   account text not null default 'business',
   recurrence text not null default 'once' check (recurrence in ('once', 'recurring')),
+  category text,
+  subcategory text,
+  frequency text,
+  pay_method text not null default 'cash',
+  credit_id uuid,
   attachment_path text,
   attachment_name text,
   created_at timestamptz not null default now()
 );
 create index obligations_user_kind_idx on public.obligations (user_id, kind, status);
+
+-- non-cash credit pools (AWS credits, compute credits, SR&ED, etc.)
+create table public.credits (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  name text not null,
+  initial numeric not null default 0,
+  used_adjustment numeric not null default 0, -- credits burned before/outside the app
+  created_at timestamptz not null default now()
+);
+
+-- every time the balance is anchored (manual fix or statement import), log it
+create table public.balance_anchors (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  amount numeric not null,
+  anchor_date date not null,
+  source text not null default 'manual' check (source in ('manual', 'statement')),
+  created_at timestamptz not null default now()
+);
+create index balance_anchors_user_idx on public.balance_anchors (user_id, created_at desc);
 
 -- ---------- row level security: each user sees only their own rows ----------
 
@@ -73,6 +104,12 @@ create policy "own categories" on public.categories
 create policy "own transactions" on public.transactions
   for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own obligations" on public.obligations
+  for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+alter table public.credits enable row level security;
+create policy "own credits" on public.credits
+  for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+alter table public.balance_anchors enable row level security;
+create policy "own balance anchors" on public.balance_anchors
   for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ---------- private storage bucket for receipts & invoice PDFs ----------
