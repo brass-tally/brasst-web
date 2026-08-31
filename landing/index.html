@@ -244,7 +244,7 @@
     <button class="btn" id="themetoggle" title="Switch theme" aria-label="Switch between midnight and daylight themes">
       <svg id="ticon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg>
     </button>
-    <a class="btn" href="https://ledger-flax-psi.vercel.app" id="openapp1">Open the app</a>
+    <a class="btn" href="/app" id="openapp1">Open the app</a>
     <a class="btn brass" href="#start">Get started</a>
   </div>
 </nav>
@@ -423,12 +423,12 @@
   <div class="wrap footin">
     <span class="mono">Brasstally · the calm ledger</span>
     <span>Made in Toronto · your data lives in your own account</span>
-    <a class="mono" href="https://ledger-flax-psi.vercel.app" id="openapp2">open the app →</a>
+    <a class="mono" href="/app" id="openapp2">open the app →</a>
   </div>
 </footer>
 
 <script type="module">
-  const APP_URL = "https://ledger-flax-psi.vercel.app";
+  const APP_URL = `${window.location.origin}/app`;
   const SUPABASE_URL = "https://xwoccmgppjmgficvmogr.supabase.co";
   const SUPABASE_KEY = "sb_publishable_KYf7h0SuGIIDM7Fj_L0fWw_xbinzUC_";
   document.getElementById("openapp1").href = APP_URL;
