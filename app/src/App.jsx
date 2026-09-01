@@ -434,7 +434,12 @@ class Boundary extends React.Component {
 // Where a sign-in email has to land. The books live under /app/, so the redirect
 // must name that path: pointing it at the bare origin drops people on the
 // marketing page holding the token, which is why signing in took two clicks.
-const appUrl = () => `${window.location.origin}/app/`;
+const appUrl = () => {
+  const prodUrl = "https://brasstally.com";
+  const isDev = window.location.origin !== prodUrl && !window.location.hostname.includes("brasstally.com");
+  const baseUrl = isDev ? prodUrl : window.location.origin;
+  return `${baseUrl}/app/`;
+};
 
 // An installed PWA gets its own storage jar on iOS, so a link opened from Mail
 // signs you in inside Safari while the home-screen app still looks signed out.
@@ -614,7 +619,7 @@ function AuthScreen({ linkError = "" }) {
     return (
       <AuthCard>
         <p style={{ color: P.text }} className="text-sm mt-3">
-          Enter the 6-digit code we sent to <span style={{ fontFamily: MONO }}>{email.trim()}</span>.
+          Enter the code we sent to <span style={{ fontFamily: MONO }}>{email.trim()}</span>.
         </p>
         <p style={{ color: P.muted }} className="text-xs mt-1">
           {installed
@@ -624,13 +629,13 @@ function AuthScreen({ linkError = "" }) {
 
         <input
           value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
           onKeyDown={(e) => e.key === "Enter" && verifyCode()}
           inputMode="numeric"
           autoComplete="one-time-code"
           autoFocus
-          maxLength={6}
-          aria-label="Six-digit sign-in code"
+          maxLength={10}
+          aria-label="Sign-in code"
           style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, fontFamily: MONO, letterSpacing: "0.4em" }}
           className="rounded-lg px-3 py-3 w-full outline-none text-center text-xl mt-4"
         />
@@ -7301,7 +7306,7 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
   };
   const sendReset = async () => {
     setMsg("");
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: appUrl() });
     setMsg(error ? error.message : `Password link sent to ${email}.`);
   };
   const replayTours = () => {
