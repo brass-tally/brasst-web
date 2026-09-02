@@ -55,16 +55,22 @@
         .capture-pop { transition: none; }
       }
 
-      /* dock: comfortable, safe-area aware, responsive hit targets */
+      /* dock: comfortable, safe-area aware, responsive hit targets.
+         Eight sections plus Tally have to fit on one row without wrapping or
+         scrolling (a scroll container would clip the tooltips above it), so the
+         sections give up width as the screen narrows and Tally never does. */
       .dock { margin-bottom: env(safe-area-inset-bottom, 0px); }
       .dock-btn { width: 42px; height: 42px; }
       .dock-capture { width: 44px; height: 44px; }
       @media (max-width: 480px) {
-        .dock-btn { width: 40px; height: 40px; }
+        .dock-btn { width: 38px; height: 38px; }
         .dock { gap: 0 !important; padding-left: 6px; padding-right: 6px; }
       }
+      @media (max-width: 400px) {
+        .dock-btn { width: 34px; height: 34px; }
+      }
       @media (max-width: 360px) {
-        .dock-btn { width: 36px; height: 36px; }
+        .dock-btn { width: 32px; height: 32px; }
       }
       /* Safari zooms the whole page when you focus a field under 16px. The
          Tailwind size classes on those fields are more specific than a bare

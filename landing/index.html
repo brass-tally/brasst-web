@@ -47,7 +47,7 @@
   html[data-theme="light"] {
     --bg: #F5F3EC; --surface: #FAF8F1; --surface2: #EDEAE0; --line: #E0DCCE; --linehover: #CFC9B6;
     --text: #2A2F27; --muted: #59604F; --faint: #83887A;
-    --credit: #2E7D54; --debit: #B0523F; --brass: #8A6D1F; --onbrass: #F7F4EA;
+    --credit: #2E7D54; --debit: #B0523F; --brass: #DFA726; --onbrass: #10120C;
     --glass: rgba(245,243,236,.85); --shadow-deck: 0 26px 64px rgba(60,58,44,.22);
     --shadow-card: 0 14px 32px rgba(60,58,44,.14);
     color-scheme: light;
@@ -75,7 +75,7 @@
   nav.top { position: sticky; top: 0; z-index: 50; background: var(--glass);
     backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3);
     border-bottom: 1px solid var(--line); }
-  .navin { display: flex; align-items: center; gap: 26px; padding: 14px 0; }
+  .navin { display: flex; align-items: center; gap: 26px; padding-top: 14px; padding-bottom: 14px; }
   .wordmark { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 18px; }
   .glyph { width: 26px; height: 26px; border-radius: 7px; background: var(--surface2); border: 1px solid var(--line);
     display: inline-flex; align-items: center; justify-content: center; }
@@ -89,7 +89,14 @@
   .btn:active { transform: scale(.97); }
   .btn.brass { background: var(--brass); color: var(--onbrass); border-color: var(--brass); }
   .btn.brass:hover { color: var(--onbrass); filter: brightness(1.06); }
-  @media (max-width: 760px) { .navlinks { display: none; } }
+  @media (max-width: 760px) {
+    .navlinks { display: none; }
+    .navin { gap: 10px; padding-top: 12px; padding-bottom: 12px; }
+    .wordmark { font-size: 15px; gap: 6px; }
+    .wordmark .glyph { width: 22px; height: 22px; }
+    .btn { padding: 7px 12px; font-size: 12.5px; }
+  }
+  @media (max-width: 400px) { #openapp1 { display: none; } }
 
   .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; padding: 84px 0 72px; }
   @media (max-width: 900px) { .hero { grid-template-columns: 1fr; padding: 56px 0 48px; gap: 44px; } }

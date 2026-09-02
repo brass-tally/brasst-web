@@ -3,7 +3,8 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History,
+  MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -11,7 +12,7 @@ import * as bank from "./lib/bank";
 import { jsPDF } from "jspdf";
 import { askClaude, friendlyError } from "./lib/extract";
 import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
-import { addInterval, occurrencesBetween } from "./lib/analysis";
+import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
   proposeMatches, explainDelta, clearedIndex, consolidationPlan,
   findDuplicateEntries, findDuplicateBankLines, likelyAlreadyInBooks, signatureOf,
@@ -51,7 +52,7 @@ const PALETTES = {
     faint: "#83887A",
     credit: "#2E7D54",        // calmer green
     debit: "#B0523F",         // terracotta instead of alarm red
-    brass: "#B8860B",
+    brass: "#DFA726",
     overlay: "rgba(52,56,46,0.38)",
   },
 };
@@ -815,7 +816,8 @@ function Ledger({ onSignOut }) {
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
   const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
   const [chatNudge, setChatNudge] = useState(null); // { at, received, total } money landed, say so
-  const [chatUnread, setChatUnread] = useState(false); // Brasstally spoke proactively and nobody has looked yet
+  const [chatBrief, setChatBrief] = useState(null); // { at, insight } Tally opening the conversation unprompted
+  const [chatUnread, setChatUnread] = useState(false); // Tally spoke proactively and nobody has looked yet
   // Read by callbacks that fire after an await, when the closure's copy of
   // state is already a render behind.
   const dataRef = useRef(null);
@@ -1064,6 +1066,41 @@ function Ledger({ onSignOut }) {
   );
   dataRef.current = data;
   balanceRef.current = balance;
+
+  /* ---- Tally opening the conversation ----
+     The findings in lib/insights.js are worked out on every render whether or
+     not anyone asks. If one of them needs a decision, saying so unprompted is
+     the entire difference between an assistant and a search box. One per
+     ledger per day, and only for something that actually needs the user: an
+     assistant that greets you every reload is noise, not help. */
+  const briefedFor = useRef(null);
+  const briefTimer = useRef(null);
+  const chatOpenRef = useRef(false);
+  chatOpenRef.current = chatOpen;
+  useEffect(() => () => clearTimeout(briefTimer.current), []);
+  useEffect(() => {
+    if (!data || briefedFor.current === data.ledger.id) return;
+    // insights arrive sorted by severity, then by money at stake, so the first
+    // one is the thing most worth saying without being asked.
+    const top = insights[0];
+    if (!top) return;
+    briefedFor.current = data.ledger.id;
+    const key = `tally:brief:${data.ledger.id}`;
+    const stamp = `${todayStr()}:${top.id}`;
+    try {
+      if (window.localStorage.getItem(key) === stamp) return; // already said this today
+      window.localStorage.setItem(key, stamp);
+    } catch { /* private mode: speak anyway */ }
+    // Let the ledger finish painting first, so this reads as Tally noticing
+    // something rather than as part of the page loading. The timer is not tied
+    // to this effect's lifetime: insights recompute the moment the bank feed
+    // lands, and a cleanup here would swallow the message before it arrives.
+    briefTimer.current = setTimeout(() => {
+      setChatBrief({ at: Date.now(), insight: top });
+      if (!chatOpenRef.current) setChatUnread(true);
+    }, 1400);
+  }, [data?.ledger.id, insights]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A question queued for the chat panel by something else in the app.
   const askAgent = (question) => { setChatSeed({ question, at: Date.now() }); setChatOpen(true); };
   // A section handing the chat its own brief, so help arrives already knowing
@@ -1539,6 +1576,7 @@ function Ledger({ onSignOut }) {
     ["credits", "Credits", Coins],
     ["calendar", "Calendar", CalendarDays],
     ["integrations", "Connectors", Plug],
+    ["reports", "Reports", BarChart3],
   ];
 
   return (
@@ -1706,10 +1744,11 @@ function Ledger({ onSignOut }) {
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
         }} />}
+        {tab === "reports" && <ReportsTab data={data} month={month} balance={balance} onAsk={askAgent} />}
         </div>
       </div>
 
-      {/* ===== floating Brasstally chat (stays mounted so the conversation survives closing) ===== */}
+      {/* ===== floating Tally chat (stays mounted so the conversation survives closing) ===== */}
       {/* capture panel floats above the dock */}
       <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(24rem, calc(100vw - 24px))", pointerEvents: chatOpen ? "auto" : "none" }}>
         <div className={"capture-pop " + (chatOpen ? "open" : "")}>
@@ -1717,10 +1756,23 @@ function Ledger({ onSignOut }) {
             style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 16px 48px rgba(0,0,0,0.45)" }}
             className="rounded-lg overflow-hidden"
           >
-            <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: `1px solid ${P.line}` }}>
-              <MessageSquare size={14} style={{ color: P.brass }} />
-              <div style={{ fontFamily: MONO }} className="text-xs uppercase tracking-widest flex-1">Brasstally</div>
-              <button onClick={() => setChatOpen(false)} style={{ color: P.muted }} className="p-1"><X size={15} /></button>
+            {/* Tally has a name and a face, because you talk to someone, not to
+                a feature. The brand stays in the header of the app. */}
+            <div className="flex items-center gap-2.5 px-3 py-2.5" style={{ borderBottom: `1px solid ${P.line}` }}>
+              <span
+                aria-hidden
+                style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brass, fontFamily: SERIF, width: 28, height: 28 }}
+                className="rounded-full text-sm flex items-center justify-center shrink-0"
+              >
+                T
+              </span>
+              <div className="flex-1 min-w-0 leading-tight">
+                <div style={{ color: P.text }} className="text-sm">Tally</div>
+                <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">
+                  {data.ledger.name} · your bookkeeper
+                </div>
+              </div>
+              <button onClick={() => setChatOpen(false)} aria-label="Close" style={{ color: P.muted }} className="p-1"><X size={15} /></button>
             </div>
             <Capture
               key={data.ledger.id}
@@ -1741,6 +1793,8 @@ function Ledger({ onSignOut }) {
               onGuideUsed={() => setChatGuide(null)}
               nudge={chatNudge}
               onNudgeUsed={() => setChatNudge(null)}
+              brief={chatBrief}
+              onBriefUsed={() => setChatBrief(null)}
               apply={{ addTx, addAR, settleAR, setPlanned, setAnchor }}
               onGo={(view) => {
                 setChatOpen(false);
@@ -1755,29 +1809,30 @@ function Ledger({ onSignOut }) {
         </div>
       </div>
 
-      {/* ===== floating dock: all sections, capture lives on the right ===== */}
+      {/* ===== floating dock: all sections, Tally lives on the right ===== */}
       <nav className="fixed z-40 left-1/2 bottom-4" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 20px)" }}>
         <div
           className="dock flex items-center gap-0.5 px-2 py-1.5 rounded-full"
           style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: "0 10px 34px rgba(0,0,0,0.30)" }}
         >
           {tabs.map(([k, label, Icon]) => (
-            <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={19} /></DockBtn>
+            <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={18} /></DockBtn>
           ))}
 
           {/* divider */}
           <span aria-hidden style={{ width: 1, height: 24, background: P.line, margin: "0 4px", flexShrink: 0 }} />
 
-          {/* capture button, frosted brass, on the right */}
+          {/* Tally, frosted brass, on the right. A speech bubble says "someone is
+              in here"; a plus said "this adds a row". */}
           <button
             onClick={() => { setChatOpen(!chatOpen); if (!chatOpen) setChatUnread(false); }}
-            title={chatOpen ? "Close Brasstally" : chatUnread ? "Brasstally has something to tell you" : "Message Brasstally, capture a receipt or ask about the ledger"}
-            aria-label="Brasstally"
+            title={chatOpen ? "Close Tally" : chatUnread ? "Tally has something to tell you" : "Talk to Tally, capture a receipt or ask about the books"}
+            aria-label={chatUnread ? "Tally has something to tell you" : "Talk to Tally"}
             className="dock-capture rounded-full flex items-center justify-center shrink-0"
-            style={{ position: "relative", background: theme === "dark" ? "rgba(242,185,74,0.22)" : "rgba(184,134,11,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(242,185,74,0.5)" : "rgba(184,134,11,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
+            style={{ position: "relative", background: theme === "dark" ? "rgba(242,185,74,0.22)" : "rgba(223,167,38,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(242,185,74,0.5)" : "rgba(223,167,38,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
           >
-            <span className="dock-capture-icon" style={{ display: "inline-flex", transform: chatOpen ? "rotate(45deg)" : "none", transition: "transform .28s cubic-bezier(.2,.8,.2,1)" }}>
-              <Plus size={22} />
+            <span className="dock-capture-icon" style={{ display: "inline-flex", transform: chatOpen ? "scale(.88)" : "none", transition: "transform .28s cubic-bezier(.2,.8,.2,1)" }}>
+              {chatOpen ? <X size={20} /> : <MessageCircle size={21} />}
             </span>
             {chatUnread && !chatOpen && (
               <span
@@ -3208,7 +3263,7 @@ function InsightsStrip({ insights = [], onAsk }) {
                 <p style={{ color: P.muted }} className="text-xs mt-0.5">{i.detail}</p>
                 <div className="flex gap-1.5 mt-2">
                   <Btn tone="ghost" onClick={() => onAsk?.(i.ask)}>
-                    <MessageSquare size={12} /> Look into it
+                    <MessageSquare size={12} /> Ask Tally
                   </Btn>
                   <button
                     type="button"
@@ -3424,10 +3479,11 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
   );
 }
 
-/* ================= Brasstally chat (capture + the finance agent) =================
-   Two modes share one transcript. Capture reads a receipt into a draft entry.
-   Ask runs the agent in lib/agent.js, which works the ledger with tools and can
-   propose changes — never make them. */
+/* ================= Tally, the assistant =================
+   One transcript, no modes. What you send decides what happens: a file or a
+   line with money in it is read into a draft entry, anything else goes to the
+   agent in lib/agent.js, which works the ledger with tools and can propose
+   changes — never make them. Tally also speaks first, see `brief` and `nudge`. */
 
 // What each tool is doing, in words, for the activity line under a question.
 const TOOL_LABEL = {
@@ -3459,19 +3515,20 @@ const DEFAULT_ASKS = [
 
 function Capture({
   data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, consolidation, bankConns,
-  insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, apply, onGo,
+  insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, brief, onBriefUsed, apply, onGo,
 }) {
   // A gap that's already been consolidated isn't news — opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
   const drift = balance?.source === "bank" && balance.delta != null
     && Math.abs(balance.delta) >= 0.01 && !consolidation?.settled;
   const opener = drift
-    ? `Bank is ${fmt(balance.bank)}, books are ${fmt(balance.book)} (Δ ${fmt(balance.delta)}). Ask me to walk through it and I'll go through the entries. You can also drop a receipt or type an entry anytime.`
-    : "Drop a receipt or invoice, type something like “paid Vercel $70 today”, or ask me about the books. I can dig through your transactions, budgets, AR/AP, and cash to answer.";
-  const [mode, setMode] = useState(drift ? "help" : "capture"); // capture | help
+    ? `I'm Tally, I keep this ledger. Right now the bank says ${fmt(balance.bank)} and the books say ${fmt(balance.book)}, a gap of ${fmt(balance.delta)}. Ask me to walk it and I'll go entry by entry. You can also drop a receipt or type an entry any time.`
+    : "I'm Tally, I keep your books. Drop a receipt or an invoice, type something like “paid Vercel $70 today” and I'll file it, or just ask me about the money. I can dig through transactions, budgets, AR/AP, and cash to answer.";
   const [msgs, setMsgs] = useState([{ role: "assistant", text: opener }]);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Empty when idle, otherwise the line shown under the transcript. One piece
+  // of state instead of a boolean plus a mode to phrase it with.
+  const [busy, setBusy] = useState("");
   // Which section's brief the agent is carrying, if any. Cleared when the user
   // moves on to something the guide has nothing to say about.
   const [guideId, setGuideId] = useState(null);
@@ -3483,14 +3540,20 @@ function Capture({
   const convo = useRef([]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
 
-  // Surface a fresh drift notice once when balances first disagree after mount
+  const push = (m) => setMsgs((prev) => [...prev, m]);
+
+  // Balances that start agreeing and then disagree deserve a word, once. The
+  // opener already covers the case where they disagreed on arrival.
   useEffect(() => {
     if (!drift || greetedDrift.current) return;
     greetedDrift.current = true;
-    setMode("help");
-  }, [drift]);
-
-  const push = (m) => setMsgs((prev) => [...prev, m]);
+    if (msgs.length <= 1) return; // the opener said it
+    push({
+      role: "assistant",
+      text: `Your bank and your books just stopped agreeing: ${fmt(balance.bank)} against ${fmt(balance.book)}, a gap of ${fmt(balance.delta)}. Want me to walk it?`,
+      followUp: "Walk me through the gap between my bank balance and my books, line by line.",
+    });
+  }, [drift]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tool calls collapse into a single activity line rather than one bubble each.
   const pushStep = (name) =>
@@ -3501,8 +3564,7 @@ function Capture({
     });
 
   const runTurn = async (question, useGuide = guideId) => {
-    setMode("help");
-    setBusy(true);
+    setBusy("working through the ledger…");
     const before = convo.current;
     const history = trimHistory([...before, { role: "user", content: question }]);
     try {
@@ -3531,7 +3593,7 @@ function Capture({
         link: drift ? { view: "reconcile", label: "Open consolidate" } : null,
       });
     }
-    setBusy(false);
+    setBusy("");
   };
 
   // `withGuide` is passed explicitly by the guide's own step buttons: setState
@@ -3558,9 +3620,23 @@ function Capture({
     if (!guide?.id || !GUIDES[guide.id]) return;
     onGuideUsed?.();
     setGuideId(guide.id);
-    setMode("help");
     push({ role: "assistant", text: guideOpener(guide.id), guideId: guide.id });
   }, [guide?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- Tally noticing something and saying so ----
+     The finding is already computed and already worded (lib/insights.js), so
+     this costs nothing and arrives before the user thinks to ask. It comes with
+     the question attached: one tap sends the agent after the entries behind it. */
+  useEffect(() => {
+    if (!brief?.insight) return;
+    onBriefUsed?.();
+    const i = brief.insight;
+    push({
+      role: "assistant",
+      text: `${i.severity === "alert" ? "This one needs you" : i.severity === "warn" ? "Worth a look" : "One thing I noticed"}: ${i.title}. ${i.detail}`,
+      followUp: i.ask,
+    });
+  }, [brief?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- money landed, so say so before being asked ----
      The whole point of a proactive message is that it arrives without a
@@ -3581,12 +3657,10 @@ function Capture({
         : `Heads up, ${fmt(nudge.total)} came in across ${nudge.received.length} payments.`,
       nudge: { received: nudge.received, due },
     });
-    setMode("help");
   }, [nudge?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFile = async (file) => {
     if (!file) return;
-    setMode("capture");
     const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
     if (file.size > MAX_FILE_BYTES) {
       push({ role: "assistant", text: `That file is ${(file.size / 1048576).toFixed(1)} MB, I can file attachments up to 8 MB. Try exporting a smaller PDF or a screenshot of it.` });
@@ -3604,7 +3678,7 @@ function Capture({
     } else {
       push({ role: "user", image: URL.createObjectURL(file), text: "" });
     }
-    setBusy(true);
+    setBusy(isPdf ? "reading the document…" : "reading the receipt…");
     const att = { name: file.name || (isPdf ? "invoice.pdf" : "receipt.png"), type: isPdf ? "application/pdf" : (file.type || "image/png"), data: b64, file };
     try {
       const block = isPdf
@@ -3619,12 +3693,14 @@ function Capture({
     } catch (e) {
       push({ role: "assistant", text: `I couldn't read that one. ${friendlyError(e)}. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”).` });
     }
-    setBusy(false);
+    setBusy("");
   };
 
-  // Capture mode files what you type; Ask mode answers it. The one crossover
-  // that matters is a question typed into Capture — "did I already pay Vercel?"
-  // should never become a $0 draft entry.
+  /* ---- where a typed line goes ----
+     With the mode switch gone the message itself decides, which is what people
+     expected the switch to be doing anyway. A question is answered; a line with
+     real money in it is filed; anything else is a question, because "did I pay
+     Vercel" must never become a $0 draft entry. */
   const looksLikeQuestion = (text) =>
     /\?/.test(text) ||
     /^\s*(why|how|what|when|which|where|who|should|can|could|would|do i|did i|am i|is my|are my|show|list|tell|explain|compare|find|check|help)\b/i.test(text);
@@ -3634,16 +3710,15 @@ function Capture({
     if (!text) return;
     setInput("");
     push({ role: "user", text });
-    if (mode === "help" || looksLikeQuestion(text)) {
+    // Parsed on-device first. It costs nothing, it decides where the message is
+    // going, and it's the draft we fall back to when the reader is unreachable —
+    // a typed line with an amount in it should never come back empty-handed.
+    const local = parseEntryText(text, { categories: data.categories, ledgerKind: data.ledger.kind });
+    if (looksLikeQuestion(text) || !(Number(local?.amount) > 0)) {
       await runTurn(text);
       return;
     }
-    setMode("capture");
-    setBusy(true);
-    // Parsed on-device first. It costs nothing, and it's the draft we fall back
-    // to when the reader is unreachable — a typed line with an amount in it
-    // should never come back empty-handed.
-    const local = parseEntryText(text, { categories: data.categories, ledgerKind: data.ledger.kind });
+    setBusy("filing that…");
     try {
       const raw = await askClaude(
         [{ type: "text", text: `${extractionPrompt(data.categories, data.ledger.name)}\n\nUser message: "${text}"` }],
@@ -3652,13 +3727,11 @@ function Capture({
       const draft = normalizeDraft(raw, { categories: data.categories, ledgerKind: data.ledger.kind, fallback: local });
       push({ role: "assistant", text: draft.note || "Got it, confirm or adjust:", draft });
     } catch (e) {
-      if (local) {
-        push({ role: "assistant", text: `${friendlyError(e)}, so I filled this in from your message. Check the category before saving.`, draft: local });
-      } else {
-        push({ role: "assistant", text: "I couldn't find an amount in that. Try including one, e.g. “paid Canva $40 yesterday”." });
-      }
+      // The local parse already found the amount, so the entry survives the
+      // reader being unreachable — only the category is a guess worth checking.
+      push({ role: "assistant", text: `${friendlyError(e)}, so I filled this in from your message. Check the category before saving.`, draft: local });
     }
-    setBusy(false);
+    setBusy("");
   };
 
   const saveDraft = async (draft, modeSave, att) => {
@@ -3713,27 +3786,6 @@ function Capture({
           </button>
         </div>
       )}
-      <div className="flex gap-1 px-3 pt-2">
-        {[
-          ["capture", "Capture"],
-          ["help", "Ask"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setMode(id)}
-            style={{
-              fontFamily: MONO,
-              color: mode === id ? P.brass : P.faint,
-              border: `1px solid ${mode === id ? P.brass : P.line}`,
-              background: mode === id ? (P.brass + "18") : "transparent",
-            }}
-            className="rounded-full px-2.5 py-0.5 text-xs"
-          >
-            {label}
-          </button>
-        ))}
-      </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: embedded ? "45vh" : "55vh", minHeight: embedded ? 240 : 320 }}>
         {msgs.map((m, i) => (
           <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
@@ -3773,6 +3825,17 @@ function Capture({
                   ))}
                 </div>
               )}
+              {/* Tally said something unprompted, and left the follow-up
+                  question on the table rather than making the user phrase it. */}
+              {m.followUp && (
+                <div className="mt-2">
+                  <button type="button" onClick={() => ask(m.followUp)}
+                    style={{ border: `1px solid ${P.brass}`, color: P.brass, fontFamily: MONO }}
+                    className="rounded-full px-2.5 py-1 text-xs text-left inline-flex items-center gap-1.5">
+                    <Search size={11} /> Look into it
+                  </button>
+                </div>
+              )}
               {m.nudge && <NudgeCard nudge={m.nudge} data={data} apply={apply} onDone={(line) => push({ role: "assistant", text: line, done: true })} />}
               {m.draft && <DraftCard draft={m.draft} att={m.att} data={data} addSub={addSub} onSave={saveDraft} />}
               {m.proposal && <ProposalCard proposal={m.proposal} data={data} apply={apply} />}
@@ -3784,10 +3847,13 @@ function Capture({
             </div>
           </div>
         ))}
-        {/* Openers, drawn from what the local insight pass already found. */}
-        {msgs.length === 1 && !busy && (
+        {/* Openers, drawn from what the local insight pass already found. They
+            stay up until the first question, and never re-offer something Tally
+            has already put on the table unprompted. */}
+        {!msgs.some((m) => m.role === "user") && !busy && (
           <div className="flex flex-wrap gap-1.5 pt-1">
-            {[...insights.slice(0, 2).map((i) => i.ask), ...DEFAULT_ASKS]
+            {[...new Set([...insights.slice(0, 3).map((i) => i.ask), ...DEFAULT_ASKS])]
+              .filter((q) => !msgs.some((m) => m.followUp === q))
               .slice(0, 3)
               .map((q) => (
                 <button
@@ -3804,7 +3870,7 @@ function Capture({
         )}
         {busy && (
           <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex items-center gap-2">
-            <Loader2 size={12} className="animate-spin" /> {mode === "help" ? "working through the ledger…" : "reading…"}
+            <Loader2 size={12} className="animate-spin" /> {busy}
           </div>
         )}
         <div ref={endRef} />
@@ -3815,7 +3881,7 @@ function Capture({
           <Camera size={16} />
         </Btn>
         <Input
-          placeholder={mode === "help" ? "Ask about your books…" : "e.g. paid Vercel $70 today…"}
+          placeholder="Ask Tally, or type an entry…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !busy && handleText()}
@@ -5510,6 +5576,396 @@ function CashCalendar({ data }) {
   );
 }
 
+/* ================= Reports & analytics =================
+   Every other tab answers "how am I doing right now". This one answers "give me
+   the period, as a file" — the question you get from an accountant, a lender,
+   or a co-founder, and the one the app used to make you assemble by hand out of
+   a month-by-month P&L. Pick a window, read the figures on screen, hand any
+   block over as a CSV or a PDF.
+
+   Nothing here is a second source of truth: every number is recomputed from
+   data.transactions the same way the P&L computes it, just over a wider window. */
+
+const REPORT_RANGES = [
+  ["this-month", "This month"],
+  ["last-month", "Last month"],
+  ["3", "Last 3 months"],
+  ["6", "Last 6 months"],
+  ["12", "Last 12 months"],
+  ["ytd", "Year to date"],
+  ["fy", "Fiscal year"],
+  ["all", "All time"],
+];
+
+const lastDayOf = (ym) => {
+  const [y, m] = ym.split("-").map(Number);
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+};
+
+/** [start, end, label] for a range key, as ISO dates. */
+function reportWindow(range, month, fye, txs) {
+  const end = lastDayOf(month);
+  const span = (fromMonth) => [`${fromMonth}-01`, end];
+  switch (range) {
+    case "last-month": {
+      const prev = shiftMonth(month, -1);
+      return [`${prev}-01`, lastDayOf(prev)];
+    }
+    case "3": return span(shiftMonth(month, -2));
+    case "6": return span(shiftMonth(month, -5));
+    case "12": return span(shiftMonth(month, -11));
+    case "ytd": return [`${month.slice(0, 4)}-01-01`, end];
+    case "fy": {
+      // The fiscal year the month on screen falls inside, not the calendar one.
+      const y = Number(month.slice(0, 4));
+      return fiscalWindow(fye, end.slice(5) <= fye ? y : y + 1);
+    }
+    case "all": {
+      const dates = txs.map((t) => t.date).filter(Boolean).sort();
+      return [dates[0] || `${month}-01`, dates[dates.length - 1] || end];
+    }
+    default: return span(month);
+  }
+}
+
+function ReportsTab({ data, month, balance, onAsk }) {
+  const [range, setRange] = useState("this-month");
+  const fye = data.ledger.fye || "12-31";
+  const stamp = data.ledger.name.replace(/[^\w]+/g, "");
+
+  const r = useMemo(() => {
+    const [from, to] = reportWindow(range, month, fye, data.transactions);
+    // plExclude is what the P&L honours (owner draws and the like), so the
+    // statement here matches that tab rather than quietly disagreeing with it.
+    const tx = data.transactions.filter((t) => t.date >= from && t.date <= to && !t.plExclude);
+    const revenue = tx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+    const costs = tx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    const recurring = tx.filter((t) => t.type === "expense" && isRec(t)).reduce((s, t) => s + t.amount, 0);
+    const onCredits = tx.filter((t) => t.type === "expense" && isCredits(t)).reduce((s, t) => s + t.amount, 0);
+
+    // Months the window actually touches, so "per month" divides by the right
+    // number and a partial first month still shows up as a bar.
+    const months = [];
+    for (let m = from.slice(0, 7); m <= to.slice(0, 7); m = shiftMonth(m, 1)) {
+      const mt = tx.filter((t) => t.date.startsWith(m));
+      const inc = mt.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+      const exp = mt.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+      months.push({ m, inc, exp, net: inc - exp, count: mt.length });
+      if (months.length > 240) break; // an unparseable date can't run away with the loop
+    }
+
+    const byCat = {};
+    tx.filter((t) => t.type === "expense").forEach((t) => {
+      byCat[t.category] = byCat[t.category] || { amount: 0, count: 0 };
+      byCat[t.category].amount += t.amount;
+      byCat[t.category].count += 1;
+    });
+    const cats = Object.entries(byCat)
+      .map(([name, v]) => ({ name, ...v, share: costs > 0 ? (v.amount / costs) * 100 : 0 }))
+      .sort((a, b) => b.amount - a.amount);
+
+    const byIncomeCat = {};
+    tx.filter((t) => t.type === "income").forEach((t) => {
+      byIncomeCat[t.category] = (byIncomeCat[t.category] || 0) + t.amount;
+    });
+
+    const net = revenue - costs;
+    return {
+      from, to, tx, revenue, costs, recurring, onCredits, net,
+      margin: revenue > 0 ? (net / revenue) * 100 : null,
+      months, cats,
+      incomeCats: Object.entries(byIncomeCat).sort((a, b) => b[1] - a[1]),
+      perMonth: months.length ? net / months.length : 0,
+      burnPerMonth: months.length ? costs / months.length : 0,
+    };
+  }, [data.transactions, range, month, fye]);
+
+  const label = `${longDate(r.from)} to ${longDate(r.to)}`;
+  const obs = useMemo(() => obligationsView(data, { status: "all", limit: 100 }), [data]);
+  const rec = useMemo(() => recurringCosts(data), [data]);
+
+  /* ---- the exports ----
+     One shape per report: a name, a line saying what's in it, and the buttons
+     that produce it. Everything is generated on the device from state already
+     in memory, so nothing here needs the network. */
+  const statementRows = () => [
+    { name: "Revenue", amount: r.revenue },
+    { name: "Costs and expenses", amount: -r.costs },
+    // Only worth a line when there is something on it. A statement full of
+    // zeroes reads as a broken export rather than a quiet month.
+    ...(r.recurring > 0 ? [
+      { name: "of which recurring", amount: -r.recurring },
+      { name: "of which one-time", amount: -(r.costs - r.recurring) },
+    ] : []),
+    ...(r.onCredits > 0 ? [{ name: "of which covered by credits (non-cash)", amount: -r.onCredits }] : []),
+    { name: `Net ${r.net >= 0 ? "profit" : "loss"}`, amount: r.net, strong: true, final: true },
+  ];
+
+  const exportStatementCSV = () => {
+    downloadCSV(`Statement_${stamp}_${r.from}_${r.to}.csv`, [
+      [`Income statement, ${data.ledger.name}`, label],
+      [],
+      ...statementRows().map((x) => [x.name, x.amount.toFixed(2)]),
+      ["Margin", r.margin !== null ? `${r.margin.toFixed(1)}%` : "n/a"],
+      ["Average net per month", r.perMonth.toFixed(2)],
+      ["Average spend per month", r.burnPerMonth.toFixed(2)],
+      [],
+      ["Income by category"],
+      ...r.incomeCats.map(([c, v]) => [c, v.toFixed(2)]),
+      [],
+      ["Expenses by category", "Amount", "Share of costs", "Entries"],
+      ...r.cats.map((c) => [c.name, c.amount.toFixed(2), `${c.share.toFixed(1)}%`, c.count]),
+    ]);
+  };
+
+  const exportStatementPDF = () => {
+    formPdf({
+      filename: `Statement_${stamp}_${r.from}_${r.to}.pdf`,
+      formTitle: "Income statement",
+      formSub: `${data.ledger.name} · ${label}`,
+      banner: "",
+      footer: `Prepared in Brasstally · ${todayStr()} · cash basis, from the ${data.ledger.name} ledger`,
+      codeWidth: 0,
+      ident: [
+        ["Ledger", `${data.ledger.name} (${kindLabel(data.ledger.kind)})`],
+        ["Period", label],
+        ["Currency", data.ledger.currency || "CAD"],
+        ["Entries", String(r.tx.length)],
+      ],
+      columns: ["", "Line", "Amount"],
+      rows: [
+        ...statementRows(),
+        { section: "Expenses by category" },
+        ...r.cats.map((c) => ({ name: `${c.name} (${c.share.toFixed(0)}%)`, amount: -c.amount })),
+        { name: "Total expenses", amount: -r.costs, strong: true },
+        { section: "By month" },
+        ...r.months.map((m) => ({ name: monthLabel(m.m), amount: m.net })),
+      ],
+      note: (r.onCredits > 0 ? `${pdfMoney(r.onCredits)} of the expenses above were covered by credit pools and never moved cash. ` : "")
+        + "Cash basis: open receivables and payables are not included until they settle. "
+        + `Open at the time of writing: ${fmt(obs.receivables?.items.filter((i) => i.status === "open").reduce((s, i) => s + i.amount, 0) || 0)} owed to the ledger, `
+        + `${fmt(obs.payables?.items.filter((i) => i.status === "open").reduce((s, i) => s + i.amount, 0) || 0)} owed out.`,
+    });
+  };
+
+  const exportTransactionsCSV = () => {
+    downloadCSV(`Transactions_${stamp}_${r.from}_${r.to}.csv`, [
+      [`Transactions, ${data.ledger.name}`, label],
+      [],
+      ["Date", "Description", "Category", "Subcategory", "Type", "Frequency", "Paid with", "Receipt", "Amount"],
+      ...[...r.tx]
+        .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+        .map((t) => [
+          t.date, t.description, t.category, t.subcategory || "", t.type,
+          isRec(t) ? "Recurring" : "One-time", isCredits(t) ? "Credits" : "Cash",
+          t.attachmentId ? (t.attachmentName || "yes") : "",
+          (t.type === "income" ? t.amount : -t.amount).toFixed(2),
+        ]),
+    ]);
+  };
+
+  const exportMonthlyCSV = () => {
+    downloadCSV(`Monthly_${stamp}_${r.from}_${r.to}.csv`, [
+      [`Month by month, ${data.ledger.name}`, label],
+      [],
+      ["Month", "Income", "Expenses", "Net", "Entries"],
+      ...r.months.map((m) => [m.m, m.inc.toFixed(2), (-m.exp).toFixed(2), m.net.toFixed(2), m.count]),
+    ]);
+  };
+
+  const exportObligationsCSV = () => {
+    const rows = ["receivables", "payables"].flatMap((k) =>
+      (obs[k]?.items || []).map((i) => [
+        k === "receivables" ? "Owed to you" : "You owe",
+        i.party, i.description || "", i.dueDate || "", i.status,
+        i.settledOn || "", i.daysOverdue || "", i.recurring ? "Recurring" : "One-time",
+        i.amount.toFixed(2),
+      ]),
+    );
+    downloadCSV(`AR_AP_${stamp}_${todayStr()}.csv`, [
+      [`Receivables and payables, ${data.ledger.name}`, `as at ${longDate(todayStr())}`],
+      [],
+      ["Side", "Party", "Description", "Due", "Status", "Settled on", "Days overdue", "Frequency", "Amount"],
+      ...rows,
+    ]);
+  };
+
+  const exportRecurringCSV = () => {
+    downloadCSV(`Recurring_${stamp}_${todayStr()}.csv`, [
+      [`Recurring costs, ${data.ledger.name}`, `as at ${longDate(todayStr())}`],
+      [],
+      ["Merchant", "Category", "Latest amount", "Latest date", "Times seen", "Last price change", "Paid with"],
+      ...rec.subscriptions.map((s) => [
+        s.name, s.category, s.latestAmount.toFixed(2), s.latestDate, s.occurrences,
+        s.priceChanged ? `${s.priceChanged.change >= 0 ? "+" : ""}${s.priceChanged.change.toFixed(2)} on ${s.priceChanged.on}` : "",
+        s.paidWith,
+      ]),
+      [],
+      ["Scheduled obligations"],
+      ["Side", "Party", "Amount", "Frequency", "Next due", "Monthly equivalent"],
+      ...rec.scheduledObligations.map((s) => [
+        s.kind === "receivables" ? "Owed to you" : "You owe",
+        s.party, s.amount.toFixed(2), s.frequency, s.nextDue || "", s.monthlyEquivalent.toFixed(2),
+      ]),
+    ]);
+  };
+
+  const reports = [
+    {
+      title: "Income statement",
+      sub: `Revenue, costs, and net for the period, with the category breakdown behind it.`,
+      csv: exportStatementCSV, pdf: exportStatementPDF,
+    },
+    {
+      title: "Transaction ledger",
+      sub: `Every one of the ${r.tx.length} ${r.tx.length === 1 ? "entry" : "entries"} in the period, with category, frequency, and whether a receipt is filed.`,
+      csv: exportTransactionsCSV,
+    },
+    {
+      title: "Month by month",
+      sub: `Income, expenses, and net for each of the ${r.months.length} ${r.months.length === 1 ? "month" : "months"} in the window.`,
+      csv: exportMonthlyCSV,
+    },
+    {
+      title: "Receivables and payables",
+      sub: "Every open and settled obligation as it stands today, with ageing. Not period-bound, because what is owed is owed now.",
+      csv: exportObligationsCSV,
+    },
+    {
+      title: "Recurring costs",
+      sub: `${rec.subscriptions.length} recurring ${rec.subscriptions.length === 1 ? "charge" : "charges"} grouped by merchant, plus every scheduled obligation and what it costs a month.`,
+      csv: exportRecurringCSV,
+    },
+  ];
+
+  const maxMonth = Math.max(...r.months.flatMap((m) => [m.inc, m.exp]), 1);
+  const maxCat = Math.max(...r.cats.map((c) => c.amount), 1);
+
+  return (
+    <div className="space-y-6">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-52">
+            <Label>Period</Label>
+            <Select value={range} onChange={(e) => setRange(e.target.value)}>
+              {REPORT_RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </Select>
+          </div>
+          <div className="flex-1 min-w-40">
+            <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs">{label}</div>
+            <div style={{ color: P.muted }} className="text-sm">
+              {r.tx.length} {r.tx.length === 1 ? "entry" : "entries"} across {r.months.length} {r.months.length === 1 ? "month" : "months"}
+            </div>
+          </div>
+          <Btn tone="ghost" onClick={exportStatementPDF} title="The income statement for this period as a PDF">
+            <FileText size={14} /> Statement PDF
+          </Btn>
+        </div>
+      </section>
+
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">The period in six numbers</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <StatTile label="Revenue" value={fmt(r.revenue)} hint={`${r.incomeCats.length} ${r.incomeCats.length === 1 ? "source" : "sources"}`} />
+          <StatTile label="Costs" value={fmt(r.costs)} hint={r.onCredits > 0 ? `${fmt(r.onCredits)} on credits` : `${r.cats.length} ${r.cats.length === 1 ? "category" : "categories"}`} />
+          <StatTile label={`Net ${r.net >= 0 ? "profit" : "loss"}`} value={fmt(r.net)} hint={r.margin !== null ? `${r.margin.toFixed(0)}% margin` : "no revenue"} />
+          <StatTile label="Spend per month" value={fmt(r.burnPerMonth)} hint={`over ${r.months.length} ${r.months.length === 1 ? "month" : "months"}`} />
+          <StatTile label="Net per month" value={fmt(r.perMonth)} hint={r.perMonth >= 0 ? "building" : "drawing down"} />
+          <StatTile label="Balance today" value={fmt(balance?.value ?? 0)} hint={balance?.source === "bank" ? "from the bank" : "from the books"} />
+        </div>
+        {r.recurring > 0 && (
+          <p style={{ color: P.faint }} className="text-xs mt-3">
+            {fmt(r.recurring)} of the costs are recurring, {fmt(r.costs - r.recurring)} one-time.
+          </p>
+        )}
+      </section>
+
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+          <h2 style={{ fontFamily: SERIF }} className="text-lg">Month by month</h2>
+          <div className="flex items-center gap-3 text-xs" style={{ color: P.faint, fontFamily: MONO }}>
+            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.credit, display: "inline-block" }} /> income</span>
+            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.debit, display: "inline-block" }} /> expense</span>
+          </div>
+        </div>
+        {r.months.length === 0 ? (
+          <p style={{ color: P.faint }} className="text-sm">Nothing recorded in this period.</p>
+        ) : (
+          /* A twelve-month window scrolls sideways, and a scroll container clips
+             in both axes, so the bar tooltips need room reserved above them. */
+          <div className="flex items-end gap-2 overflow-x-auto pt-7 pb-1" style={{ minHeight: 128 }}>
+            {r.months.map((m) => (
+              <div key={m.m} style={{ minWidth: 34 }} className="flex-1">
+                <TrendBar t={m} maxTrend={maxMonth} active={m.m === month} />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">Where the money went</h2>
+        {r.cats.length === 0 ? (
+          <p style={{ color: P.faint }} className="text-sm">No expenses in this period.</p>
+        ) : (
+          <div className="space-y-2">
+            {r.cats.map((c) => (
+              <CatBarRow key={c.name} cat={c.name} value={c.amount} max={maxCat} count={c.count} shareOfCosts={c.share} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+          <div>
+            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Export</h2>
+            <p style={{ color: P.muted }} className="text-sm">
+              Built on your device from what is already on screen. CSV opens anywhere; PDF is the one you send.
+            </p>
+          </div>
+        </div>
+        <div className="divide-y mt-3" style={{ borderColor: P.line }}>
+          {reports.map((rep) => (
+            <div key={rep.title} className="py-3 flex items-start gap-3 flex-wrap" style={{ borderColor: P.line }}>
+              <div className="flex-1 min-w-48">
+                <div style={{ color: P.text }} className="text-sm">{rep.title}</div>
+                <p style={{ color: P.faint }} className="text-xs mt-0.5">{rep.sub}</p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Btn tone="ghost" onClick={rep.csv}><Download size={13} /> CSV</Btn>
+                {rep.pdf && <Btn tone="ghost" onClick={rep.pdf}><FileText size={13} /> PDF</Btn>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p style={{ color: P.faint }} className="text-xs mt-3">
+          Filing a return is next door under Connectors, where the same figures are mapped onto CRA's own schedules.
+        </p>
+      </section>
+
+      {onAsk && (
+        <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+          <h2 style={{ fontFamily: SERIF }} className="text-lg mb-1">Ask about the period</h2>
+          <p style={{ color: P.muted }} className="text-sm mb-3">Tally reads the same entries these figures came from.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              `Summarise ${longDate(r.from)} to ${longDate(r.to)}: what changed, and what should I do about it?`,
+              "Which categories grew the most over this period, and why?",
+              "What are my recurring costs totalling a year, and which ones went up?",
+            ].map((q) => (
+              <button key={q} type="button" onClick={() => onAsk(q)}
+                style={{ border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
+                className="rounded-full px-2.5 py-1 text-xs text-left">
+                {q}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
 
 /* ================= floating dock button ================= */
 function DockBtn({ label, active, onClick, children }) {
@@ -5544,13 +6000,14 @@ function DockBtn({ label, active, onClick, children }) {
 
 /* ================= first-visit tutorials ================= */
 const TOUR_COPY = {
-  overview: ["Your month at a glance", "Planned versus actual, per category. Tap a planned amount to set a budget, tap a category name to see the entries behind it, and use the Brasstally bubble in the corner to capture receipts or ask about balance drift."],
+  overview: ["Your month at a glance", "Planned versus actual, per category. Tap a planned amount to set a budget, tap a category name to see the entries behind it, and tap Tally in the corner to capture receipts or ask about balance drift."],
   transactions: ["Every entry lives here", "Add one manually, import a whole bank statement, or use Transfer to move money between your ledgers. Tap the pencil on any row to edit it, and the paperclip to file its receipt."],
   pl: ["Your profit and loss", "Switch between business, personal, and combined scope. Owner draws are excluded, credit-paid costs get their own line, and Export produces a CSV your accountant can use as is."],
   arap: ["Who owes you, who you owe", "Upload an invoice and the fields fill themselves. Recurring items queue their next occurrence automatically when you settle them. Tap any open item to edit everything about it."],
   credits: ["Money that isn't cash", "Pools for AWS credits, compute credits, and the like. Anything paid via a pool draws the pool down instead of your bank balance. Tap a pool to edit it, including credits used before you started tracking."],
   calendar: ["What's coming due", "List view shows the next 30 or 90 days. Calendar view is a month grid, and recurring items are projected onto their future dates. Tap a day to see what lands on it."],
   integrations: ["The outside world", "Connect your bank with Plaid right here, and new transactions arrive in a review you confirm. Tax drafts map your year onto CRA's forms, compute deadlines, and prep the accountant email."],
+  reports: ["The year, as a file", "Pick a period and the whole ledger is cut to it: the statement, the months behind it, and where the money went. Every block exports as a CSV your spreadsheet opens or a PDF you can send."],
 };
 
 function TourCard({ tab, onDismiss }) {
@@ -5667,8 +6124,8 @@ function SetupChecklist({ data, bankConns, onGo, openGuide, onDismiss }) {
     {
       id: "entry", done: hasEntry,
       title: "Put something in the books",
-      sub: "Photograph a receipt, or just type what you paid. Either way it reads the amount, the merchant, and the date for you.",
-      action: ["Capture something", () => onGo("capture")],
+      sub: "Photograph a receipt, or just type what you paid. Either way Tally reads the amount, the merchant, and the date for you.",
+      action: ["Show Tally", () => onGo("capture")],
     },
     {
       id: "budget", done: hasBudget,
@@ -5742,12 +6199,20 @@ const gifiFor = (category, subcategory) => {
   return { code: "9270", name: "Other expenses" };
 };
 
-/* CRA-form-styled PDF: line codes, right-ruled amounts, parenthesized negatives, draft banner */
+/* Form-styled PDF: line codes, right-ruled amounts, parenthesized negatives.
+   Built for CRA schedules, which is why the banner and footer say "draft" by
+   default — the Reports tab prints its own statements through here and passes
+   its own, and sets codeWidth to 0 for a sheet with no line-code column. */
 const pdfMoney = (n) => (n < 0 ? "(" : "") + Math.abs(n).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (n < 0 ? ")" : "");
 
-function taxPdf({ filename, formTitle, formSub, ident, columns, rows, note }) {
+function formPdf({
+  filename, formTitle, formSub, ident, columns, rows, note,
+  banner = "DRAFT · for preparation only",
+  footer = `Prepared in Brasstally · ${todayStr()} · draft for use with CRA-certified software, not a filed return`,
+  codeWidth = 24,
+}) {
   const doc = new jsPDF({ unit: "mm", format: "letter" });
-  const W = 215.9, L = 16, R = W - 16;
+  const W = 215.9, L = 16, R = W - 16, NX = L + codeWidth;
   let y = 18;
   const hr = (yy, dark) => { doc.setDrawColor(dark ? 60 : 150); doc.setLineWidth(dark ? 0.4 : 0.2); doc.line(L, yy, R, yy); };
   const pageBreak = () => { if (y > 260) { doc.addPage(); y = 18; } };
@@ -5755,7 +6220,7 @@ function taxPdf({ filename, formTitle, formSub, ident, columns, rows, note }) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(14);
   doc.text(formTitle, L, y);
   doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-  doc.text("DRAFT · for preparation only", R, y, { align: "right" });
+  if (banner) doc.text(banner, R, y, { align: "right" });
   y += 5.5;
   doc.setFontSize(10);
   doc.text(formSub, L, y);
@@ -5771,8 +6236,8 @@ function taxPdf({ filename, formTitle, formSub, ident, columns, rows, note }) {
   y += 1.5; hr(y); y += 6;
 
   doc.setFont("helvetica", "bold"); doc.setFontSize(8);
-  doc.text(columns[0], L, y);
-  doc.text(columns[1], L + 24, y);
+  if (codeWidth) doc.text(columns[0], L, y);
+  doc.text(columns[1], NX, y);
   doc.text(columns[2], R, y, { align: "right" });
   y += 2.5; hr(y, true); y += 5.5;
 
@@ -5789,8 +6254,8 @@ function taxPdf({ filename, formTitle, formSub, ident, columns, rows, note }) {
     }
     doc.setFont("helvetica", r.strong ? "bold" : "normal");
     if (r.final) { doc.setDrawColor(40); doc.setLineWidth(0.3); doc.line(L + 128, y - 4.4, R, y - 4.4); doc.line(L + 128, y - 3.6, R, y - 3.6); }
-    if (r.code) doc.text(String(r.code), L, y);
-    doc.text(doc.splitTextToSize(r.name, 116)[0], L + 24, y);
+    if (r.code && codeWidth) doc.text(String(r.code), L, y);
+    doc.text(doc.splitTextToSize(r.name, R - NX - 26)[0], NX, y);
     if (r.amount !== null && r.amount !== undefined) doc.text(pdfMoney(r.amount), R, y, { align: "right" });
     y += 5.5;
     if (r.strong && !r.final) hr(y - 4);
@@ -5806,7 +6271,7 @@ function taxPdf({ filename, formTitle, formSub, ident, columns, rows, note }) {
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(120);
-    doc.text(`Prepared in Brasstally · ${todayStr()} · draft for use with CRA-certified software, not a filed return`, L, 279);
+    doc.text(footer, L, 279);
     doc.text(`Page ${i} of ${pages}`, R, 279, { align: "right" });
     doc.setTextColor(0);
   }
@@ -6234,7 +6699,7 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
   const exportGifiPDF = () => {
-    taxPdf({
+    formPdf({
       filename: `T2_S125_GIFI_${data.ledger.name.replace(/\s/g, "")}_FY${fy}.pdf`,
       formTitle: "Schedule 125 · Income Statement Information",
       formSub: `General Index of Financial Information (GIFI) · draft prepared from the ${data.ledger.name} ledger`,
@@ -6940,7 +7405,7 @@ function PersonalTaxCard({ data, openGuide }) {
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
   const exportPDF = () => {
-    taxPdf({
+    formPdf({
       filename: `T1_prep_${ty}_${data.ledger.name.replace(/\s/g, "")}.pdf`,
       formTitle: "T1 Preparation Summary",
       formSub: `Personal income tax working paper · draft prepared from the ${data.ledger.name} ledger`,
