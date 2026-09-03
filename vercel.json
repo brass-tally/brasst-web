@@ -39,6 +39,8 @@
       "rewrites": [
         { "source": "/app/assets/:path*", "destination": "/assets/:path*" },
         { "source": "/app/favicon.ico", "destination": "/favicon.ico" },
+        { "source": "/app/favicon.svg", "destination": "/favicon.svg" },
+        { "source": "/app/favicon-32.png", "destination": "/favicon-32.png" },
         { "source": "/app/icon-:size.png", "destination": "/icon-:size.png" },
         { "source": "/app/icon-maskable-:size.png", "destination": "/icon-maskable-:size.png" },
         { "source": "/app/apple-touch-icon.png", "destination": "/apple-touch-icon.png" },
@@ -52,6 +54,7 @@
   },
   "rewrites": [
     { "source": "/app", "destination": { "service": "app" } },
+    { "source": "/app/", "destination": { "service": "app" } },
     { "source": "/app/:path*", "destination": { "service": "app" } },
     { "source": "/(.*)", "destination": { "service": "landing" } }
   ],
