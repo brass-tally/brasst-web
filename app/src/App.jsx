@@ -728,8 +728,8 @@ function AuthScreen({ linkError = "" }) {
         {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
         {notice && <p style={{ color: P.credit }} className="text-xs mt-2">{notice}</p>}
 
-        <Btn className="w-full justify-center mt-3" onClick={verifyCode} disabled={busy || code.length < 6}>
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+        <Btn className="w-full justify-center mt-3" onClick={verifyCode} loading={busy} disabled={code.length < 6}>
+          {!busy && <Check size={14} />}
           Sign in
         </Btn>
 
@@ -785,8 +785,8 @@ function AuthScreen({ linkError = "" }) {
         {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
 
         <Btn className="w-full justify-center mt-3" onClick={passwordGo}
-          disabled={busy || !emailValid || (step !== "forgot" && !pw)}>
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+          loading={busy} disabled={!emailValid || (step !== "forgot" && !pw)}>
+          {!busy && <Lock size={14} />}
           {step === "password" ? "Sign in" : step === "signup" ? "Create account" : "Send reset link"}
         </Btn>
 
@@ -818,8 +818,8 @@ function AuthScreen({ linkError = "" }) {
 
       {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
 
-      <Btn className="w-full justify-center mt-3" onClick={() => sendCode()} disabled={busy || !emailValid}>
-        {busy ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+      <Btn className="w-full justify-center mt-3" onClick={() => sendCode()} loading={busy} disabled={!emailValid}>
+        {!busy && <Mail size={14} />}
         Email me a code
       </Btn>
 
@@ -861,8 +861,8 @@ function SetNewPassword({ onDone }) {
         <Input type="password" value={pw2} autoComplete="new-password" placeholder="Same password" onChange={(e) => setPw2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
       </div>
       {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
-      <Btn className="w-full justify-center mt-3" onClick={save} disabled={busy || !pw || !pw2}>
-        {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save new password
+      <Btn className="w-full justify-center mt-3" onClick={save} loading={busy} disabled={!pw || !pw2}>
+        {!busy && <Check size={14} />} Save new password
       </Btn>
     </AuthCard>
   );
@@ -2569,8 +2569,8 @@ function MatchView({
               {plan.fix.lines.map((l, i) => <PlanLine key={i}>{l}</PlanLine>)}
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-3">
-              <Btn onClick={runPlan} disabled={fixing}>
-                {fixing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Go ahead
+              <Btn onClick={runPlan} loading={fixing}>
+                {!fixing && <Check size={13} />} Go ahead
               </Btn>
               <button onClick={() => setShowManual(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
                 let me look at each one first
@@ -3119,8 +3119,8 @@ function ImportModal({ data, addSub, onImport, onClose }) {
               className="w-full rounded p-3 text-xs outline-none"
             />
             <div className="flex items-center gap-3">
-              <Btn onClick={handlePaste} disabled={busy || !pasted.trim()}>
-                {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Read pasted text
+              <Btn onClick={handlePaste} loading={busy} disabled={!pasted.trim()}>
+                {!busy && <Check size={14} />} Read pasted text
               </Btn>
               <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">or</span>
               <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.tsv,image/*,application/pdf,text/csv" className="hidden"
@@ -3130,9 +3130,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
               </Btn>
             </div>
             {busy && (
-              <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex items-center gap-2">
-                <Loader2 size={12} className="animate-spin" /> reading every line… longer statements take a moment
-              </div>
+              <LoadingLine>reading every line… longer statements take a moment</LoadingLine>
             )}
             {err && <p style={{ color: P.debit }} className="text-xs">{err}</p>}
           </div>
@@ -3972,9 +3970,7 @@ function Capture({
           </div>
         )}
         {busy && (
-          <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs flex items-center gap-2">
-            <Loader2 size={12} className="animate-spin" /> {busy}
-          </div>
+          <LoadingLine>{busy}</LoadingLine>
         )}
         <div ref={endRef} />
       </div>
@@ -5173,9 +5169,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
       </div>
 
       {reading && (
-        <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3 flex items-center gap-2">
-          <Loader2 size={12} className="animate-spin" /> reading the invoice…
-        </div>
+        <LoadingLine className="mb-3">reading the invoice…</LoadingLine>
       )}
 
       {adding && (
@@ -7977,7 +7971,7 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
 
         <Section title="Membership">
           <div className="flex items-center gap-2">
-            <span style={{ fontFamily: MONO, color: P.bg, background: P.brass }} className="text-xs rounded px-2 py-0.5">Early access</span>
+            <Pill solid tone="brass" mono>Early access</Pill>
             <span style={{ color: P.muted }} className="text-sm">Free · founding member</span>
           </div>
           <p style={{ color: P.faint }} className="text-xs mt-2">Unlimited ledgers while Brasstally is in early access. When paid plans arrive, founding members hear first, and your books stay yours either way.</p>
