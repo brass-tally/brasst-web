@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2 } from "lucide-react";
-import { P, R } from "./tokens";
+import { P, R, inkOn } from "./tokens";
 
 /* ================= buttons =================
    Four tones and three sizes. The loading state is a prop rather than
@@ -24,7 +24,7 @@ export const Btn = React.forwardRef(function Btn(
     : tone === "credit" ? P.credit
     : tone === "debit" ? P.debit
     : P.surface2;
-  const fg = tone === "ghost" ? P.text : P.onbrass;
+  const fg = tone === "ghost" ? P.text : inkOn(bg);
   return (
     <button
       ref={ref}

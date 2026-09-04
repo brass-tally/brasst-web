@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { MessageCircle, X } from "lucide-react";
+import { MessageCircle } from "lucide-react";
+import { P } from "../ui/tokens";
+import { Modal, ModalBody } from "../ui/Modal";
+import { Btn } from "../ui/Btn";
+import { Label, Select, Textarea } from "../ui/Field";
 
 export function BetaFeedbackButton() {
   const [open, setOpen] = useState(false);
@@ -46,78 +50,55 @@ export function BetaFeedbackButton() {
       {/* Floating Button */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 p-3 bg-brass text-bg rounded-full shadow-brass-lg hover:shadow-brass-lg hover:scale-110 transition-all duration-200 z-40"
+        className="fixed bottom-6 right-6 p-3 bg-brass text-onbrass rounded-full shadow-brass-lg hover:scale-110 transition-transform duration-200 z-40"
         title="Send feedback"
       >
         <MessageCircle size={20} />
       </button>
 
-      {/* Modal */}
+      {/* Modal — the shared chrome, so this dialog blurs its backdrop, traps
+          focus, and closes on Escape like every other one in the app. */}
       {open && (
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
-          <div className="bg-surface w-full sm:w-full max-w-sm rounded-t-2xl sm:rounded-2xl border border-line p-6 animate-slide-up">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-serif text-text">Help us improve</h3>
-              <button
-                onClick={() => setOpen(false)}
-                className="p-1 hover:bg-surface2 rounded-lg transition-colors"
-              >
-                <X size={20} className="text-muted" />
-              </button>
-            </div>
-
-            {submitted ? (
-              <div className="py-8 text-center animate-fade-in">
-                <p className="text-brass font-semibold mb-2">Thank you!</p>
-                <p className="text-sm text-muted">
-                  Your feedback helps us build BrassTally better.
-                </p>
-              </div>
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
+        <Modal onClose={() => setOpen(false)} size="sm" eyebrow="Beta" title="Help us improve">
+          {submitted ? (
+            <ModalBody className="py-10 text-center">
+              <p style={{ color: P.brass }} className="font-semibold mb-2">Thank you</p>
+              <p style={{ color: P.muted }} className="text-sm">
+                Your feedback helps us build Brasstally better.
+              </p>
+            </ModalBody>
+          ) : (
+            <form onSubmit={handleSubmit}>
+              <ModalBody className="space-y-4">
                 <div>
-                  <label className="block text-sm font-mono text-faint mb-2">
-                    Type
-                  </label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full px-3 py-2 bg-surface2 border border-line rounded-lg text-text text-sm focus:outline-none focus:border-brass focus:ring-1 focus:ring-brass"
-                  >
+                  <Label htmlFor="feedback-type">Type</Label>
+                  <Select id="feedback-type" value={category} onChange={(e) => setCategory(e.target.value)}>
                     <option value="bug">Bug report</option>
                     <option value="feature">Feature request</option>
                     <option value="improvement">Improvement</option>
                     <option value="other">Other</option>
-                  </select>
+                  </Select>
                 </div>
-
                 <div>
-                  <label className="block text-sm font-mono text-faint mb-2">
-                    Your message
-                  </label>
-                  <textarea
+                  <Label htmlFor="feedback-message">Your message</Label>
+                  <Textarea
+                    id="feedback-message"
+                    rows={4}
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    placeholder="Tell us what's on your mind..."
-                    className="w-full px-3 py-2 bg-surface2 border border-line rounded-lg text-text text-sm focus:outline-none focus:border-brass focus:ring-1 focus:ring-brass resize-none h-24"
+                    placeholder="Tell us what's on your mind…"
                   />
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={!message.trim() || loading}
-                  className="w-full px-4 py-2 bg-brass text-bg font-semibold rounded-lg hover:shadow-brass-lg transition-all disabled:opacity-50 disabled:cursor-default"
-                >
-                  {loading ? "Sending..." : "Send feedback"}
-                </button>
-
-                <p className="text-xs text-faint text-center">
-                  We read every message. Thanks for helping us build better!
+                <Btn type="submit" className="w-full" size="lg" loading={loading} disabled={!message.trim()}>
+                  {loading ? "Sending…" : "Send feedback"}
+                </Btn>
+                <p style={{ color: P.faint }} className="text-xs text-center">
+                  We read every message.
                 </p>
-              </form>
-            )}
-          </div>
-        </div>
+              </ModalBody>
+            </form>
+          )}
+        </Modal>
       )}
     </>
   );

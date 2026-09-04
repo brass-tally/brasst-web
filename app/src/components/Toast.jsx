@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Check, AlertCircle, Info, AlertTriangle, Loader2, X } from "lucide-react";
+import { elev } from "../ui/tokens";
 
 export function Toast({ notification, onDismiss, palette }) {
   const [isExiting, setIsExiting] = useState(false);
@@ -31,14 +32,18 @@ export function Toast({ notification, onDismiss, palette }) {
       text: palette.bg,
     },
     info: {
+      // surface2, not line: line is a hairline colour and reads as a smear
+      // when it has to carry a whole pill.
       icon: Info,
-      bg: palette.line,
+      bg: palette.surface2,
       text: palette.text,
+      border: palette.line,
     },
     action: {
       icon: Loader2,
       bg: palette.surface,
       text: palette.text,
+      border: palette.line,
       spin: true,
     },
   };
@@ -52,7 +57,10 @@ export function Toast({ notification, onDismiss, palette }) {
       style={{
         background: config.bg,
         color: config.text,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+        border: `1px solid ${config.border || "transparent"}`,
+        // The same elevation scale the cards and dialogs use, so a toast
+        // floats at a height the rest of the app recognises.
+        boxShadow: elev(2),
       }}
     >
       <div className="flex items-center gap-2">

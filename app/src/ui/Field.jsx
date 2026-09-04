@@ -1,6 +1,6 @@
 import React from "react";
 import { Check } from "lucide-react";
-import { P, R, MONO } from "./tokens";
+import { P, R, MONO, inkOn } from "./tokens";
 
 /* ================= form controls =================
    Every control shares one shape and one focus treatment. The app previously
@@ -103,7 +103,7 @@ export function Checkbox({ checked, onChange, label, sub, disabled, round = fals
           borderRadius: round ? 999 : 6,
           background: checked ? P.brass : "transparent",
           border: `1px solid ${checked ? P.brass : P.line}`,
-          color: P.onbrass,
+          color: inkOn(P.brass),
         }}
       >
         {checked && <Check size={12} strokeWidth={3} />}

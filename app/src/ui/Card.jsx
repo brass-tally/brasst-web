@@ -8,6 +8,16 @@ import { P, elev, R, SERIF, MONO } from "./tokens";
    Before this, both were typed out by hand at ~60 call sites, which is why
    some cards had elevation and others silently didn't. */
 
+/* The card's style object on its own, for the places that already have their
+   own element and only want the surface — a <div> wrapping a grid, a <section>
+   with its own semantics. Same values Card uses, so the two cannot drift. */
+export const cardStyle = ({ tone = "line", level = 1 } = {}) => ({
+  background: P.surface,
+  border: `1px solid ${tone === "brass" ? P.brass : tone === "credit" ? P.credit : tone === "debit" ? P.debit : P.line}`,
+  borderRadius: R.card,
+  boxShadow: elev(level),
+});
+
 export function Card({
   children,
   className = "",

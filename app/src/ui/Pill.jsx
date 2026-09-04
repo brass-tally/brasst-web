@@ -1,5 +1,5 @@
 import React from "react";
-import { P, R, MONO } from "./tokens";
+import { P, R, MONO, inkOn } from "./tokens";
 
 /* ================= pills and toggles ================= */
 
@@ -28,7 +28,7 @@ export function Pill({
         borderRadius: R.pill,
         border: `1px solid ${solid ? accent : accent}`,
         background: solid ? accent : "transparent",
-        color: solid ? P.onbrass : accent,
+        color: solid ? inkOn(accent) : accent,
         fontFamily: mono ? MONO : undefined,
         letterSpacing: mono ? "0.08em" : undefined,
         fontWeight: 600,
@@ -70,7 +70,7 @@ export function Segmented({ options, value, onChange, size = "md", className = "
             style={{
               borderRadius: R.pill,
               background: on ? P.brass : "transparent",
-              color: on ? P.onbrass : P.muted,
+              color: on ? inkOn(P.brass) : P.muted,
               fontWeight: on ? 600 : 500,
               whiteSpace: "nowrap",
             }}

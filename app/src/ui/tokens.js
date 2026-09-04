@@ -94,6 +94,20 @@ export const SHADOW = {
 };
 export const elev = (level) => SHADOW[P.mode === "light" ? "light" : "dark"][level];
 
+/* Which ink to lay on a filled surface. Brass is light in both themes, so it
+   always takes the dark ink — but credit and debit invert between themes (a
+   soft mint on the dark ledger, a deep forest on paper), and a fixed dark ink
+   disappeared into them in light mode. Relative luminance decides instead. */
+const LIGHT_INK = "#FBF7EC";
+export function inkOn(hex) {
+  const h = String(hex).replace("#", "");
+  if (h.length < 6) return P.onbrass;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L > 0.45 ? P.onbrass : LIGHT_INK;
+}
+
 /* ================= radii =================
    Named for what they wrap rather than for their size, so a card and a modal
    can be retuned without hunting through rounded-lg/rounded-xl call sites.
