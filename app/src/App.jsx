@@ -26,69 +26,20 @@ import {
 import { GUIDES, guideOpener } from "./lib/guides";
 import { ToastContainer } from "./components/Toast";
 import { notify, createNotification } from "./lib/notifications";
+import {
+  P, PALETTES, elev, R, MONO, SANS, SERIF, applyThemeVars, THEME_KEY,
+  Card, Panel, SectionHeading, Stat,
+  Btn, IconButton,
+  Label, Input, CodeInput, Textarea, Select, Checkbox, CONTROL,
+  Modal, ModalBody,
+  Pill, Segmented,
+  EmptyState,
+  Bone, LedgerSkeleton, Spinner, LoadingLine,
+  Reveal,
+} from "./ui";
 
-/* ================= palettes: midnight & daylight ledger ================= */
-const PALETTES = {
-  dark: {
-    mode: "dark",
-    bg: "#101613",
-    surface: "#171F1B",
-    surface2: "#1D2622",
-    line: "#2A3530",
-    text: "#F3F1E7",
-    muted: "#AEB5A9",
-    faint: "#7C847B",
-    credit: "#6FCB97",
-    debit: "#E0705F",
-    brass: "#F2B94A",
-    overlay: "rgba(6,10,8,0.75)",
-  },
-  light: {
-    mode: "light",
-    bg: "#F5F3EC",            // warm paper, a touch brighter so cards don't glare against it
-    surface: "#FAF8F1",       // soft cream instead of near-white
-    surface2: "#EDEAE0",
-    line: "#E0DCCE",          // hairlines recede instead of gridding the page
-    text: "#2A2F27",          // soft ink, not black
-    muted: "#59604F",
-    faint: "#83887A",
-    credit: "#2E7D54",        // calmer green
-    debit: "#B0523F",         // terracotta instead of alarm red
-    brass: "#DFA726",
-    overlay: "rgba(52,56,46,0.38)",
-  },
-};
-// Mutable palette object, every component reads P at render time, so swapping
-// its values and re-rendering the tree re-themes the whole app.
-const P = { ...PALETTES.dark };
-const MONO = "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-const SANS = "'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif";
-// Headings use the same grotesque as the UI — weight and tracking carry the
-// hierarchy instead of a second, more traditional-looking family.
-const SERIF = SANS;
-
-/* ================= elevation =================
-   Shadows carry the hue of the ground they fall on, never flat black. On the
-   dark ledger that means a deep green-black; on paper, a warm grey. Three
-   steps only — resting card, raised (hover / popover), and lifted (modal) —
-   so elevation reads as hierarchy instead of decoration. */
-const SHADOW = {
-  dark: {
-    1: "0 1px 2px rgba(4,8,6,.34)",
-    2: "0 2px 4px rgba(4,8,6,.30), 0 8px 20px -8px rgba(4,8,6,.55)",
-    3: "0 4px 8px rgba(4,8,6,.34), 0 28px 64px -24px rgba(4,8,6,.72)",
-  },
-  light: {
-    1: "0 1px 2px rgba(58,52,38,.06)",
-    2: "0 2px 4px rgba(58,52,38,.07), 0 8px 20px -8px rgba(58,52,38,.16)",
-    3: "0 4px 8px rgba(58,52,38,.08), 0 28px 64px -24px rgba(58,52,38,.26)",
-  },
-};
-const elev = (level) => SHADOW[P.mode === "light" ? "light" : "dark"][level];
-// A brass-tinted ring for the focused state, so keyboard focus reads as the
-// same accent the rest of the app uses rather than the browser's blue. A
-// function, not a const: it has to re-read P after a theme swap.
-const focusRing = () => `0 0 0 2px ${P.bg}, 0 0 0 4px ${P.brass}`;
+/* Palette, elevation, radii, and type all live in src/ui/tokens.js now, and
+   the primitives that read them live alongside. This file imports both. */
 
 /* ================= helpers ================= */
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -205,167 +156,6 @@ function downloadCSV(filename, rows) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-/* ================= tiny UI atoms ================= */
-const Label = ({ children }) => (
-  <div style={{ color: P.muted, letterSpacing: "0.07em" }} className="text-xs uppercase font-medium mb-1.5">
-    {children}
-  </div>
-);
-
-// Controls share one shape: a soft rectangle with room to breathe and a focus
-// ring that reads as a ring rather than a browser outline.
-const CONTROL = "rounded-lg px-3 py-2.5 text-sm w-full outline-none transition-shadow duration-150 focus:shadow-[0_0_0_3px_var(--focus-ring)]";
-
-const Input = (props) => (
-  <input
-    {...props}
-    style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, "--focus-ring": P.brass + "33", ...props.style }}
-    className={CONTROL + " " + (props.className || "")}
-  />
-);
-
-const Select = ({ children, ...props }) => (
-  <select
-    {...props}
-    style={{ background: P.bg, border: `1px solid ${P.line}`, color: P.text, "--focus-ring": P.brass + "33" }}
-    className={CONTROL}
-  >
-    {children}
-  </select>
-);
-
-const Btn = React.forwardRef(({ children, tone = "brass", ...props }, ref) => {
-  const bg = tone === "brass" ? P.brass : tone === "credit" ? P.credit : tone === "debit" ? P.debit : P.surface2;
-  const fg = tone === "ghost" ? P.text : "#10120C";
-  return (
-    <button
-      ref={ref}
-      {...props}
-      style={{
-        background: bg,
-        color: fg,
-        border: tone === "ghost" ? `1px solid ${P.line}` : "1px solid transparent",
-        ...props.style,
-      }}
-      className={
-        "btn-surface rounded-lg px-3.5 py-2 text-sm font-medium inline-flex items-center gap-1.5 " +
-        "transition-[transform,box-shadow,filter,opacity] duration-150 active:scale-[.97] disabled:opacity-40 " +
-        "disabled:active:scale-100 disabled:hover:shadow-none " +
-        (props.className || "")
-      }
-    >
-      {children}
-    </button>
-  );
-});
-Btn.displayName = "Btn";
-
-/* ================= modal shell =================
-   One overlay for every dialog in the app. The backdrop blurs what is behind
-   it rather than just dimming it, and the panel carries a hairline highlight
-   along its top edge so it reads as lit from above, like the cards. */
-function Overlay({ children, onClose, align = "center", className = "", panelClass = "", panelStyle = {}, labelledBy }) {
-  useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose?.();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className={
-        "modal-overlay fixed inset-0 z-50 flex justify-center p-4 " +
-        (align === "start" ? "items-start overflow-y-auto " : "items-center ") +
-        className
-      }
-      style={{ background: P.overlay }}
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={labelledBy}
-        className={"modal-panel rounded-xl w-full " + panelClass}
-        style={{
-          background: P.surface,
-          border: `1px solid ${P.line}`,
-          boxShadow: elev(3),
-          ...panelStyle,
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/* ================= skeletons =================
-   The shape of the ledger, drawn before its numbers arrive, so opening a
-   ledger lands on the layout it is about to fill instead of on a spinner in
-   the middle of an empty page. */
-const Bone = ({ w, h = 12, className = "", style = {} }) => (
-  <div
-    className={"skeleton " + className}
-    style={{
-      width: w, height: h,
-      "--skeleton-base": P.mode === "light" ? "rgba(42,47,39,.07)" : "rgba(234,231,218,.055)",
-      "--skeleton-sheen": P.mode === "light" ? "rgba(42,47,39,.05)" : "rgba(234,231,218,.05)",
-      ...style,
-    }}
-  />
-);
-
-function LedgerSkeleton({ label = "Opening the ledger…" }) {
-  return (
-    <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS }}>
-      <div className="px-4 w-full mx-auto max-w-[1180px]" aria-busy="true" aria-live="polite">
-        <span className="sr-only">{label}</span>
-        <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-2">
-            <Bone w={78} h={9} />
-            <Bone w={210} h={28} />
-          </div>
-          <div className="flex items-center gap-2">
-            <Bone w={34} h={34} className="rounded-md" />
-            <Bone w={34} h={34} className="rounded-md" />
-            <Bone w={150} h={34} className="rounded-lg" />
-          </div>
-        </header>
-
-        {/* the signature ledger line */}
-        <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
-          <div className="flex flex-wrap gap-8">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="space-y-2">
-                <Bone w={72} h={9} />
-                <Bone w={118} h={22} />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-6 mb-4"><Bone w={168} h={20} /></div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          {[0, 1].map((i) => (
-            <div key={i} style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4 space-y-3">
-              <Bone w={140} h={16} />
-              {[0, 1, 2, 3].map((r) => (
-                <div key={r} className="flex items-center gap-3">
-                  <Bone w={88} h={11} />
-                  <Bone w="100%" h={8} className="flex-1" />
-                  <Bone w={62} h={11} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ================= confirm =================
    Replaces window.confirm, which drops an unstyled OS dialog on top of the
    ledger and cannot say which ledger it is about to wipe. Promise-based so
@@ -396,20 +186,38 @@ function ConfirmHost() {
   const danger = req.tone !== "normal"; // destructive is the common case here
 
   return (
-    <Overlay onClose={() => settle(false)} panelClass="max-w-md p-5" labelledBy="confirm-title">
-      <div className="flex items-start gap-3">
+    <Modal
+      onClose={() => settle(false)}
+      size="sm"
+      showClose={false}
+      labelledBy="confirm-title"
+      footer={
+        <>
+          <Btn tone="ghost" onClick={() => settle(false)}>{req.cancelLabel || "Cancel"}</Btn>
+          <Btn
+            ref={confirmRef}
+            tone={danger ? "debit" : "brass"}
+            onClick={() => settle(true)}
+            style={danger ? { color: "#FBF7EC" } : undefined}
+          >
+            {req.confirmLabel || "Confirm"}
+          </Btn>
+        </>
+      }
+    >
+      <ModalBody className="flex items-start gap-3.5 pt-5">
         <div
-          className="shrink-0 rounded-lg flex items-center justify-center"
+          className="shrink-0 flex items-center justify-center"
           style={{
-            width: 34, height: 34,
+            width: 38, height: 38, borderRadius: R.control,
             background: (danger ? P.debit : P.brass) + "1f",
             color: danger ? P.debit : P.brass,
           }}
         >
-          <AlertTriangle size={16} />
+          <AlertTriangle size={17} />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 id="confirm-title" style={{ color: P.text }} className="text-lg mb-1 text-balance">
+          <h2 id="confirm-title" style={{ fontFamily: SERIF, color: P.text }} className="text-lg mb-1 text-balance">
             {req.title}
           </h2>
           {req.body && (
@@ -418,42 +226,24 @@ function ConfirmHost() {
             </p>
           )}
         </div>
-      </div>
-      <div className="flex justify-end gap-2 mt-5">
-        <Btn tone="ghost" onClick={() => settle(false)}>{req.cancelLabel || "Cancel"}</Btn>
-        <Btn
-          ref={confirmRef}
-          tone={danger ? "debit" : "brass"}
-          onClick={() => settle(true)}
-          style={danger ? { color: "#FBF7EC" } : undefined}
-        >
-          {req.confirmLabel || "Confirm"}
-        </Btn>
-      </div>
-    </Overlay>
+      </ModalBody>
+    </Modal>
   );
 }
 
 /* one-time vs recurring */
 const isRec = (x) => x?.recurrence === "recurring";
 const RecToggle = ({ value, onChange }) => (
-  <div className="flex gap-1">
-    {[["once", "One-time"], ["recurring", "Recurring"]].map(([k, label]) => (
-      <button
-        key={k}
-        type="button"
-        onClick={() => onChange(k)}
-        style={{
-          background: value === k ? P.surface2 : "transparent",
-          border: `1px solid ${value === k ? P.brass : P.line}`,
-          color: value === k ? P.text : P.muted,
-        }}
-        className="flex-1 rounded px-2 py-1 text-xs inline-flex items-center justify-center gap-1"
-      >
-        {k === "recurring" && <Repeat size={11} />} {label}
-      </button>
-    ))}
-  </div>
+  <Segmented
+    full
+    size="sm"
+    value={value}
+    onChange={onChange}
+    options={[
+      { value: "once", label: "One-time" },
+      { value: "recurring", label: "Recurring", icon: <Repeat size={11} /> },
+    ]}
+  />
 );
 const RecMark = () => <Repeat size={11} style={{ color: P.brass, display: "inline", verticalAlign: "-1px" }} title="Recurring" />;
 
@@ -1172,6 +962,8 @@ function Ledger({ onSignOut }) {
         const loaded = await db.loadAll(currentLedger);
         const t = loaded.settings.theme === "light" ? "light" : "dark";
         Object.assign(P, PALETTES[t]);
+        applyThemeVars(P);
+        try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
         setThemeState(t);
         setMonth(thisMonth());
         // OAuth banks bounce back to origin/; BankFeedCard only mounts on Connectors
@@ -1847,6 +1639,11 @@ function Ledger({ onSignOut }) {
 
   const setTheme = (t) => {
     Object.assign(P, PALETTES[t]);
+    // Mirror onto the document root so stylesheet rules follow the swap, and
+    // into storage so the next load — and the landing page, which reads the
+    // same key — paints the right theme before any JS runs.
+    applyThemeVars(P);
+    try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
     setThemeState(t);
     setData((d) => ({ ...d, settings: { ...d.settings, theme: t } }));
     dbTry(() => db.setTheme(t));
@@ -3402,14 +3199,16 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
   const max = Math.max(sums.inc, sums.exp, 1);
   const fromBank = balance.source === "bank";
   return (
-    <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
-      <div className="flex flex-wrap justify-between gap-4 mb-3">
-        <Stat label="Money in" value={fmt(sums.inc)} color={P.credit} />
-        <Stat label="Money out" value={fmt(sums.exp)} color={P.debit} />
-        <Stat label="Net this month" value={fmt(sums.net)} color={sums.net >= 0 ? P.credit : P.debit} />
+    <Card level={2}>
+      <div className="flex flex-wrap justify-between gap-5 mb-4">
+        <Stat size="text-xl" label="Money in" value={fmt(sums.inc)} tone={P.credit} />
+        <Stat size="text-xl" label="Money out" value={fmt(sums.exp)} tone={P.debit} />
+        <Stat size="text-xl" label="Net this month" value={fmt(sums.net)} tone={sums.net >= 0 ? P.credit : P.debit} />
         <div className="flex items-start gap-1.5">
           <button onClick={onReconcile} className="text-left" title={fromBank ? "Bank balance · tap to align books" : "Set or correct the balance against your real accounts"}>
-            <Label>{fromBank ? "Balance to date · bank" : "Balance to date · fix"}</Label>
+            <div style={{ color: P.faint, letterSpacing: "0.07em" }} className="text-xs uppercase mb-1">
+              {fromBank ? "Balance to date · bank" : "Balance to date · fix"}
+            </div>
             <div style={{ fontFamily: MONO, color: P.brass }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
               {balance.beforeAnchor ? "·" : fmt(balance.value)}
             </div>
@@ -3428,7 +3227,7 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
         </div>
         {creditsLeft !== null && (
           <button onClick={onCredits} className="text-left" title="Non-cash credits remaining across all pools, tap to manage">
-            <Label>Credits left</Label>
+            <div style={{ color: P.faint, letterSpacing: "0.07em" }} className="text-xs uppercase mb-1">Credits left</div>
             <div style={{ fontFamily: MONO, color: creditsLeft > 0 ? P.credit : P.debit }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4">
               {fmt(creditsLeft)}
             </div>
@@ -3464,16 +3263,9 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
             ? `this month ends before your balance anchor (${balance.anchorDate}), no balance shown`
             : `anchored: ${fmt(balance.anchorAmount)} on ${balance.anchorDate} · tap the balance to correct it`}
       </div>
-    </div>
+    </Card>
   );
 }
-
-const Stat = ({ label, value, color }) => (
-  <div>
-    <Label>{label}</Label>
-    <div style={{ fontFamily: MONO, color }} className="text-xl tabular-nums">{value}</div>
-  </div>
-);
 
 /* ================= Overview ================= */
 function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk }) {
