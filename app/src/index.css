@@ -6,6 +6,131 @@
 
 html, body, #root { min-height: 100%; }
 body { margin: 0; background: #101613; }
+html { scroll-behavior: smooth; }
+
+/* Motion is a courtesy, not a requirement. Everything below collapses to an
+   instant state change for anyone who has asked their OS to stop animating. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---- buttons ----
+   Filled buttons lift by brightening rather than by swapping to a second
+   hard-coded colour, so every tone (brass, credit, debit, ghost) gets a
+   consistent response without the palette needing a hover value for each. */
+.btn-surface:not(:disabled):hover { filter: brightness(1.08); }
+.btn-surface:not(:disabled):active { filter: brightness(0.96); }
+
+/* ---- focus ----
+   One visible ring for keyboard users across every interactive element. Uses
+   :focus-visible so a mouse click does not leave a ring behind. */
+:where(button, a, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--ring, #F2B94A);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---- cards ----
+   The resting state carries a shadow already; hover raises it and floats the
+   card a single pixel. Transform, not margin, so it stays on the compositor. */
+.card-interactive {
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 180ms ease;
+  will-change: transform;
+}
+.card-interactive:hover { transform: translateY(-1px); }
+.card-interactive:active { transform: translateY(0); }
+
+/* Rows in the ledger and tables: no lift, just a ground shift, so long lists
+   do not shimmer as the pointer crosses them. The colour comes from the
+   palette via a variable, so the row follows a theme swap without re-rendering
+   every line in the list. */
+.row-interactive { transition: background-color 140ms ease; }
+.row-interactive:hover { background-color: var(--row-hover, transparent); }
+
+/* ---- modals ---- */
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal-overlay {
+  animation: overlay-in 160ms ease;
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+.modal-panel {
+  animation: panel-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* The hairline along the top edge is what sells the glass: a lit rim where
+     the panel catches the light, then a soft inner falloff below it. */
+  position: relative;
+}
+.modal-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* ---- skeletons ----
+   A sheen crossing a block, rather than a spinner in the middle of an empty
+   page: the shapes tell you what is arriving while it arrives. */
+@keyframes skeleton-sheen {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--skeleton-base, rgba(255, 255, 255, 0.05));
+  border-radius: 6px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--skeleton-sheen, rgba(255, 255, 255, 0.06)),
+    transparent
+  );
+  animation: skeleton-sheen 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after { display: none; }
+}
+
+/* ---- charts ----
+   Bars grow from their baseline on mount instead of snapping to full height.
+   Scale, not height, so the browser animates it on the GPU. */
+@keyframes bar-rise-y {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+@keyframes bar-rise-x {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.bar-rise-y {
+  transform-origin: bottom;
+  animation: bar-rise-y 520ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.bar-rise-x {
+  transform-origin: left;
+  animation: bar-rise-x 560ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
 
 @keyframes dock-capture-badge-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }

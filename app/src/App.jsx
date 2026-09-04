@@ -30,6 +30,7 @@ import { notify, createNotification } from "./lib/notifications";
 /* ================= palettes: midnight & daylight ledger ================= */
 const PALETTES = {
   dark: {
+    mode: "dark",
     bg: "#101613",
     surface: "#171F1B",
     surface2: "#1D2622",
@@ -43,6 +44,7 @@ const PALETTES = {
     overlay: "rgba(6,10,8,0.75)",
   },
   light: {
+    mode: "light",
     bg: "#F5F3EC",            // warm paper, a touch brighter so cards don't glare against it
     surface: "#FAF8F1",       // soft cream instead of near-white
     surface2: "#EDEAE0",
@@ -65,6 +67,28 @@ const SANS = "'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-se
 // hierarchy instead of a second, more traditional-looking family.
 const SERIF = SANS;
 
+/* ================= elevation =================
+   Shadows carry the hue of the ground they fall on, never flat black. On the
+   dark ledger that means a deep green-black; on paper, a warm grey. Three
+   steps only — resting card, raised (hover / popover), and lifted (modal) —
+   so elevation reads as hierarchy instead of decoration. */
+const SHADOW = {
+  dark: {
+    1: "0 1px 2px rgba(4,8,6,.34)",
+    2: "0 2px 4px rgba(4,8,6,.30), 0 8px 20px -8px rgba(4,8,6,.55)",
+    3: "0 4px 8px rgba(4,8,6,.34), 0 28px 64px -24px rgba(4,8,6,.72)",
+  },
+  light: {
+    1: "0 1px 2px rgba(58,52,38,.06)",
+    2: "0 2px 4px rgba(58,52,38,.07), 0 8px 20px -8px rgba(58,52,38,.16)",
+    3: "0 4px 8px rgba(58,52,38,.08), 0 28px 64px -24px rgba(58,52,38,.26)",
+  },
+};
+const elev = (level) => SHADOW[P.mode === "light" ? "light" : "dark"][level];
+// A brass-tinted ring for the focused state, so keyboard focus reads as the
+// same accent the rest of the app uses rather than the browser's blue. A
+// function, not a const: it has to re-read P after a theme swap.
+const focusRing = () => `0 0 0 2px ${P.bg}, 0 0 0 4px ${P.brass}`;
 
 /* ================= helpers ================= */
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -210,11 +234,12 @@ const Select = ({ children, ...props }) => (
   </select>
 );
 
-const Btn = ({ children, tone = "brass", ...props }) => {
+const Btn = React.forwardRef(({ children, tone = "brass", ...props }, ref) => {
   const bg = tone === "brass" ? P.brass : tone === "credit" ? P.credit : tone === "debit" ? P.debit : P.surface2;
   const fg = tone === "ghost" ? P.text : "#10120C";
   return (
     <button
+      ref={ref}
       {...props}
       style={{
         background: bg,
@@ -223,15 +248,191 @@ const Btn = ({ children, tone = "brass", ...props }) => {
         ...props.style,
       }}
       className={
-        "rounded-lg px-3.5 py-2 text-sm font-medium inline-flex items-center gap-1.5 " +
-        "transition-[transform,opacity] duration-150 active:scale-[.97] disabled:opacity-40 disabled:active:scale-100 " +
+        "btn-surface rounded-lg px-3.5 py-2 text-sm font-medium inline-flex items-center gap-1.5 " +
+        "transition-[transform,box-shadow,filter,opacity] duration-150 active:scale-[.97] disabled:opacity-40 " +
+        "disabled:active:scale-100 disabled:hover:shadow-none " +
         (props.className || "")
       }
     >
       {children}
     </button>
   );
-};
+});
+Btn.displayName = "Btn";
+
+/* ================= modal shell =================
+   One overlay for every dialog in the app. The backdrop blurs what is behind
+   it rather than just dimming it, and the panel carries a hairline highlight
+   along its top edge so it reads as lit from above, like the cards. */
+function Overlay({ children, onClose, align = "center", className = "", panelClass = "", panelStyle = {}, labelledBy }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className={
+        "modal-overlay fixed inset-0 z-50 flex justify-center p-4 " +
+        (align === "start" ? "items-start overflow-y-auto " : "items-center ") +
+        className
+      }
+      style={{ background: P.overlay }}
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        className={"modal-panel rounded-xl w-full " + panelClass}
+        style={{
+          background: P.surface,
+          border: `1px solid ${P.line}`,
+          boxShadow: elev(3),
+          ...panelStyle,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ================= skeletons =================
+   The shape of the ledger, drawn before its numbers arrive, so opening a
+   ledger lands on the layout it is about to fill instead of on a spinner in
+   the middle of an empty page. */
+const Bone = ({ w, h = 12, className = "", style = {} }) => (
+  <div
+    className={"skeleton " + className}
+    style={{
+      width: w, height: h,
+      "--skeleton-base": P.mode === "light" ? "rgba(42,47,39,.07)" : "rgba(234,231,218,.055)",
+      "--skeleton-sheen": P.mode === "light" ? "rgba(42,47,39,.05)" : "rgba(234,231,218,.05)",
+      ...style,
+    }}
+  />
+);
+
+function LedgerSkeleton({ label = "Opening the ledger…" }) {
+  return (
+    <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS }}>
+      <div className="px-4 w-full mx-auto max-w-[1180px]" aria-busy="true" aria-live="polite">
+        <span className="sr-only">{label}</span>
+        <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-2">
+            <Bone w={78} h={9} />
+            <Bone w={210} h={28} />
+          </div>
+          <div className="flex items-center gap-2">
+            <Bone w={34} h={34} className="rounded-md" />
+            <Bone w={34} h={34} className="rounded-md" />
+            <Bone w={150} h={34} className="rounded-lg" />
+          </div>
+        </header>
+
+        {/* the signature ledger line */}
+        <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
+          <div className="flex flex-wrap gap-8">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="space-y-2">
+                <Bone w={72} h={9} />
+                <Bone w={118} h={22} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-6 mb-4"><Bone w={168} h={20} /></div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          {[0, 1].map((i) => (
+            <div key={i} style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4 space-y-3">
+              <Bone w={140} h={16} />
+              {[0, 1, 2, 3].map((r) => (
+                <div key={r} className="flex items-center gap-3">
+                  <Bone w={88} h={11} />
+                  <Bone w="100%" h={8} className="flex-1" />
+                  <Bone w={62} h={11} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= confirm =================
+   Replaces window.confirm, which drops an unstyled OS dialog on top of the
+   ledger and cannot say which ledger it is about to wipe. Promise-based so
+   callers keep reading top-to-bottom: `if (!(await askConfirm(...))) return;`. */
+let confirmHandler = null;
+const askConfirm = (opts) =>
+  new Promise((resolve) => {
+    // No host mounted (an early-boot path, say) — fall back rather than hang.
+    if (!confirmHandler) return resolve(window.confirm(opts.body || opts.title));
+    confirmHandler({ ...opts, resolve });
+  });
+
+function ConfirmHost() {
+  const [req, setReq] = useState(null);
+  const confirmRef = useRef(null);
+
+  useEffect(() => {
+    confirmHandler = setReq;
+    return () => { confirmHandler = null; };
+  }, []);
+
+  useEffect(() => {
+    if (req) confirmRef.current?.focus();
+  }, [req]);
+
+  if (!req) return null;
+  const settle = (answer) => { req.resolve(answer); setReq(null); };
+  const danger = req.tone !== "normal"; // destructive is the common case here
+
+  return (
+    <Overlay onClose={() => settle(false)} panelClass="max-w-md p-5" labelledBy="confirm-title">
+      <div className="flex items-start gap-3">
+        <div
+          className="shrink-0 rounded-lg flex items-center justify-center"
+          style={{
+            width: 34, height: 34,
+            background: (danger ? P.debit : P.brass) + "1f",
+            color: danger ? P.debit : P.brass,
+          }}
+        >
+          <AlertTriangle size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 id="confirm-title" style={{ color: P.text }} className="text-lg mb-1 text-balance">
+            {req.title}
+          </h2>
+          {req.body && (
+            <p style={{ color: P.muted, maxWidth: "58ch" }} className="text-sm text-pretty">
+              {req.body}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2 mt-5">
+        <Btn tone="ghost" onClick={() => settle(false)}>{req.cancelLabel || "Cancel"}</Btn>
+        <Btn
+          ref={confirmRef}
+          tone={danger ? "debit" : "brass"}
+          onClick={() => settle(true)}
+          style={danger ? { color: "#FBF7EC" } : undefined}
+        >
+          {req.confirmLabel || "Confirm"}
+        </Btn>
+      </div>
+    </Overlay>
+  );
+}
 
 /* one-time vs recurring */
 const isRec = (x) => x?.recurrence === "recurring";
@@ -262,23 +463,55 @@ const subsFor = (data, type, category) =>
 
 function SubPicker({ data, type, category, value, onChange, addSub, compact }) {
   const subs = subsFor(data, type, category);
+  // Adding a subcategory happens in place: the select becomes a text field
+  // right where it stood, instead of throwing an OS prompt over the ledger.
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (adding) inputRef.current?.focus(); }, [adding]);
+
+  const cancel = () => { setAdding(false); setDraft(""); };
+  const commit = () => {
+    const name = draft.trim();
+    if (!name) return cancel();
+    if (!subs.includes(name)) addSub(type, category, name);
+    onChange(name);
+    cancel();
+  };
+
   const handle = (v) => {
-    if (v === "__add__") {
-      const name = window.prompt(`New subcategory under ${category}:`);
-      if (name && name.trim()) {
-        addSub(type, category, name.trim());
-        onChange(name.trim());
-      }
-      return;
-    }
+    if (v === "__add__") { setDraft(""); setAdding(true); return; }
     onChange(v);
   };
+
+  const shape = compact ? "rounded px-1 py-0.5 text-xs w-24" : "rounded px-2 py-1.5 text-sm w-full outline-none";
+
+  if (adding) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        }}
+        placeholder={compact ? "name" : `new subcategory under ${category}`}
+        aria-label={`New subcategory under ${category}`}
+        style={{ background: P.bg, border: `1px solid ${P.brass}`, color: P.text }}
+        className={shape + " outline-none"}
+      />
+    );
+  }
+
   return (
     <select
       value={value && subs.includes(value) ? value : value || ""}
       onChange={(e) => handle(e.target.value)}
       style={{ background: P.bg, border: `1px solid ${P.line}`, color: value ? P.text : P.faint }}
-      className={compact ? "rounded px-1 py-0.5 text-xs w-24" : "rounded px-2 py-1.5 text-sm w-full outline-none"}
+      className={shape}
       title="Subcategory"
     >
       <option value="">{compact ? "sub" : "no subcategory"}</option>
@@ -308,19 +541,73 @@ const creditsTotalRemaining = (data) => (data.credits || []).reduce((s, c) => s 
 
 /* one "Paid via" selector everywhere: cash, each pool (with remaining), or create a pool inline */
 function PayViaSelect({ data, payMethod, creditId, onChange, addCredit }) {
+  // A new pool needs two answers, so it expands into a two-field row under the
+  // select rather than firing two OS prompts back to back.
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const nameRef = useRef(null);
+
+  useEffect(() => { if (adding) nameRef.current?.focus(); }, [adding]);
+
+  const cancel = () => { setAdding(false); setName(""); setAmount(""); };
+  const amt = parseFloat(amount);
+  const valid = name.trim() && !Number.isNaN(amt);
+  const commit = () => {
+    if (!valid) return;
+    const id = addCredit(name.trim(), Math.abs(amt));
+    onChange("credits", id);
+    cancel();
+  };
+
   const handle = (v) => {
     if (v === "cash") return onChange("cash", null);
-    if (v === "__addpool__") {
-      const name = window.prompt("Credit pool name (e.g. MongoDB credits):");
-      if (!name || !name.trim()) return;
-      const amt = parseFloat(window.prompt(`How many credits did ${name.trim()} grant? (number)`) || "");
-      if (Number.isNaN(amt)) return;
-      const id = addCredit(name.trim(), Math.abs(amt));
-      onChange("credits", id);
-      return;
-    }
+    if (v === "__addpool__") return setAdding(true);
     onChange("credits", v);
   };
+
+  if (adding) {
+    return (
+      <div
+        style={{ background: P.bg, border: `1px solid ${P.brass}` }}
+        className="rounded-lg p-2.5 space-y-2"
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        }}
+      >
+        <div className="flex gap-2">
+          <input
+            ref={nameRef}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Pool name"
+            aria-label="Credit pool name"
+            style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.text }}
+            className="rounded px-2 py-1.5 text-sm flex-1 min-w-0 outline-none"
+          />
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            inputMode="decimal"
+            placeholder="Granted"
+            aria-label="Credits granted"
+            style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.text, fontFamily: MONO }}
+            className="rounded px-2 py-1.5 text-sm w-28 tabular-nums outline-none"
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={cancel} style={{ color: P.muted }} className="text-xs px-2 py-1">
+            Cancel
+          </button>
+          <Btn type="button" onClick={commit} disabled={!valid} className="!px-2.5 !py-1 !text-xs">
+            <Check size={12} /> Add pool
+          </Btn>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <Select value={payMethod === "credits" ? creditId || "" : "cash"} onChange={(e) => handle(e.target.value)}>
       <option value="cash">Cash / bank</option>
@@ -417,7 +704,7 @@ class Boundary extends React.Component {
   render() {
     if (!this.state.err) return this.props.children;
     return (
-      <div style={{ background: "#101613", color: "#EAE7DA", minHeight: "100vh", fontFamily: SANS }} className="flex items-center justify-center p-6">
+      <div style={{ background: "#101613", color: "#EAE7DA", minHeight: "100dvh", fontFamily: SANS }} className="flex items-center justify-center p-6">
         <div style={{ maxWidth: 480 }}>
           <h1 style={{ fontFamily: SANS }} className="text-xl mb-2">Something broke</h1>
           <p style={{ color: "#8B9389" }} className="text-sm mb-3">
@@ -498,7 +785,7 @@ export default function App() {
 
   if (session === undefined)
     return (
-      <div style={{ background: P.bg, color: P.muted, minHeight: "100vh" }} className="flex items-center justify-center">
+      <div style={{ background: P.bg, color: P.muted, minHeight: "100dvh" }} className="flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" size={18} /> Connecting…
       </div>
     );
@@ -513,8 +800,8 @@ export default function App() {
 
 function AuthCard({ children }) {
   return (
-    <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }} className="flex items-center justify-center p-4">
-      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 1px 2px rgba(0,0,0,.04), 0 24px 60px -24px rgba(0,0,0,.35)" }} className="rounded-2xl p-7 w-full max-w-sm">
+    <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS }} className="flex items-center justify-center p-4">
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }} className="rounded-2xl p-7 w-full max-w-sm">
         <div style={{ fontFamily: MONO, color: P.brass, letterSpacing: "0.1em" }} className="text-xs uppercase mb-2">Down to brass tacks</div>
         <img src="/app/brasstally-wordmark.png" alt="Brasstally" style={{ height: 26, width: "auto", display: "block" }} />
         {children}
@@ -1113,7 +1400,7 @@ function Ledger({ onSignOut }) {
 
   if (fatal === "migration")
     return (
-      <div style={{ background: P.bg, color: P.text, minHeight: "100vh" }} className="flex items-center justify-center p-6">
+      <div style={{ background: P.bg, color: P.text, minHeight: "100dvh" }} className="flex items-center justify-center p-6">
         <div style={{ maxWidth: 460 }}>
           <h1 style={{ fontFamily: SERIF }} className="text-xl mb-2">One migration to run</h1>
           <p style={{ color: P.muted }} className="text-sm">
@@ -1125,22 +1412,12 @@ function Ledger({ onSignOut }) {
       </div>
     );
 
-  if (ledgers === null)
-    return (
-      <div style={{ background: P.bg, color: P.muted, minHeight: "100vh" }} className="flex items-center justify-center">
-        <Loader2 className="animate-spin mr-2" size={18} /> Finding your ledgers…
-      </div>
-    );
+  if (ledgers === null) return <LedgerSkeleton label="Finding your ledgers…" />;
 
   if (ledgers.length === 0)
     return <NewLedgerModal onboarding onCreate={createLedgerAndSwitch} onClose={() => {}} onSignOut={onSignOut} />;
 
-  if (!data)
-    return (
-      <div style={{ background: P.bg, color: P.muted, minHeight: "100vh" }} className="flex items-center justify-center">
-        <Loader2 className="animate-spin mr-2" size={18} /> Opening the ledger…
-      </div>
-    );
+  if (!data) return <LedgerSkeleton label="Opening the ledger…" />;
 
   /* ---- mutations: update state, then write through to Supabase ---- */
   // Adding an entry moves the view to that entry's month, so the ledger line,
@@ -1163,10 +1440,15 @@ function Ledger({ onSignOut }) {
         ? { ...b, status: "unmatched", matchedTxId: null, matchSource: null }
         : b));
 
-  const delTx = (id) => {
+  const delTx = async (id) => {
     const t = data.transactions.find((x) => x.id === id);
     if (t?.transferId) {
-      if (!window.confirm("This entry is one side of an inter-ledger transfer. Removing it deletes BOTH sides (here and in the other ledger). Continue?")) return;
+      const ok = await askConfirm({
+        title: "Remove both sides of this transfer?",
+        body: "This entry is one side of an inter-ledger transfer. Removing it deletes the matching entry in the other ledger too.",
+        confirmLabel: "Remove both",
+      });
+      if (!ok) return;
       const gone = data.transactions.filter((x) => x.transferId === t.transferId).map((x) => x.id);
       setData((d) => ({ ...d, transactions: d.transactions.filter((x) => x.transferId !== t.transferId) }));
       dropMatchesFor(gone);
@@ -1346,9 +1628,16 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.deleteObligation(id));
   };
   // Undo a settlement: remove the settled obligation AND the transaction it created.
-  const removeSettled = (kind, item) => {
+  const removeSettled = async (kind, item) => {
     if (inFlight.current.has(item.id)) return;
-    if (!window.confirm(`Remove this settled ${kind === "receivables" ? "receivable" : "payable"} and the transaction it logged? Use this to clear a mistaken or duplicate settlement.`)) return;
+    const noun = kind === "receivables" ? "receivable" : "payable";
+    const ok = await askConfirm({
+      title: `Reverse this settled ${noun}?`,
+      body: `Removes the ${noun} and the transaction it logged. Use this to clear a mistaken or duplicate settlement.`,
+      confirmLabel: "Reverse settlement",
+    });
+    if (!ok) return;
+    if (inFlight.current.has(item.id)) return; // a second click may have landed while the dialog was open
     inFlight.current.add(item.id);
     setTimeout(() => inFlight.current.delete(item.id), 1500);
 
@@ -1379,7 +1668,12 @@ function Ledger({ onSignOut }) {
     });
   };
   const resetAll = async () => {
-    if (!window.confirm(`Wipe "${data.ledger.name}" and start it fresh? Every entry, receivable, and credit pool in THIS ledger will be removed. Other ledgers are untouched.`)) return;
+    const ok = await askConfirm({
+      title: `Wipe "${data.ledger.name}" and start it fresh?`,
+      body: "Every entry, receivable, and credit pool in this ledger will be removed. Your other ledgers are untouched. This cannot be undone.",
+      confirmLabel: "Wipe this ledger",
+    });
+    if (!ok) return;
     setData(null);
     try { await db.resetLedger(data.ledger.kind); } catch (e) { console.error(e); }
     window.location.reload();
@@ -1580,8 +1874,10 @@ function Ledger({ onSignOut }) {
   ];
 
   return (
-    <div style={{ background: P.bg, color: P.text, minHeight: "100vh", fontFamily: SANS }}>
-      <div className="px-4" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
+    <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS, "--ring": P.brass }}>
+      {/* The ledger is a reading surface, so it stops widening past the point
+          where a row's date and its amount stop being one glance apart. */}
+      <div className="px-4 w-full mx-auto max-w-[1180px]" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
         {/* ===== header ===== */}
         <header className="pt-6 pb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -1602,7 +1898,7 @@ function Ledger({ onSignOut }) {
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setLedgerMenuOpen(false)} />
                     <div
-                      style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 12px 32px rgba(0,0,0,0.35)" }}
+                      style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(2) }}
                       className="absolute left-0 top-full mt-2 rounded-lg z-50 min-w-56 overflow-hidden py-1"
                     >
                       {ledgers.map((l) => (
@@ -1667,6 +1963,9 @@ function Ledger({ onSignOut }) {
           creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null}
           onCredits={() => setTab("credits")}
           onReconcile={() => (balance.source === "bank" ? setMatchOpen(true) : setReconciling(true))}
+          needsConsolidation={balance.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01}
+          consolidationSettled={consolidation.settled}
+          onConsolidate={() => setMatchOpen(true)}
         />
 
         {/* ===== tabs ===== */}
@@ -1680,37 +1979,6 @@ function Ledger({ onSignOut }) {
           <div style={{ border: `1px solid ${P.debit}`, color: P.debit }} className="rounded p-2 text-sm mb-4">
             Couldn't reach the database, the last change shows on screen but may not have saved. Check your connection and retry.
           </div>
-        )}
-
-        {/* The gap is worth shouting about until it's been worked through, and
-            no longer once it has. A finished consolidation stays finished
-            across ledger switches and reloads — until the bank or the books
-            move, at which point this turns loud again by itself. */}
-        {balance.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01 && (
-          <button
-            type="button"
-            onClick={() => setMatchOpen(true)}
-            style={{
-              border: `1px solid ${consolidation.settled ? P.line : P.debit}`,
-              color: consolidation.settled ? P.muted : P.debit,
-              background: "transparent",
-            }}
-            className="rounded p-2 text-sm mb-4 w-full text-left"
-          >
-            <span style={{ fontFamily: MONO }} className="text-xs">
-              Bank {fmt(balance.bank)} · books {fmt(balance.book)} · Δ {fmt(balance.delta)}
-              {balance.balanceAsOf ? ` as of ${String(balance.balanceAsOf).slice(0, 10)}` : ""}
-            </span>
-            <span className="block text-xs mt-0.5" style={{ color: consolidation.settled ? P.faint : P.muted }}>
-              {consolidation.settled
-                ? `Consolidated ${relDay(consolidation.last.createdAt)}. The gap is ${recon?.unexplained != null && Math.abs(recon.unexplained) >= 0.01 ? "as explained as it can be" : "fully accounted for"} by ${recon?.bankOnly.count || 0} bank ${(recon?.bankOnly.count || 0) === 1 ? "line" : "lines"} and ${recon?.bookOnly.count || 0} ${(recon?.bookOnly.count || 0) === 1 ? "entry" : "entries"} still open. Tap to review.`
-                : duplicates.length
-                  ? `${duplicates.length} possible ${duplicates.length === 1 ? "duplicate" : "duplicates"} in the books${recon ? `, ${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} recorded` : ""}. Tap to consolidate.`
-                  : recon && (recon.bankOnly.count || recon.bookOnly.count)
-                    ? `${recon.bankOnly.count} bank ${recon.bankOnly.count === 1 ? "line isn't" : "lines aren't"} in the books, ${recon.bookOnly.count} ${recon.bookOnly.count === 1 ? "entry hasn't" : "entries haven't"} cleared. Tap to pair them up.`
-                    : "Books and bank disagree. Tap to consolidate line by line."}
-            </span>
-          </button>
         )}
 
         {!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`) && (
@@ -1753,7 +2021,7 @@ function Ledger({ onSignOut }) {
       <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(24rem, calc(100vw - 24px))", pointerEvents: chatOpen ? "auto" : "none" }}>
         <div className={"capture-pop " + (chatOpen ? "open" : "")}>
           <div
-            style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: "0 16px 48px rgba(0,0,0,0.45)" }}
+            style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }}
             className="rounded-lg overflow-hidden"
           >
             {/* Tally has a name and a face, because you talk to someone, not to
@@ -1813,7 +2081,7 @@ function Ledger({ onSignOut }) {
       <nav className="fixed z-40 left-1/2 bottom-4" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 20px)" }}>
         <div
           className="dock flex items-center gap-0.5 px-2 py-1.5 rounded-full"
-          style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: "0 10px 34px rgba(0,0,0,0.30)" }}
+          style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: elev(3) }}
         >
           {tabs.map(([k, label, Icon]) => (
             <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={18} /></DockBtn>
@@ -1849,6 +2117,7 @@ function Ledger({ onSignOut }) {
       </nav>
 
       <ToastContainer notifications={notifications} onDismiss={dismissNotification} palette={P} />
+      <ConfirmHost />
 
       <PreviewModal preview={preview} onClose={closePreview} />
       {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll} ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />}
@@ -1920,10 +2189,10 @@ function PreviewModal({ preview, onClose }) {
   const isImage = preview.type?.startsWith("image/");
   const isPdf = preview.type === "application/pdf";
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
       <div
-        style={{ background: P.surface, border: `1px solid ${P.line}` }}
-        className="rounded-lg w-full max-w-3xl max-h-full flex flex-col overflow-hidden"
+        style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }}
+        className="modal-panel rounded-xl w-full max-w-3xl max-h-full flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: `1px solid ${P.line}` }}>
@@ -1981,8 +2250,8 @@ function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate,
   const drift = valid && currentValue != null ? parsed - currentValue : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }} className="modal-panel rounded-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-1">
           <h3 style={{ fontFamily: SERIF }} className="text-lg">Correct the balance</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
@@ -2447,8 +2716,8 @@ function MatchView({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-3 overflow-y-auto" style={{ background: P.overlay }} onClick={closeView}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-3xl p-5 my-6" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-start justify-center p-3 overflow-y-auto" style={{ background: P.overlay }} onClick={closeView}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }} className="modal-panel rounded-xl w-full max-w-3xl p-5 my-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
             <h3 style={{ fontFamily: SERIF }} className="text-xl">Consolidate</h3>
@@ -3005,10 +3274,10 @@ function ImportModal({ data, addSub, onImport, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
       <div
-        style={{ background: P.surface, border: `1px solid ${P.line}` }}
-        className="rounded-lg w-full max-w-2xl max-h-full flex flex-col overflow-hidden"
+        style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }}
+        className="modal-panel rounded-xl w-full max-w-2xl max-h-full flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
@@ -3129,21 +3398,34 @@ function ImportModal({ data, addSub, onImport, onClose }) {
 }
 
 /* ================= signature: the ledger line ================= */
-function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconcile }) {
+function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate }) {
   const max = Math.max(sums.inc, sums.exp, 1);
   const fromBank = balance.source === "bank";
   return (
-    <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+    <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
       <div className="flex flex-wrap justify-between gap-4 mb-3">
         <Stat label="Money in" value={fmt(sums.inc)} color={P.credit} />
         <Stat label="Money out" value={fmt(sums.exp)} color={P.debit} />
         <Stat label="Net this month" value={fmt(sums.net)} color={sums.net >= 0 ? P.credit : P.debit} />
-        <button onClick={onReconcile} className="text-left" title={fromBank ? "Bank balance · tap to align books" : "Set or correct the balance against your real accounts"}>
-          <Label>{fromBank ? "Balance to date · bank" : "Balance to date · fix"}</Label>
-          <div style={{ fontFamily: MONO, color: P.brass }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
-            {balance.beforeAnchor ? "·" : fmt(balance.value)}
-          </div>
-        </button>
+        <div className="flex items-start gap-1.5">
+          <button onClick={onReconcile} className="text-left" title={fromBank ? "Bank balance · tap to align books" : "Set or correct the balance against your real accounts"}>
+            <Label>{fromBank ? "Balance to date · bank" : "Balance to date · fix"}</Label>
+            <div style={{ fontFamily: MONO, color: P.brass }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
+              {balance.beforeAnchor ? "·" : fmt(balance.value)}
+            </div>
+          </button>
+          {needsConsolidation && (
+            <button
+              type="button"
+              onClick={onConsolidate}
+              title={consolidationSettled ? "Consolidated, but the gap isn't fully explained yet. Tap to review." : "Bank and books disagree. Tap to consolidate."}
+              style={{ color: consolidationSettled ? P.muted : P.debit }}
+              className="mt-0.5 rounded p-0.5"
+            >
+              <AlertTriangle size={14} />
+            </button>
+          )}
+        </div>
         {creditsLeft !== null && (
           <button onClick={onCredits} className="text-left" title="Non-cash credits remaining across all pools, tap to manage">
             <Label>Credits left</Label>
@@ -3313,10 +3595,10 @@ function CategoryDrill({ drill, monthTx, month, onClose }) {
   const tone = drill.type === "expense" ? P.debit : P.credit;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+    <div className="modal-overlay fixed inset-0 z-40 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
       <div
-        style={{ background: P.surface, border: `1px solid ${P.line}` }}
-        className="rounded-lg w-full max-w-xl max-h-full flex flex-col overflow-hidden"
+        style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }}
+        className="modal-panel rounded-xl w-full max-w-xl max-h-full flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
@@ -3395,7 +3677,7 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
   const list = showAll ? [...rows, ...extra] : rows;
   const tone = type === "expense" ? P.debit : P.credit;
   return (
-    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+    <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
       <div className="flex justify-between items-baseline mb-3">
         <h2 style={{ fontFamily: SERIF }} className="text-lg">{title}</h2>
         <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">planned / actual</div>
@@ -3771,7 +4053,7 @@ function Capture({
 
   return (
     <div
-      style={embedded ? {} : { background: P.surface, border: `1px solid ${P.line}` }}
+      style={embedded ? {} : { background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }}
       className={(embedded ? "" : "rounded-lg ") + "flex flex-col"}
     >
       {guideId && GUIDES[guideId] && (
@@ -4308,7 +4590,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   };
 
   return (
-    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+    <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
       <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg">{monthLabel(month)}, {list.length} entries</h2>
         <div className="flex gap-2 items-center">
@@ -4391,7 +4673,11 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 onCancel={() => setEditingId(null)}
               />
             ) : (
-              <div key={t.id} className="flex items-center gap-2 sm:gap-3 py-2.5" style={{ borderColor: P.line }}>
+              <div
+                key={t.id}
+                className="row-interactive flex items-center gap-2 sm:gap-3 py-2.5 px-2 -mx-2 rounded-md"
+                style={{ borderColor: P.line, "--row-hover": P.surface2 }}
+              >
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs w-10 sm:w-12 shrink-0">{t.date?.slice(5)}</div>
                 <button onClick={() => setEditingId(t.id)} className="flex-1 min-w-0 text-left" title="Edit this entry">
                   <div className="text-sm truncate">{t.description}</div>
@@ -4451,7 +4737,7 @@ function ChartTip({ show, children }) {
       style={{
         bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 6,
         background: P.text, color: P.surface, fontFamily: MONO, whiteSpace: "nowrap",
-        padding: "3px 7px", borderRadius: 5, fontSize: 11, boxShadow: "0 4px 14px rgba(0,0,0,0.28)",
+        padding: "3px 7px", borderRadius: 5, fontSize: 11, boxShadow: elev(2),
       }}
     >
       {children}
@@ -4550,7 +4836,7 @@ function ProfitLoss({ data, month }) {
         </Btn>
       </div>
 
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">{monthLabel(month)} statement</h2>
         <div className="space-y-2" style={{ fontFamily: MONO }}>
           <PLRow label="Revenue" value={revenue} color={P.credit} change={revenueChange} />
@@ -4584,7 +4870,7 @@ function ProfitLoss({ data, month }) {
       </section>
 
       {/* at-a-glance stats: burn rate, top category concentration, txn count — the numbers behind the statement above */}
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">At a glance</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatTile label="Avg. daily spend" value={fmt(avgDailyCost)} hint={`over ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"}`} />
@@ -4598,20 +4884,20 @@ function ProfitLoss({ data, month }) {
         </div>
       </section>
 
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">Where the money went</h2>
         {catRows.length === 0 ? (
           <p style={{ color: P.faint }} className="text-sm">No expenses in this view for {monthLabel(month)}.</p>
         ) : (
           <div className="space-y-2">
-            {catRows.map(([cat, v]) => (
-              <CatBarRow key={cat} cat={cat} value={v} max={maxCat} count={catCount[cat]} shareOfCosts={costs > 0 ? (v / costs) * 100 : null} />
+            {catRows.map(([cat, v], i) => (
+              <CatBarRow key={cat} index={i} cat={cat} value={v} max={maxCat} count={catCount[cat]} shareOfCosts={costs > 0 ? (v / costs) * 100 : null} />
             ))}
           </div>
         )}
       </section>
 
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <div className="flex items-baseline justify-between mb-3">
           <h2 style={{ fontFamily: SERIF }} className="text-lg">Six-month trend</h2>
           <div className="flex items-center gap-3 text-xs" style={{ color: P.faint, fontFamily: MONO }}>
@@ -4620,8 +4906,8 @@ function ProfitLoss({ data, month }) {
           </div>
         </div>
         <div className="flex items-end gap-3 h-32">
-          {trend.map((t) => (
-            <TrendBar key={t.m} t={t} maxTrend={maxTrend} active={t.m === month} />
+          {trend.map((t, i) => (
+            <TrendBar key={t.m} index={i} t={t} maxTrend={maxTrend} active={t.m === month} />
           ))}
         </div>
       </section>
@@ -4661,7 +4947,7 @@ function StatTile({ label, value, hint }) {
   );
 }
 
-function CatBarRow({ cat, value, max, count, shareOfCosts }) {
+function CatBarRow({ cat, value, max, count, shareOfCosts, index = 0 }) {
   const [hover, setHover] = useState(false);
   return (
     <div
@@ -4672,7 +4958,17 @@ function CatBarRow({ cat, value, max, count, shareOfCosts }) {
     >
       <div className="w-32 text-sm truncate">{cat}</div>
       <div className="flex-1 h-2 rounded-full overflow-hidden relative" style={{ background: P.bg }}>
-        <div style={{ width: `${(value / max) * 100}%`, background: P.debit, opacity: 0.8 }} className="h-full">
+        <div
+          style={{
+            width: `${(value / max) * 100}%`,
+            background: P.debit,
+            opacity: 0.8,
+            // Rows draw in sequence, heaviest category first, so the ranking
+            // reads as it lands rather than appearing all at once.
+            animationDelay: `${Math.min(index, 8) * 45}ms`,
+          }}
+          className="h-full bar-rise-x"
+        >
           <ChartTip show={hover}>
             {fmt(value)}{shareOfCosts !== null ? ` · ${shareOfCosts.toFixed(0)}% of costs` : ""} · {count} {count === 1 ? "txn" : "txns"}
           </ChartTip>
@@ -4683,7 +4979,7 @@ function CatBarRow({ cat, value, max, count, shareOfCosts }) {
   );
 }
 
-function TrendBar({ t, maxTrend, active }) {
+function TrendBar({ t, maxTrend, active, index = 0 }) {
   const [hover, setHover] = useState(false);
   return (
     <div
@@ -4696,8 +4992,16 @@ function TrendBar({ t, maxTrend, active }) {
         {monthLabel(t.m)}: +{fmt(t.inc)} / −{fmt(t.exp)} · net {fmt(t.net)}
       </ChartTip>
       <div className="flex items-end gap-0.5 w-full justify-center" style={{ height: 96 }}>
-        <div style={{ height: `${(t.inc / maxTrend) * 100}%`, background: P.credit, width: "30%", minHeight: t.inc ? 2 : 0 }} className="rounded-t" />
-        <div style={{ height: `${(t.exp / maxTrend) * 100}%`, background: P.debit, width: "30%", minHeight: t.exp ? 2 : 0 }} className="rounded-t" />
+        {/* Months stagger left to right, income a beat ahead of spend, so the
+            pair reads as one gesture per month instead of a wall going up. */}
+        <div
+          style={{ height: `${(t.inc / maxTrend) * 100}%`, background: P.credit, width: "30%", minHeight: t.inc ? 2 : 0, animationDelay: `${index * 50}ms` }}
+          className="rounded-t bar-rise-y"
+        />
+        <div
+          style={{ height: `${(t.exp / maxTrend) * 100}%`, background: P.debit, width: "30%", minHeight: t.exp ? 2 : 0, animationDelay: `${index * 50 + 25}ms` }}
+          className="rounded-t bar-rise-y"
+        />
       </div>
       <div style={{ fontFamily: MONO, color: active ? P.brass : P.faint }} className="text-xs">
         {t.m.slice(5)}
@@ -4731,7 +5035,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
 
   return (
     <div className="space-y-6">
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
           <Stat label="Owed to you" value={fmt(openAR)} color={P.credit} />
           <Stat label="You owe" value={fmt(openAP)} color={P.debit} />
@@ -5003,7 +5307,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
   };
 
   return (
-    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+    <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
       <div className="flex justify-between items-center mb-3 gap-2">
         <h2 style={{ fontFamily: SERIF }} className="text-lg flex-1">{title}</h2>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
@@ -5191,8 +5495,8 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-sm p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }} className="modal-panel rounded-xl w-full max-w-sm p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-1">
           <h3 style={{ fontFamily: SERIF }} className="text-lg">{action}</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
@@ -5297,7 +5601,7 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
   };
 
   return (
-    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+    <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
       <div className="flex justify-between items-center mb-1 gap-2">
         <h2 style={{ fontFamily: SERIF }} className="text-lg">Credits</h2>
         <Btn tone="ghost" onClick={() => setAdding(!adding)}>{adding ? <X size={14} /> : <Plus size={14} />}</Btn>
@@ -5352,7 +5656,20 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
                   </button>
                   <div className="flex gap-1 shrink-0">
                     <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} style={{ color: P.faint, padding: 6, margin: -6 }} title="Edit"><Pencil size={12} /></button>
-                    <button onClick={() => { if (window.confirm(`Remove the ${c.name} pool? Past entries keep their credit tag.`)) delCredit(c.id); }} style={{ color: P.faint, padding: 6, margin: -6 }} title="Remove"><Trash2 size={12} /></button>
+                    <button
+                      onClick={async () => {
+                        const ok = await askConfirm({
+                          title: `Remove the ${c.name} pool?`,
+                          body: "Entries already paid from it keep their credit tag.",
+                          confirmLabel: "Remove pool",
+                        });
+                        if (ok) delCredit(c.id);
+                      }}
+                      style={{ color: P.faint, padding: 6, margin: -6 }}
+                      title="Remove"
+                    >
+                      <Trash2 size={12} />
+                    </button>
                   </div>
                 </div>
                 <div style={{ fontFamily: MONO, color: remaining > 0 ? P.credit : P.debit }} className="text-lg tabular-nums">
@@ -5428,7 +5745,7 @@ function CashCalendar({ data }) {
 
     return (
       <div className="space-y-6">
-        <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
           <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
             <Stat label={`Expected in · ${span}d`} value={fmt(cashIn)} color={P.credit} />
             <Stat label={`Expected out · ${span}d`} value={fmt(cashOut)} color={P.debit} />
@@ -5462,7 +5779,7 @@ function CashCalendar({ data }) {
           </section>
         )}
 
-        <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
           <h2 style={{ fontFamily: SERIF }} className="text-lg mb-2">Next {span} days</h2>
           {dates.length === 0 ? (
             <p style={{ color: P.faint }} className="text-sm py-4">Nothing due in this window. Recurring receivables and payables you add will project here automatically.</p>
@@ -5504,7 +5821,7 @@ function CashCalendar({ data }) {
 
   return (
     <div className="space-y-6">
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
           <div className="flex items-center gap-2">
             <Btn tone="ghost" onClick={() => { setGridMonth(shiftMonth(gridMonth, -1)); setSelectedDay(null); }}>‹</Btn>
@@ -5556,7 +5873,7 @@ function CashCalendar({ data }) {
       </div>
 
       {selectedDay && (
-        <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
           <h2 style={{ fontFamily: SERIF }} className="text-lg mb-1">
             {new Date(selectedDay + "T00:00:00").toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}
           </h2>
@@ -5843,7 +6160,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
 
   return (
     <div className="space-y-6">
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-52">
             <Label>Period</Label>
@@ -5863,7 +6180,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
         </div>
       </section>
 
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">The period in six numbers</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <StatTile label="Revenue" value={fmt(r.revenue)} hint={`${r.incomeCats.length} ${r.incomeCats.length === 1 ? "source" : "sources"}`} />
@@ -5880,7 +6197,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
         )}
       </section>
 
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
           <h2 style={{ fontFamily: SERIF }} className="text-lg">Month by month</h2>
           <div className="flex items-center gap-3 text-xs" style={{ color: P.faint, fontFamily: MONO }}>
@@ -5894,29 +6211,29 @@ function ReportsTab({ data, month, balance, onAsk }) {
           /* A twelve-month window scrolls sideways, and a scroll container clips
              in both axes, so the bar tooltips need room reserved above them. */
           <div className="flex items-end gap-2 overflow-x-auto pt-7 pb-1" style={{ minHeight: 128 }}>
-            {r.months.map((m) => (
+            {r.months.map((m, i) => (
               <div key={m.m} style={{ minWidth: 34 }} className="flex-1">
-                <TrendBar t={m} maxTrend={maxMonth} active={m.m === month} />
+                <TrendBar index={i} t={m} maxTrend={maxMonth} active={m.m === month} />
               </div>
             ))}
           </div>
         )}
       </section>
 
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">Where the money went</h2>
         {r.cats.length === 0 ? (
           <p style={{ color: P.faint }} className="text-sm">No expenses in this period.</p>
         ) : (
           <div className="space-y-2">
-            {r.cats.map((c) => (
-              <CatBarRow key={c.name} cat={c.name} value={c.amount} max={maxCat} count={c.count} shareOfCosts={c.share} />
+            {r.cats.map((c, i) => (
+              <CatBarRow key={c.name} index={i} cat={c.name} value={c.amount} max={maxCat} count={c.count} shareOfCosts={c.share} />
             ))}
           </div>
         )}
       </section>
 
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
         <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
           <div>
             <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Export</h2>
@@ -5945,7 +6262,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
       </section>
 
       {onAsk && (
-        <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-4">
+        <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-4">
           <h2 style={{ fontFamily: SERIF }} className="text-lg mb-1">Ask about the period</h2>
           <p style={{ color: P.muted }} className="text-sm mb-3">Tally reads the same entries these figures came from.</p>
           <div className="flex flex-wrap gap-1.5">
@@ -5975,8 +6292,10 @@ function DockBtn({ label, active, onClick, children }) {
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      type="button"
       title={label}
       aria-label={label}
+      aria-current={active ? "page" : undefined}
       className="dock-btn relative rounded-full flex items-center justify-center shrink-0"
       style={{
         color: active ? "#10120C" : P.muted,
@@ -6014,7 +6333,7 @@ function TourCard({ tab, onDismiss }) {
   const copy = TOUR_COPY[tab];
   if (!copy) return null;
   return (
-    <div style={{ background: P.surface, border: `1px solid ${P.line}`, borderLeft: `3px solid ${P.brass}` }} className="rounded-lg p-4 mb-5 flex items-start gap-3">
+    <div style={{ background: P.surface, border: `1px solid ${P.line}`, borderLeft: `3px solid ${P.brass}`, boxShadow: elev(1) }} className="rounded-lg p-4 mb-5 flex items-start gap-3">
       <div className="flex-1">
         <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest mb-1">First time here</div>
         <div style={{ fontFamily: SERIF }} className="text-base mb-1">{copy[0]}</div>
@@ -6041,7 +6360,7 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
   };
 
   const body = (
-    <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }} className="modal-panel rounded-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
       <div className="flex justify-between items-start mb-1">
         <h3 style={{ fontFamily: SERIF }} className="text-xl">{onboarding ? "Set up your first ledger" : "New ledger"}</h3>
         {!onboarding && <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>}
@@ -6085,12 +6404,12 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
 
   if (onboarding)
     return (
-      <div style={{ background: P.bg, minHeight: "100vh", fontFamily: SANS, color: P.text }} className="flex items-center justify-center p-4">
+      <div style={{ background: P.bg, minHeight: "100dvh", fontFamily: SANS, color: P.text }} className="flex items-center justify-center p-4">
         {body}
       </div>
     );
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
       {body}
     </div>
   );
@@ -6745,7 +7064,7 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
 
       {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
       {!isBiz ? <PersonalTaxCard data={data} openGuide={openGuide} /> : (
-      <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
+      <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-5">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Corporate tax (T2)</h2>
@@ -6892,8 +7211,8 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }} className="modal-panel rounded-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-1">
           <h3 style={{ fontFamily: SERIF }} className="text-xl">Move money between ledgers</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
@@ -7207,7 +7526,12 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
   const connected = (conns?.length || 0) > 0;
 
   const disconnect = async (id) => {
-    if (!window.confirm("Disconnect this bank? Entries you already imported stay in the ledger.")) return;
+    const ok = await askConfirm({
+      title: "Disconnect this bank?",
+      body: "New transactions stop syncing. Entries you already imported stay in the ledger.",
+      confirmLabel: "Disconnect",
+    });
+    if (!ok) return;
     try {
       await bank.plaid("disconnect", { connection_id: id });
       const next = (conns || []).filter((x) => x.id !== id);
@@ -7217,7 +7541,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
   };
 
   return (
-    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
+    <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Bank feed</h2>
@@ -7446,7 +7770,7 @@ function PersonalTaxCard({ data, openGuide }) {
     `T4, T5 and RRSP slips are not in here. They come through CRA auto-fill.`;
 
   return (
-    <section style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg p-5">
+    <section style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(1) }} className="rounded-lg p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Personal tax (T1)</h2>
@@ -7787,8 +8111,8 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div style={{ background: P.surface, border: `1px solid ${P.line}` }} className="rounded-lg w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }} className="modal-panel rounded-xl w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start">
           <h3 style={{ fontFamily: SERIF }} className="text-xl">Account</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
