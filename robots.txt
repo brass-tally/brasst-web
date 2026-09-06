@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+# The app is a separate service and requires a session; there is nothing to index.
+Disallow: /app
+
+Sitemap: https://brasstally.com/sitemap.xml
