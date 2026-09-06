@@ -19,16 +19,18 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <script>
       /* Paint the saved theme before first paint, so a light-mode reload never
          flashes the dark ledger. Shares the landing page's storage key, so
          crossing from brasstally.com into /app keeps the same theme. */
       (function () {
+        // Light is the ground state for everyone. Night is a choice, and once
+        // made it is remembered here. brasstally.com writes the same key before
+        // its own first paint, so crossing into /app never flips the lights.
         var saved = null;
         try { saved = localStorage.getItem("bt-theme"); } catch (e) {}
-        var mode = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-        document.documentElement.setAttribute("data-theme", mode);
+        document.documentElement.setAttribute("data-theme", saved === "dark" ? "dark" : "light");
       })();
     </script>
   </head>

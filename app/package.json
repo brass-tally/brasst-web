@@ -1,5 +1,5 @@
 {
-  "name": "genie-ledger",
+  "name": "brasstally-app",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
+    "jspdf": "^2.5.2",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "jspdf": "^2.5.2"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

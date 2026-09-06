@@ -25,6 +25,7 @@ import {
 } from "./lib/cra";
 import { GUIDES, guideOpener } from "./lib/guides";
 import { ToastContainer } from "./components/Toast";
+import { Rail } from "./shell/Rail";
 import { notify, createNotification } from "./lib/notifications";
 import {
   P, PALETTES, elev, R, MONO, SANS, SERIF, applyThemeVars, THEME_KEY,
@@ -240,7 +241,7 @@ const RecToggle = ({ value, onChange }) => (
     ]}
   />
 );
-const RecMark = () => <Repeat size={11} style={{ color: P.brass, display: "inline", verticalAlign: "-1px" }} title="Recurring" />;
+const RecMark = () => <Repeat size={11} style={{ color: P.brassText, display: "inline", verticalAlign: "-1px" }} title="Recurring" />;
 
 /* subcategory dropdown, lists the category's subs and lets you add a new one inline */
 const subsFor = (data, type, category) =>
@@ -599,7 +600,7 @@ function AuthCard({ children }) {
             dark ledger, and disappeared into the paper of the light theme.
             Typed in the heading face it follows the palette either way. */}
         <div style={{ fontFamily: SERIF, color: P.text }} className="text-2xl leading-none">
-          Brass<span style={{ color: P.brass }}>t</span>ally
+          Brass<span style={{ color: P.brassText }}>t</span>ally
         </div>
         {children}
       </div>
@@ -1205,7 +1206,7 @@ function Ledger({ onSignOut }) {
           <h1 style={{ fontFamily: SERIF }} className="text-xl mb-2">One migration to run</h1>
           <p style={{ color: P.muted }} className="text-sm">
             This version stores everything in ledgers, and the database doesn't have the ledgers table yet.
-            Run <span style={{ fontFamily: MONO, color: P.brass }}>supabase/migration-multi-ledger.sql</span> in the
+            Run <span style={{ fontFamily: MONO, color: P.brassText }}>supabase/migration-multi-ledger.sql</span> in the
             Supabase SQL Editor, then reload. Your existing data is moved into a "GENIE AI" ledger automatically.
           </p>
           <Btn className="mt-5" onClick={() => window.location.reload()}>Reload</Btn>
@@ -1680,7 +1681,24 @@ function Ledger({ onSignOut }) {
   ];
 
   return (
-    <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS, "--ring": P.brass }}>
+    <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS, "--ring": P.brass }}
+         className="flex">
+      {/* Navigation lives in a rail on desktop, so it stops competing with the
+          ledger. Below lg it disappears and the dock at the bottom takes over,
+          because a 74px column on a phone eats a fifth of the width and puts
+          the sections out of thumb reach. */}
+      <Rail
+        tabs={tabs}
+        tab={tab}
+        setTab={(k) => { setTab(k); setChatOpen(false); }}
+        ledgers={ledgers || []}
+        ledger={data.ledger}
+        onPickLedger={(l) => { if (l.id !== data.ledger.id) setCurrentLedger(l); }}
+        onNewLedger={() => setNewLedgerOpen(true)}
+        onAccount={() => setAccountOpen(true)}
+        accountActive={accountOpen}
+      />
+      <div className="flex-1 min-w-0">
       {/* The ledger is a reading surface, so it stops widening past the point
           where a row's date and its amount stop being one glance apart. */}
       <div className="px-4 w-full mx-auto max-w-[1180px]" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
@@ -1696,7 +1714,7 @@ function Ledger({ onSignOut }) {
                   className="flex items-center gap-1.5 text-left min-w-0 max-w-[70vw] sm:max-w-xs"
                 >
                   <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight truncate">{data.ledger.name}</h1>
-                  <ChevronDown size={20} style={{ color: P.brass, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} className="shrink-0" />
+                  <ChevronDown size={20} style={{ color: P.brassText, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} className="shrink-0" />
                 </button>
                 {ledgerMenuOpen && (
                   <>
@@ -1714,14 +1732,14 @@ function Ledger({ onSignOut }) {
                         >
                           <span className="truncate">{l.name}</span>
                           {l.id === data.ledger.id
-                            ? <Check size={14} style={{ color: P.brass }} className="shrink-0" />
+                            ? <Check size={14} style={{ color: P.brassText }} className="shrink-0" />
                             : <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs shrink-0">{kindLabel(l.kind).split(" ")[0]}</span>}
                         </button>
                       ))}
                       <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-1 pt-1">
                         <button
                           onClick={() => { setLedgerMenuOpen(false); setNewLedgerOpen(true); }}
-                          style={{ color: P.brass, fontFamily: MONO }}
+                          style={{ color: P.brassText, fontFamily: MONO }}
                           className="w-full text-left px-3 py-2 text-xs"
                         >
                           + new ledger…
@@ -1832,7 +1850,9 @@ function Ledger({ onSignOut }) {
 
       {/* ===== floating Tally chat (stays mounted so the conversation survives closing) ===== */}
       {/* capture panel floats above the dock */}
-      <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(24rem, calc(100vw - 24px))", pointerEvents: chatOpen ? "auto" : "none" }}>
+      </div>
+
+      <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(26rem, calc(100vw - 24px))", pointerEvents: chatOpen ? "auto" : "none" }}>
         <div className={"capture-pop " + (chatOpen ? "open" : "")}>
           <div
             style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }}
@@ -1843,7 +1863,7 @@ function Ledger({ onSignOut }) {
             <div className="flex items-center gap-2.5 px-3 py-2.5" style={{ borderBottom: `1px solid ${P.line}` }}>
               <span
                 aria-hidden
-                style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brass, fontFamily: SERIF, width: 28, height: 28 }}
+                style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brassText, fontFamily: SERIF, width: 28, height: 28 }}
                 className="rounded-full text-sm flex items-center justify-center shrink-0"
               >
                 T
@@ -1891,8 +1911,35 @@ function Ledger({ onSignOut }) {
         </div>
       </div>
 
+      {/* On desktop the dock is gone, so Tally gets a corner of her own. Same
+          state, same panel, just a trigger that survives the rail. */}
+      <button
+        onClick={() => { setChatOpen(!chatOpen); if (!chatOpen) setChatUnread(false); }}
+        aria-label={chatUnread ? "Tally has something to tell you" : "Talk to Tally"}
+        title={chatOpen ? "Close Tally" : "Talk to Tally"}
+        className="hidden lg:flex fixed z-40 items-center justify-center"
+        style={{
+          right: 24, bottom: 24, width: 60, height: 60, borderRadius: 22,
+          background: P.brass, color: P.onbrass, boxShadow: elev(3),
+          transition: "transform .18s cubic-bezier(.2,.8,.2,1), opacity .25s ease",
+          opacity: chatOpen ? 0 : 1, transform: chatOpen ? "scale(.7)" : "none",
+          pointerEvents: chatOpen ? "none" : "auto",
+        }}
+      >
+        <MessageCircle size={24} />
+        {chatUnread && !chatOpen && (
+          <span
+            aria-hidden
+            style={{
+              position: "absolute", top: 4, right: 4, width: 12, height: 12, borderRadius: "50%",
+              background: P.debit, border: `2px solid ${P.brass}`,
+            }}
+          />
+        )}
+      </button>
+
       {/* ===== floating dock: all sections, Tally lives on the right ===== */}
-      <nav className="fixed z-40 left-1/2 bottom-4" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 20px)" }}>
+      <nav className="fixed z-40 left-1/2 bottom-4 lg:hidden" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 20px)" }}>
         <div
           className="dock flex items-center gap-0.5 px-2 py-1.5 rounded-full"
           style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: elev(3) }}
@@ -1911,7 +1958,7 @@ function Ledger({ onSignOut }) {
             title={chatOpen ? "Close Tally" : chatUnread ? "Tally has something to tell you" : "Talk to Tally, capture a receipt or ask about the books"}
             aria-label={chatUnread ? "Tally has something to tell you" : "Talk to Tally"}
             className="dock-capture rounded-full flex items-center justify-center shrink-0"
-            style={{ position: "relative", background: theme === "dark" ? "rgba(242,185,74,0.22)" : "rgba(223,167,38,0.16)", color: P.brass, border: `1px solid ${theme === "dark" ? "rgba(242,185,74,0.5)" : "rgba(223,167,38,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
+            style={{ position: "relative", background: theme === "dark" ? "rgba(242,185,74,0.22)" : "rgba(223,167,38,0.16)", color: P.brassText, border: `1px solid ${theme === "dark" ? "rgba(242,185,74,0.5)" : "rgba(223,167,38,0.4)"}`, width: 44, height: 44, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
           >
             <span className="dock-capture-icon" style={{ display: "inline-flex", transform: chatOpen ? "scale(.88)" : "none", transition: "transform .28s cubic-bezier(.2,.8,.2,1)" }}>
               {chatOpen ? <X size={20} /> : <MessageCircle size={21} />}
@@ -2012,7 +2059,7 @@ function PreviewModal({ preview, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: `1px solid ${P.line}` }}>
-          <FileText size={14} style={{ color: P.brass }} />
+          <FileText size={14} style={{ color: P.brassText }} />
           <div className="text-sm truncate flex-1" style={{ color: P.text }}>{preview.name || "Filed document"}</div>
           {!preview.error && (
             <button
@@ -2113,7 +2160,7 @@ function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate,
         <Btn className="w-full justify-center" disabled={!valid} onClick={() => onSave(parsed, date)}>
           <Check size={14} /> Anchor balance here
         </Btn>
-        <button onClick={onImportInstead} style={{ color: P.brass, fontFamily: MONO }} className="w-full text-center text-xs mt-3 underline decoration-dotted underline-offset-2">
+        <button onClick={onImportInstead} style={{ color: P.brassText, fontFamily: MONO }} className="w-full text-center text-xs mt-3 underline decoration-dotted underline-offset-2">
           or import a bank statement to reconcile line by line →
         </button>
       </div>
@@ -2188,7 +2235,7 @@ const BookLine = ({ t, selected, onSelect }) => (
 function PlanLine({ children, tone = "muted" }) {
   return (
     <div className="flex items-start gap-2 text-sm" style={{ color: P[tone] }}>
-      <span style={{ color: P.brass }} className="shrink-0">·</span>
+      <span style={{ color: P.brassText }} className="shrink-0">·</span>
       <span>{children}</span>
     </div>
   );
@@ -2468,7 +2515,7 @@ function MatchView({
         title={`Did you pay ${item.description || item.keep.category} once or ${item.extras.length + 1} times?`}
         detail={`${item.extras.length + 1} entries, ${item.reason}. A copy counts twice in the profit and loss, the budget, and the difference against the bank.`}>
         <Btn onClick={() => doRemoveDup(item)}><Trash2 size={13} /> Once, remove the {item.extras.length === 1 ? "other" : `other ${item.extras.length}`}</Btn>
-        <button onClick={() => setOpenDup(openDup === item.id ? null : item.id)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+        <button onClick={() => setOpenDup(openDup === item.id ? null : item.id)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
           {openDup === item.id ? "hide" : "show me"} the copies
         </button>
         {openDup === item.id && (
@@ -2562,7 +2609,7 @@ function MatchView({
         {/* ---- the plan, written out before it runs ---- */}
         {plan.fix.count > 0 && !fixedSummary && (
           <div style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-4 mb-4">
-            <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
+            <div style={{ color: P.brassText, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
               What I would do
             </div>
             <div className="space-y-1.5">
@@ -2643,7 +2690,7 @@ function MatchView({
                 {renderAsk(current)}
                 <div className="flex items-center gap-3 mt-2 flex-wrap">
                   {undoable && (
-                    <button onClick={undoLast} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                    <button onClick={undoLast} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
                       <ChevronLeft size={11} className="inline mb-0.5" /> undo the last {undoable.verb}
                     </button>
                   )}
@@ -2736,7 +2783,7 @@ function MatchView({
 
             {(matched.length > 0 || ignored.length > 0) && (
               <div className="mb-4">
-                <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
+                <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
                   {showMatched ? "hide" : "show"} {matched.length} already paired, {ignored.length} set aside
                 </button>
                 {showMatched && (
@@ -2746,7 +2793,7 @@ function MatchView({
                         <Check size={11} style={{ color: P.credit }} className="shrink-0" />
                         <span className="flex-1 truncate">{b.date} {b.description} → {txById.get(b.matchedTxId)?.description || "entry"}</span>
                         <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
-                        <button onClick={() => doUnmatch(b.id)} style={{ color: P.brass }}>undo</button>
+                        <button onClick={() => doUnmatch(b.id)} style={{ color: P.brassText }}>undo</button>
                       </div>
                     ))}
                     {ignored.map((b) => (
@@ -2754,7 +2801,7 @@ function MatchView({
                         <X size={11} className="shrink-0" />
                         <span className="flex-1 truncate">{b.date} {b.description}</span>
                         <span className="tabular-nums shrink-0">{fmt(b.amount)}</span>
-                        <button onClick={() => actions.unignore(b.id)} style={{ color: P.brass }}>bring it back</button>
+                        <button onClick={() => actions.unignore(b.id)} style={{ color: P.brassText }}>bring it back</button>
                       </div>
                     ))}
                   </div>
@@ -2771,7 +2818,7 @@ function MatchView({
         {/* ---- what past consolidations did, in sentences ---- */}
         {consolidation?.history?.length > 0 && (
           <div className="mt-4">
-            <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
+            <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
               <History size={11} className="inline mb-0.5" /> {showHistory ? "hide" : "show"} what past consolidations did
             </button>
             {showHistory && (
@@ -2920,7 +2967,7 @@ function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCa
     <div style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.control }} className="p-2 mb-2">
       {already && (
         <div style={{ border: `1px solid ${P.brass}` }} className="rounded p-2 mb-2">
-          <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-1">
+          <div style={{ color: P.brassText, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-1">
             <AlertTriangle size={11} className="inline mb-0.5" /> possibly already recorded
           </div>
           <div className="text-xs" style={{ color: P.muted }}>
@@ -3141,7 +3188,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
             <div className="px-5 py-3 space-y-2" style={{ borderBottom: `1px solid ${P.line}` }}>
               <p style={{ color: P.muted }} className="text-sm">
                 Found <span style={{ color: P.text }}>{rows.length}</span> lines
-                {dupCount > 0 && <> · <span style={{ color: P.brass }}>{dupCount} look like they're already in the ledger</span> (unchecked, tick any that aren't actually duplicates)</>}.
+                {dupCount > 0 && <> · <span style={{ color: P.brassText }}>{dupCount} look like they're already in the ledger</span> (unchecked, tick any that aren't actually duplicates)</>}.
               </p>
               {err && <p style={{ color: P.faint }} className="text-xs">{err}</p>}
               {ending && (
@@ -3149,7 +3196,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
                   <input type="checkbox" checked={anchorToo} onChange={(e) => setAnchorToo(e.target.checked)} className="mt-0.5" />
                   <span>
                     Also anchor the balance to the statement's ending balance:{" "}
-                    <span style={{ fontFamily: MONO, color: P.brass }}>{fmt(ending.amount)}</span> on{" "}
+                    <span style={{ fontFamily: MONO, color: P.brassText }}>{fmt(ending.amount)}</span> on{" "}
                     <span style={{ fontFamily: MONO }}>{ending.date}</span>, after this, Balance to date matches the bank exactly.
                   </span>
                 </label>
@@ -3166,7 +3213,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
                       <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs w-12 shrink-0">{r.date?.slice(5)}</div>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm truncate">{r.description}</div>
-                        {r.dup && <div style={{ color: P.brass, fontFamily: MONO }} className="text-xs">possible duplicate</div>}
+                        {r.dup && <div style={{ color: P.brassText, fontFamily: MONO }} className="text-xs">possible duplicate</div>}
                       </div>
                       <select
                         value={cats.includes(r.category) ? r.category : cats[0]}
@@ -3228,7 +3275,7 @@ function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconc
             <div style={{ color: P.faint, letterSpacing: "0.07em" }} className="text-xs uppercase mb-1">
               {fromBank ? "Balance to date · bank" : "Balance to date · fix"}
             </div>
-            <div style={{ fontFamily: MONO, color: P.brass }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
+            <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
               {balance.beforeAnchor ? "·" : fmt(balance.value)}
             </div>
           </button>
@@ -3332,7 +3379,7 @@ function InsightsStrip({ insights = [], onAsk }) {
   const shown = open ? live : live.slice(0, 2);
   const TONE = {
     alert: { color: P.debit, Icon: AlertTriangle },
-    warn: { color: P.brass, Icon: AlertTriangle },
+    warn: { color: P.brassText, Icon: AlertTriangle },
     info: { color: P.faint, Icon: Info },
   };
 
@@ -3877,7 +3924,7 @@ function Capture({
     >
       {guideId && GUIDES[guideId] && (
         <div className="flex items-center gap-2 px-3 pt-2">
-          <span style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brass, fontFamily: MONO, width: 22, height: 22 }}
+          <span style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brassText, fontFamily: MONO, width: 22, height: 22 }}
             className="rounded-full text-xs flex items-center justify-center shrink-0">
             {GUIDES[guideId].avatar}
           </span>
@@ -3901,7 +3948,7 @@ function Capture({
               {m.image && <img src={m.image} alt="receipt" className="rounded mb-2 max-h-48" />}
               {m.pdfName && (
                 <div style={{ border: `1px solid ${P.line}`, color: P.text }} className="rounded px-2 py-1.5 mb-1 text-xs inline-flex items-center gap-1.5">
-                  <FileText size={13} style={{ color: P.brass }} /> {m.pdfName}
+                  <FileText size={13} style={{ color: P.brassText }} /> {m.pdfName}
                 </div>
               )}
               {m.text && <p style={{ color: m.role === "assistant" ? P.muted : P.text }} className="whitespace-pre-wrap">{m.text}</p>}
@@ -3909,7 +3956,7 @@ function Capture({
                 <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs space-y-0.5">
                   {m.steps.map((name, k) => (
                     <div key={k} className="flex items-center gap-1.5">
-                      <Search size={10} style={{ color: P.brass, flexShrink: 0 }} />
+                      <Search size={10} style={{ color: P.brassText, flexShrink: 0 }} />
                       {TOOL_LABEL[name] || name.replace(/_/g, " ")}
                     </div>
                   ))}
@@ -3931,7 +3978,7 @@ function Capture({
               {m.followUp && (
                 <div className="mt-2">
                   <button type="button" onClick={() => ask(m.followUp)}
-                    style={{ border: `1px solid ${P.brass}`, color: P.brass, fontFamily: MONO }}
+                    style={{ border: `1px solid ${P.brass}`, color: P.brassText, fontFamily: MONO }}
                     className="rounded-full px-2.5 py-1 text-xs text-left inline-flex items-center gap-1.5">
                     <Search size={11} /> Look into it
                   </button>
@@ -4209,7 +4256,7 @@ function ProposalCard({ proposal, data, apply }) {
 
   return (
     <div style={{ background: P.bg, border: `1px solid ${P.brass}55` }} className="rounded-lg p-3 mt-2 space-y-2 w-72 max-w-full">
-      <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest flex items-center gap-1.5">
+      <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-widest flex items-center gap-1.5">
         <Sparkles size={11} /> {spec.title}
       </div>
       {(input.reason || spec.note) && (
@@ -4295,7 +4342,7 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
       <button
         onClick={() => openPreview(tx.attachmentId, tx.attachmentName)}
         title={`View ${tx.attachmentName || "filed document"}`}
-        style={{ color: P.brass, padding: 6, margin: -6 }}
+        style={{ color: P.brassText, padding: 6, margin: -6 }}
         className="shrink-0"
       >
         <Paperclip size={14} />
@@ -4518,7 +4565,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                       </span>
                     )}
                     {isCredits(t) && (
-                      <span style={{ color: P.brass, border: `1px solid ${P.brass}` }} className="rounded px-1 shrink-0" title="Paid with credits, doesn't affect cash balance">
+                      <span style={{ color: P.brassText, border: `1px solid ${P.brass}` }} className="rounded px-1 shrink-0" title="Paid with credits, doesn't affect cash balance">
                         {creditName(data, t.creditId)}
                       </span>
                     )}
@@ -4687,7 +4734,7 @@ function ProfitLoss({ data, month }) {
           {creditCosts > 0 && (
             <div style={{ color: P.faint }} className="flex justify-between text-xs pl-4">
               <span>covered by credits (no cash out)</span>
-              <span className="tabular-nums" style={{ color: P.brass }}>{fmt(-creditCosts)}</span>
+              <span className="tabular-nums" style={{ color: P.brassText }}>{fmt(-creditCosts)}</span>
             </div>
           )}
           <div style={{ borderTop: `1px double ${P.brass}` }} className="pt-2 flex justify-between text-base">
@@ -5123,12 +5170,12 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
     {i.subcategory ? ` · ${i.subcategory}` : ""}
           </div>
           {isCredits(i) && (
-    <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{creditName(data, i.creditId)} credits, no cash moves</div>
+    <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs">{creditName(data, i.creditId)} credits, no cash moves</div>
           )}
         </button>
         <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
         {i.attachmentId && (
-          <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brass, padding: 6, margin: -6 }}>
+          <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brassText, padding: 6, margin: -6 }}>
     <Paperclip size={13} />
           </button>
         )}
@@ -5163,7 +5210,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
           onChange={(e) => { onInvoice(e.target.files[0]); e.target.value = ""; }} />
         {adding
           ? <button onClick={cancelAdd} style={{ color: P.muted }} className="text-sm px-1" title="Close">Cancel</button>
-          : <button onClick={() => setAdding(true)} style={{ color: P.brass }} className="text-sm px-1 inline-flex items-center gap-1">
+          : <button onClick={() => setAdding(true)} style={{ color: P.brassText }} className="text-sm px-1 inline-flex items-center gap-1">
               <Plus size={15} /> Add
             </button>}
       </div>
@@ -5186,7 +5233,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
             {reading ? "reading the invoice…" : "Upload an invoice to fill this automatically"}
           </button>
           <ARFields kind={kind} f={form} set={set} data={data} addSub={addSub} addCredit={addCredit} />
-          {readErr && <p style={{ color: P.brass }} className="text-xs">{readErr}</p>}
+          {readErr && <p style={{ color: P.brassText }} className="text-xs">{readErr}</p>}
           <Btn className="w-full justify-center" onClick={submit}><Check size={14} /> Add</Btn>
         </div>
       )}
@@ -5203,7 +5250,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
             return (
               <div key={"g:" + g.party} style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.control }} className="overflow-hidden">
                 <button onClick={() => toggleGroup(g.party)} className="w-full p-3 flex items-center gap-2 text-left">
-                  <ChevronDown size={15} style={{ color: P.brass, transform: expanded ? "none" : "rotate(-90deg)", transition: "transform .18s" }} className="shrink-0" />
+                  <ChevronDown size={15} style={{ color: P.brassText, transform: expanded ? "none" : "rotate(-90deg)", transition: "transform .18s" }} className="shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm truncate">{g.party}</div>
                     <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
@@ -5257,7 +5304,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
                 <div key={gk}>
                   <button onClick={() => toggleGroup(gk)} style={{ color: P.muted, fontFamily: MONO }} className="text-xs flex justify-between items-center gap-2 py-1 w-full">
                     <span className="truncate flex items-center gap-1.5">
-                      <ChevronDown size={11} style={{ color: P.brass, transform: openGroups[gk] ? "none" : "rotate(-90deg)", transition: "transform .18s" }} />
+                      <ChevronDown size={11} style={{ color: P.brassText, transform: openGroups[gk] ? "none" : "rotate(-90deg)", transition: "transform .18s" }} />
                       <Lock size={10} style={{ color: P.faint }} />
                       {g.party}
                     </span>
@@ -5283,7 +5330,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
               </p>
               {noteFor.attachmentId && (
                 <button onClick={() => openPreview(noteFor.attachmentId, noteFor.attachmentName)}
-                  style={{ color: P.brass }} className="text-xs inline-flex items-center gap-1 mt-2">
+                  style={{ color: P.brassText }} className="text-xs inline-flex items-center gap-1 mt-2">
                   <Paperclip size={11} /> View filed invoice
                 </button>
               )}
@@ -5372,7 +5419,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
             onChange={(e) => { pickDoc(e.target.files[0]); e.target.value = ""; }} />
           {doc ? (
             <div style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.control }} className="px-3 py-2 flex items-center gap-2">
-              <Paperclip size={12} style={{ color: P.brass }} className="shrink-0" />
+              <Paperclip size={12} style={{ color: P.brassText }} className="shrink-0" />
               <span style={{ fontFamily: MONO }} className="text-xs truncate flex-1">{doc.name}</span>
               <button onClick={() => setDoc(null)} style={{ color: P.faint }} title="Remove"><X size={12} /></button>
             </div>
@@ -5392,11 +5439,11 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
         </div>
 
         {differs && (
-          <p style={{ color: P.brass, fontFamily: MONO }} className="text-xs mt-2">
+          <p style={{ color: P.brassText, fontFamily: MONO }} className="text-xs mt-2">
             estimated {fmt(item.amount)} → actual {fmt(parsed)}; the books record the actual
           </p>
         )}
-        {docErr && <p style={{ color: P.brass }} className="text-xs mt-2">{docErr}</p>}
+        {docErr && <p style={{ color: P.brassText }} className="text-xs mt-2">{docErr}</p>}
 
         <Btn className="w-full justify-center mt-4" disabled={!valid || saving} onClick={confirm}>
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
@@ -5558,7 +5605,7 @@ function CashCalendar({ data }) {
           {o.description || "·"}{isRec(o) ? ` · ${freqLabel(o.frequency || "monthly")}` : ""}{o.projected ? " · projected" : ""}
         </div>
       </div>
-      {isCredits(o) && <span style={{ fontFamily: MONO, color: P.brass, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1">{creditName(data, o.creditId)}</span>}
+      {isCredits(o) && <span style={{ fontFamily: MONO, color: P.brassText, border: `1px solid ${P.brass}` }} className="text-xs rounded px-1">{creditName(data, o.creditId)}</span>}
       <div style={{ fontFamily: MONO, color: o.kind === "receivables" ? P.credit : P.debit }} className="text-sm tabular-nums">
         {o.kind === "receivables" ? "+" : "−"}{fmt(o.amount)}
       </div>
@@ -6179,7 +6226,7 @@ function TourCard({ tab, onDismiss }) {
   return (
     <div style={{ ...cardStyle(), borderLeft: `3px solid ${P.brass}` }} className="rounded-lg p-4 mb-5 flex items-start gap-3">
       <div className="flex-1">
-        <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest mb-1">First time here</div>
+        <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-widest mb-1">First time here</div>
         <div style={{ fontFamily: SERIF }} className="text-base mb-1">{copy[0]}</div>
         <p style={{ color: P.muted }} className="text-sm">{copy[1]}</p>
       </div>
@@ -6492,7 +6539,7 @@ function GuideAnchor({ id, onOpen, label }) {
       className="rounded-full pl-1 pr-3 py-1 inline-flex items-center gap-2 shrink-0 transition-colors"
     >
       <span
-        style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brass, fontFamily: MONO, width: 24, height: 24 }}
+        style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brassText, fontFamily: MONO, width: 24, height: 24 }}
         className="rounded-full text-xs flex items-center justify-center shrink-0"
       >
         {g.avatar}
@@ -6518,7 +6565,7 @@ function DeadlineStrip({ rows, title = "Deadlines" }) {
         <div>
           <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs uppercase tracking-wider">Next up</div>
           <div style={{ fontFamily: SERIF }} className="text-lg leading-tight">{next.title}</div>
-          <div style={{ fontFamily: MONO, color: P.brass }} className="text-sm">{longDate(next.date)}</div>
+          <div style={{ fontFamily: MONO, color: P.brassText }} className="text-sm">{longDate(next.date)}</div>
         </div>
         <div style={{ color: P[TONE[c.tone]] || P.text, border: `1px solid ${P[TONE[c.tone]] || P.line}`, fontFamily: MONO }}
           className="rounded-full px-3 py-1 text-sm whitespace-nowrap">
@@ -6568,7 +6615,7 @@ function FormRow({ f, checked, onToggle }) {
       </button>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap">
-          <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs">{f.code}</span>
+          <span style={{ fontFamily: MONO, color: P.brassText }} className="text-xs">{f.code}</span>
           <span className="text-sm" style={{ color: checked ? P.faint : P.text }}>{f.name}</span>
           {f.fromLedger && (
             <span style={{ fontFamily: MONO, color: P.credit, border: `1px solid ${P.credit}` }} className="text-xs rounded px-1">
@@ -6583,7 +6630,7 @@ function FormRow({ f, checked, onToggle }) {
           <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">not in this year</span>
         ) : (
           <a href={f.url} target="_blank" rel="noreferrer"
-            style={{ fontFamily: MONO, color: P.brass }} className="text-xs underline decoration-dotted underline-offset-2 whitespace-nowrap">
+            style={{ fontFamily: MONO, color: P.brassText }} className="text-xs underline decoration-dotted underline-offset-2 whitespace-nowrap">
             {f.version} issue ↗
           </a>
         )}
@@ -6622,12 +6669,12 @@ function FilingPackage({ taxYear, province, done, setDone }) {
       </div>
 
       {separate && (
-        <p style={{ color: P.brass }} className="text-xs mt-2">{separate.note}</p>
+        <p style={{ color: P.brassText }} className="text-xs mt-2">{separate.note}</p>
       )}
 
       {changed > 0 && (
         <div className="mt-3">
-          <button onClick={() => setShowDiff(!showDiff)} style={{ color: P.brass, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+          <button onClick={() => setShowDiff(!showDiff)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
             {showDiff ? "hide" : "show"} what changed from {taxYear - 1} to {taxYear} ({changed})
           </button>
           {showDiff && (
@@ -6638,7 +6685,7 @@ function FilingPackage({ taxYear, province, done, setDone }) {
                 </div>
               ))}
               {diff.moved.map((f) => (
-                <div key={"m" + f.code} style={{ fontFamily: MONO, color: P.brass }} className="text-xs">
+                <div key={"m" + f.code} style={{ fontFamily: MONO, color: P.brassText }} className="text-xs">
                   reissued · {f.code} moves from the {f.from} issue to the {f.version} issue
                 </div>
               ))}
@@ -6665,7 +6712,7 @@ function FilingPackage({ taxYear, province, done, setDone }) {
             <button onClick={() => setOpenGroup((g) => ({ ...g, [k]: !g[k] }))} className="w-full text-left">
               <div className="flex items-center gap-2">
                 <ChevronRight size={13} style={{ color: P.faint, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
-                <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-wider">{title}</span>
+                <span style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-wider">{title}</span>
                 <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">({list.length})</span>
               </div>
               <div style={{ color: P.faint }} className="text-xs ml-5">{sub}</div>
@@ -6686,14 +6733,14 @@ function FilingPackage({ taxYear, province, done, setDone }) {
         <Label>Forms that travel with the return</Label>
         {T2_COMPANION_FORMS.map((f) => (
           <div key={f.code} className="flex items-start gap-2 text-xs py-1">
-            <span style={{ fontFamily: MONO, color: P.brass }} className="w-20 shrink-0">{f.code}</span>
+            <span style={{ fontFamily: MONO, color: P.brassText }} className="w-20 shrink-0">{f.code}</span>
             <span className="flex-1 min-w-0"><span style={{ color: P.text }}>{f.name}</span> <span style={{ color: P.muted }}>{f.when}</span></span>
           </div>
         ))}
       </div>
 
       <p style={{ color: P.faint }} className="text-xs mt-3">
-        Version list read from CRA's own form pages. <a href={CRA_FORMS_INDEX} target="_blank" rel="noreferrer" style={{ color: P.brass }} className="underline decoration-dotted">CRA forms and publications ↗</a>
+        Version list read from CRA's own form pages. <a href={CRA_FORMS_INDEX} target="_blank" rel="noreferrer" style={{ color: P.brassText }} className="underline decoration-dotted">CRA forms and publications ↗</a>
       </p>
     </div>
   );
@@ -6765,7 +6812,7 @@ function SendToAccountant({ subject, shortBody, fullText, files, email, setEmail
             </div>
             {files.map((f) => (
               <div key={f.name} style={{ fontFamily: MONO, color: P.muted }} className="text-xs flex items-center gap-1.5">
-                <Paperclip size={11} style={{ color: P.brass }} /> {f.name}
+                <Paperclip size={11} style={{ color: P.brassText }} /> {f.name}
               </div>
             ))}
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -6782,7 +6829,7 @@ function SendToAccountant({ subject, shortBody, fullText, files, email, setEmail
             <p style={{ color: P.faint }} className="text-xs">
               Then drag {files.length === 1 ? "the file" : "both files"} into the draft before you send. If your email app did not open, use Copy and paste it into webmail.
             </p>
-            {!valid && <p style={{ color: P.brass }} className="text-xs">Add their email address above to open the draft.</p>}
+            {!valid && <p style={{ color: P.brassText }} className="text-xs">Add their email address above to open the draft.</p>}
           </div>
         )}
       </div>
@@ -6979,7 +7026,7 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
                 <div className="divide-y" style={{ borderColor: P.line }}>
                   {gifiRows.map((r) => (
                     <div key={r.code + r.name} className="flex items-center gap-3 py-1.5" style={{ borderColor: P.line }}>
-                      <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs w-12 shrink-0">{r.code}</span>
+                      <span style={{ fontFamily: MONO, color: P.brassText }} className="text-xs w-12 shrink-0">{r.code}</span>
                       <span className={"flex-1 text-sm truncate " + (r.strong ? "font-medium" : "")} style={{ color: r.strong ? P.text : P.muted }}>{r.name}</span>
                       <span style={{ fontFamily: MONO, color: r.final ? (r.amount >= 0 ? P.credit : P.debit) : r.amount >= 0 ? P.credit : P.text, borderTop: r.final ? `1px double ${P.brass}` : "none" }} className="text-sm tabular-nums">{fmt(r.amount)}</span>
                     </div>
@@ -7071,7 +7118,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
                 <Label>From</Label>
                 <div style={{ background: P.bg, border: `1px solid ${P.line}`, fontFamily: MONO }} className="rounded px-2 py-1.5 text-sm truncate">{data.ledger.name} <span style={{ color: P.faint }}>· {kindLabel(data.ledger.kind)}</span></div>
               </div>
-              <ArrowLeftRight size={16} style={{ color: P.brass }} className="mt-4 shrink-0" />
+              <ArrowLeftRight size={16} style={{ color: P.brassText }} className="mt-4 shrink-0" />
               <div className="flex-1">
                 <Label>To</Label>
                 <Select value={toId} onChange={(e) => setToId(e.target.value)}>
@@ -7507,7 +7554,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
             ["5", "Reload this page and tap Connect a bank. Console warnings about WebGPU/WASM from Plaid's own scripts are harmless, so ignore them."],
           ].map(([n, t]) => (
             <div key={n} className="flex gap-2 text-sm" style={{ color: P.muted }}>
-              <span style={{ fontFamily: MONO, color: P.brass }}>{n}.</span><span>{t}</span>
+              <span style={{ fontFamily: MONO, color: P.brassText }}>{n}.</span><span>{t}</span>
             </div>
           ))}
         </div>
@@ -7645,7 +7692,7 @@ function PersonalTaxCard({ data, openGuide }) {
               <div className="mt-1">
                 {T1_PACKAGE.map((f) => (
                   <div key={f.code} className="flex items-start gap-2 py-1.5" style={{ borderTop: `1px solid ${P.line}` }}>
-                    <span style={{ fontFamily: MONO, color: P.brass }} className="text-xs w-24 shrink-0">{f.code}</span>
+                    <span style={{ fontFamily: MONO, color: P.brassText }} className="text-xs w-24 shrink-0">{f.code}</span>
                     <span className="flex-1 min-w-0">
                       <span className="text-sm" style={{ color: P.text }}>{f.name}</span>
                       <span className="block text-xs" style={{ color: P.muted }}>{f.when}</span>
@@ -7877,7 +7924,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
 
           {(route === "software" ? softwareSteps(form, sw || list[0]) : accountantSteps(form)).map(([t, b], i) => (
             <div key={i} className="flex gap-2 mb-2">
-              <span style={{ fontFamily: MONO, color: P.brass }} className="text-sm shrink-0">{i + 1}.</span>
+              <span style={{ fontFamily: MONO, color: P.brassText }} className="text-sm shrink-0">{i + 1}.</span>
               <div><div className="text-sm" style={{ color: P.text }}>{t}</div><div className="text-xs" style={{ color: P.muted }}>{b}</div></div>
             </div>
           ))}
@@ -7946,7 +7993,7 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
 
   const Section = ({ title, children }) => (
     <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4">
-      <div style={{ fontFamily: MONO, color: P.brass }} className="text-xs uppercase tracking-widest mb-2">{title}</div>
+      <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-widest mb-2">{title}</div>
       {children}
     </div>
   );

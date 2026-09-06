@@ -9,23 +9,29 @@
    first paint and React mounting. The pre-paint script in index.html sets
    data-theme, so that frame already lands on the right ground colour instead of
    flashing the dark ledger at someone who chose light. */
+/* Light is the ground state, so the fallback block is the light palette and the
+   dark one is the override. That way a first visit paints paper immediately. */
 :root {
-  --bg: #101613; --surface: #171F1B; --surface2: #1D2622;
-  --line: #2A3530; --linehover: #3A463F;
-  --text: #F3F1E7; --muted: #AEB5A9; --faint: #7C847B;
-  --credit: #6FCB97; --debit: #E0705F; --brass: #E0B65A; --onbrass: #10120C;
-  --overlay: rgba(6, 10, 8, 0.75);
-  --glass: rgba(16, 22, 19, 0.8);
-  color-scheme: dark;
-}
-html[data-theme="light"] {
-  --bg: #F5F3EC; --surface: #FAF8F1; --surface2: #EDEAE0;
-  --line: #E0DCCE; --linehover: #CFC9B6;
-  --text: #2A2F27; --muted: #59604F; --faint: #83887A;
-  --credit: #2E7D54; --debit: #B0523F; --brass: #DFA726; --onbrass: #10120C;
-  --overlay: rgba(52, 56, 46, 0.38);
-  --glass: rgba(245, 243, 236, 0.85);
+  --bg: #FAF9F7; --surface: #FFFFFF; --surface2: #F5F3F0;
+  --line: #EDEAE5; --linehover: #E2DDD6;
+  --text: #1C1917; --muted: #5A534E; --faint: #8A827B;
+  --credit: #08805A; --debit: #C4442F;
+  --brass: #F59E0B;        /* fills */
+  --brasstext: #A9620A;    /* text, borders, icons. 4.73:1 on surface */
+  --onbrass: #241703;
+  --overlay: rgba(28, 25, 23, 0.40);
+  --glass: rgba(250, 249, 247, 0.84);
   color-scheme: light;
+}
+html[data-theme="dark"] {
+  --bg: #100E0C; --surface: #1A1714; --surface2: #221E1A;
+  --line: #2A2521; --linehover: #37312B;
+  --text: #F5F1EC; --muted: #B0A79F; --faint: #877E76;
+  --credit: #34D399; --debit: #FB7185;
+  --brass: #FBBF24; --brasstext: #FBBF24; --onbrass: #1C1200;
+  --overlay: rgba(8, 6, 4, 0.72);
+  --glass: rgba(16, 14, 12, 0.84);
+  color-scheme: dark;
 }
 
 /* The house easing curve. One curve for the whole product — the landing page
@@ -47,9 +53,11 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  font-size: 16.5px;
-  line-height: 1.65;
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 17px;
+  line-height: 1.7;
+  letter-spacing: -0.011em;
+  font-feature-settings: 'cv11', 'ss01';
   font-weight: 400;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
@@ -60,12 +68,12 @@ button { -webkit-tap-highlight-color: transparent; }
 /* Headings are Fraunces, the landing page's serif. At UI sizes its default
    optical size is set for display copy and reads too fragile, so pin opsz and
    pull the tracking in — the letterforms stay editorial, the fit stays tight. */
+/* Headings share the body family. Weight and tracking carry the hierarchy, which
+   reads cleaner at UI sizes than a display serif did. */
 h1, h2, h3 {
-  font-family: 'Fraunces', Georgia, serif;
-  font-variation-settings: "opsz" 32;
   font-weight: 600;
-  letter-spacing: -0.018em;
-  line-height: 1.15;
+  letter-spacing: -0.028em;
+  line-height: 1.16;
 }
 
 /* Numbers: Geist Mono, tabular so columns never jitter. */
@@ -73,12 +81,15 @@ h1, h2, h3 {
 
 /* The mono eyebrow above section headings — brass, wide, small. Lifted from
    the landing page, where it labels every section. */
+/* Sentence case in the body face rather than tracked-out mono, which was the
+   single biggest reason the interface read as dated. Colour comes from
+   --brasstext, because --brass as text measured 2.04:1 on the light surface. */
 .eyebrow {
-  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--brass);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--brasstext);
 }
 
 /* Thin scrollbars, in the palette rather than the OS default. */

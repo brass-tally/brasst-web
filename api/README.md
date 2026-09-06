@@ -1,85 +1,68 @@
-# BrassTally API Functions
+# API routes
 
-Vercel serverless functions for handling:
-- Beta approval email automation (via Resend)
-- Health checks
-- Future features (email verification, webhooks, etc.)
+Vercel serverless functions. Verified live: `/api/health` answers 200 with every
+environment variable set.
 
-## Functions
-
-### `/api/send-beta-approvals`
-**Cron**: Runs every 1 minute
-
-Queries for beta signups pending approval (created 7+ minutes ago) and:
-1. Sends an approval email via Resend API with a verification link
-2. Updates signup status to "approved"
-
-**Requires**:
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `RESEND_API_KEY`
-- `RESEND_FROM_EMAIL`
-- `APP_URL`
-
-**How it works**:
-- Queries the `beta_signups` table for pending signups older than 7 minutes
-- Sends an invitation email via Resend with a clickable approval link
-- Updates the signup status to "approved" in the database
-
-### `/api/health`
-**Method**: GET
-
-Health check to verify all required environment variables are configured.
-
-**Response** (200 if ready, 400 if not):
-```json
-{
-  "status": "ready|incomplete",
-  "checks": {
-    "supabaseUrl": true,
-    "supabaseServiceKey": true,
-    "resendApiKey": true,
-    "resendFromEmail": true,
-    "appUrl": true
-  },
-  "message": "..."
-}
+```
+send-beta-approvals.js   the cron target. Approves waiting signups and emails a way in
+lib/email.js             the approval email
+health.js                which environment variables are present
 ```
 
-## Local Development
+## The gap this filled
+
+`vercel.json` has scheduled `/api/send-beta-approvals` since it was written, but
+the file did not exist. The endpoint returned 404 on every run, so **no signup
+was ever approved automatically**. Anything sitting in `beta_signups` with
+status `pending` has been waiting the whole time.
+
+After deploying, check what is queued:
+
+```sql
+select email, status, created_at, approved_at
+from public.beta_signups order by created_at;
+```
+
+Anything older than seven minutes goes out on the next run.
+
+## Environment
+
+Set in Vercel project settings. `/api/health` reports which are present.
+
+```
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY     admin. This route mints sign-in links
+RESEND_API_KEY
+RESEND_FROM_EMAIL             a verified sender in Resend
+APP_URL                       https://brasstally.com
+CRON_SECRET                   required, and not currently reported by health.js
+```
+
+**`CRON_SECRET` is not optional here**, whatever the older notes say. The route
+mints authentication links and sends them, so without a secret anyone could
+call it, drain the Resend quota, and approve every pending signup at will. It
+fails closed: no secret configured means it refuses to run. Vercel attaches
+`Authorization: Bearer $CRON_SECRET` automatically once the variable is set.
+
+## Behaviour worth knowing
+
+- **The row is marked approved only after the email is accepted.** Marking first
+  and sending second produces people who are approved and never hear from us,
+  and the next run cannot find them again.
+- **A failed send stays pending** and is retried on the next run, so a transient
+  Resend hiccup does not cost someone their invitation.
+- **The update is conditional on still being pending**, so two overlapping runs
+  cannot both send.
+- **Fifty per run.** Bounds the email bill if the table ever fills quickly.
+- **The email carries a six digit code as well as a link**, because the app's
+  sign-in screen accepts one, and mail clients that rewrite links or open on
+  another device would otherwise strand people.
+
+## Testing
 
 ```bash
-# Install dependencies
-npm install
-
-# Test the cron endpoint
-curl -X POST http://localhost:3000/api/send-beta-approvals \
-  -H "Authorization: Bearer your-secret"
-
-# Check health
-curl http://localhost:3000/api/health
+curl -X POST https://brasstally.com/api/send-beta-approvals \
+  -H "Authorization: Bearer $CRON_SECRET"
 ```
 
-## File Structure
-
-```
-api/
-├── send-beta-approvals.js  # Main cron handler
-├── health.js               # Health check endpoint
-├── package.json           # Dependencies
-└── README.md              # This file
-```
-
-## Email Template
-
-The approval email is generated and sent via Resend API. The HTML template is defined
-in `send-beta-approvals.js` in the `resend.emails.send()` call. To customize:
-
-1. Edit the HTML template in `send-beta-approvals.js`
-2. Variables available:
-   - `approvalUrl` → Dynamic link from `APP_URL` + approval path
-   - `signup.email` → Recipient's email address
-
-Or use custom templates from `/emails/` directory:
-- `beta-approval.html` → Custom beta approval template (can be loaded if needed)
-- `brasstally-welcome-invite.html` → Welcome email template
+Expect `{"approved":n,"checked":n}`. Without the header, `401`.
