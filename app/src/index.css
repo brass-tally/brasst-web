@@ -345,9 +345,38 @@ h1, h2, h3 {
   .arap-scroll { overflow: visible; padding-right: 0; margin-right: 0; }
 }
 
-/* The pinned figures sit beside the rail, not under it. */
-@media (min-width: 1024px) { .mini-line { left: 74px !important; } }
-@media (prefers-reduced-motion: reduce) { .mini-line { transition: none !important; } }
+/* ---- the condensing bar ----
+   Matches the prototype: the section, then the figures you chose, frosted and
+   pinned to the top once the card grid leaves the screen. It sits beside the
+   rail rather than under it, and scrolls sideways rather than wrapping, so a
+   narrow window loses nothing. */
+.mini-line {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 35;
+  background: var(--glass);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  transform: translateY(-101%);
+  transition: transform .32s cubic-bezier(.2, .8, .2, 1);
+  pointer-events: none;
+}
+.mini-line.show { transform: none; pointer-events: auto; }
+.mini-line-in {
+  max-width: 1140px; margin: 0 auto;
+  padding: 12px clamp(22px, 3.4vw, 52px);
+  display: flex; align-items: center; gap: 26px; overflow-x: auto;
+  scrollbar-width: none;
+}
+.mini-line-in::-webkit-scrollbar { display: none; }
+.mini-line .mstat { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; flex-shrink: 0; }
+.mini-line .mtitle { font-weight: 600; font-size: 16px; letter-spacing: -.015em; flex-shrink: 0; margin-right: 4px; }
+
+@media (min-width: 1024px) { .mini-line { left: 74px; } }
+@media (max-width: 620px) {
+  .mini-line-in { padding: 9px 16px; gap: 16px; }
+  .mini-line .mtitle { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .mini-line { transition: none; } }
 
 /* ---- Tally ----
    A popover above the dock on a phone, a tall drawer down the right edge where
@@ -359,13 +388,8 @@ h1, h2, h3 {
 @media (min-width: 1024px) {
   .tally-frame { top: 0; bottom: 0; right: 0; width: min(430px, 38vw); padding: 14px; display: flex; }
   .tally-frame .capture-pop { width: 100%; height: 100%; display: flex; }
-  .tally-panel { max-height: none; height: 100%; width: 100%; border-radius: var(--r-panel, 20px); }
+  .tally-panel { max-height: none; height: 100%; width: 100%; border-radius: 20px; }
 }
-
-/* The sign-in card is the first thing anyone sees, so it gets the roomier
-   controls the rest of the app now uses. */
-.auth-card input, .auth-card select { font-size: 16px; padding: 12px 14px; }
-.auth-card button { min-height: 44px; }
 
 /* The peek sits above whichever Tally trigger is on screen: the dock button on
    a phone, the corner button once the rail takes over. */
@@ -377,3 +401,8 @@ h1, h2, h3 {
 }
 @media (min-width: 1024px) { .tally-peek { bottom: 96px; right: 24px; } }
 @media (prefers-reduced-motion: reduce) { .tally-peek { transition: none !important; } }
+
+/* The sign-in card is the first thing anyone sees, so it gets the roomier
+   controls the rest of the app now uses. */
+.auth-card input, .auth-card select { font-size: 16px; padding: 12px 14px; }
+.auth-card button { min-height: 44px; }

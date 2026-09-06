@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -950,6 +950,20 @@ function Ledger({ onSignOut }) {
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
   const [setupHidden, setSetupHidden] = useState(() => Boolean(window.localStorage.getItem("setup:hidden")));
+  const [headerPanel, setHeaderPanel] = useState(null);   // "setup" | "tour" | null
+  // The same arithmetic the checklist does, so the dot on the icon and the
+  // panel underneath it can never disagree.
+  const setupProgress = useMemo(() => {
+    if (!data) return { done: 0, total: 5 };
+    const done = [
+      true,
+      (bankConns?.length || 0) > 0,
+      (data.transactions?.length || 0) > 0,
+      ["expense", "income"].some((t) => (data.categories?.[t] || []).some((c) => Number(c.planned) > 0)),
+      Boolean(window.localStorage.getItem("guide:used")),
+    ].filter(Boolean).length;
+    return { done, total: 5 };
+  }, [data, bankConns]);
 
   /* ---- 1) list this user's ledgers ---- */
   useEffect(() => {
@@ -1086,19 +1100,6 @@ function Ledger({ onSignOut }) {
     [data, month]
   );
   // ledger line shows CASH flow, entries paid/received in credits don't move money
-  // Once the ledger line scrolls out of view its figures pin to the top, so a
-  // long transaction list never costs you sight of the balance. A sentinel and
-  // an observer rather than a scroll handler, so it costs nothing per frame.
-  const ledgerLineRef = useRef(null);
-  const [miniBar, setMiniBar] = useState(false);
-  useEffect(() => {
-    const el = ledgerLineRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver(([e]) => setMiniBar(!e.isIntersecting), { threshold: 0 });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [ledgerLineRef.current]);
-
   const sums = useMemo(() => {
     const cash = monthTx.filter((t) => !isCredits(t));
     const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -1764,7 +1765,7 @@ function Ledger({ onSignOut }) {
           where a row's date and its amount stop being one glance apart. */}
       <div className="px-4 w-full mx-auto max-w-[1180px]" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
         {/* ===== header ===== */}
-        <header className="pt-6 pb-5 flex flex-wrap items-end justify-between gap-3">
+        <header className="pt-6 pb-5 lg:pt-5 lg:pb-4 flex flex-wrap items-end lg:items-center justify-between gap-3">
           <div>
             <div className="eyebrow lg:hidden">Brasstally</div>
             <div className="flex items-center gap-3 min-w-0">
@@ -1775,7 +1776,7 @@ function Ledger({ onSignOut }) {
                   disabled={typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches}
                   className="flex items-center gap-1.5 text-left min-w-0 max-w-[70vw] sm:max-w-xs lg:pointer-events-none"
                 >
-                  <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight truncate">{data.ledger.name}</h1>
+                  <h1 style={{ fontFamily: SERIF }} className="text-3xl lg:text-xl leading-tight truncate">{data.ledger.name}</h1>
                   <ChevronDown size={20} style={{ color: P.brassText, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} className="shrink-0 lg:hidden" />
                 </button>
                 {ledgerMenuOpen && (
@@ -1826,6 +1827,49 @@ function Ledger({ onSignOut }) {
             >
               <User size={15} />
             </Btn>
+            {/* What used to be two banners taking the top of every screen. The
+                help is still one tap away, it just stops shouting before you
+                have asked. A dot appears when there is something new. */}
+            <HeaderPopover
+              icon={HelpCircle}
+              label="Getting set up"
+              dot={!setupHidden && setupProgress.done < setupProgress.total}
+              badge={!setupHidden ? `${setupProgress.done}/${setupProgress.total}` : null}
+              open={headerPanel === "setup"}
+              onToggle={() => setHeaderPanel((v) => (v === "setup" ? null : "setup"))}
+            >
+              <SetupChecklist
+                asPanel
+                data={data}
+                bankConns={bankConns}
+                openGuide={openGuide}
+                onGo={(where) => {
+                  setHeaderPanel(null);
+                  if (where === "capture") return setChatOpen(true);
+                  setTab(where);
+                }}
+                onDismiss={() => { window.localStorage.setItem("setup:hidden", "1"); setSetupHidden(true); setHeaderPanel(null); }}
+              />
+            </HeaderPopover>
+
+            <HeaderPopover
+              icon={Sparkles}
+              label="What this screen is for"
+              dot={!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`)}
+              open={headerPanel === "tour"}
+              onToggle={() => setHeaderPanel((v) => (v === "tour" ? null : "tour"))}
+            >
+              <TourCard
+                asPanel
+                tab={tab}
+                onDismiss={() => {
+                  window.localStorage.setItem(`tour:${tab}`, "1");
+                  setSeenTours((st) => ({ ...st, [tab]: true }));
+                  setHeaderPanel(null);
+                }}
+              />
+            </HeaderPopover>
+
             <Btn
               tone="ghost"
               size="sm"
@@ -1856,9 +1900,8 @@ function Ledger({ onSignOut }) {
         </header>
 
         {/* ===== signature ledger line ===== */}
-        <MiniLine sums={sums} balance={balance} show={miniBar} sectionName={tab === "settings" ? "Settings" : (tabs.find(([k]) => k === tab)?.[1] || "")} />
-        <div ref={ledgerLineRef}>
         <LedgerLine
+          sectionName={tab === "settings" ? "Settings" : (tabs.find(([k]) => k === tab)?.[1] || "")}
           sums={sums}
           prevSums={prevSums}
           entryCount={monthTx.length}
@@ -1871,7 +1914,6 @@ function Ledger({ onSignOut }) {
           consolidationSettled={consolidation.settled}
           onConsolidate={() => setMatchOpen(true)}
         />
-        </div>
 
         {/* ===== tabs ===== */}
         <div className="mt-8 mb-5 fade-in-key" key={`head:${tab}`}>
@@ -1881,25 +1923,7 @@ function Ledger({ onSignOut }) {
           </h2>
         </div>
 
-        {!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`) && (
-          <TourCard tab={tab} onDismiss={() => {
-            window.localStorage.setItem(`tour:${tab}`, "1");
-            setSeenTours((s) => ({ ...s, [tab]: true }));
-          }} />
-        )}
         <div key={`panel:${tab}`} className="tab-enter">
-        {tab === "overview" && !setupHidden && (
-          <SetupChecklist
-            data={data}
-            bankConns={bankConns}
-            openGuide={openGuide}
-            onGo={(where) => {
-              if (where === "capture") return setChatOpen(true);
-              setTab(where);
-            }}
-            onDismiss={() => { window.localStorage.setItem("setup:hidden", "1"); setSetupHidden(true); }}
-          />
-        )}
         {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} insights={insights} onAsk={askAgent} />}
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
@@ -3351,35 +3375,22 @@ function ImportModal({ data, addSub, onImport, onClose }) {
   );
 }
 
-/* The condensed form of the ledger line. Frosted, pinned, and only the two
-   figures that answer "am I alright" at a glance. It never appears on its own
-   section, only once the full card has scrolled past. */
-function MiniLine({ sums, balance, show, sectionName }) {
+/* The condensed form of the ledger line: the section you are in, then the same
+   figures you chose to show, in the same order. It follows Customise, so the
+   bar can never contradict the cards it condensed from. Pinned once the card
+   grid scrolls out of view, and gone again the moment it returns. */
+function MiniLine({ show, sectionName, stats }) {
   return (
-    <div
-      aria-hidden={!show}
-      className="mini-line"
-      style={{
-        position: "fixed", top: 0, left: 0, right: 0, zIndex: 35,
-        background: P.glass, borderBottom: `1px solid ${P.line}`,
-        backdropFilter: "blur(16px) saturate(1.4)", WebkitBackdropFilter: "blur(16px) saturate(1.4)",
-        transform: show ? "none" : "translateY(-101%)",
-        transition: "transform .32s cubic-bezier(.2,.8,.2,1)",
-        pointerEvents: show ? "auto" : "none",
-      }}
-    >
-      <div className="max-w-[1180px] mx-auto px-4 py-2.5 flex items-center gap-6 overflow-x-auto">
-        <span style={{ color: P.text }} className="text-sm font-medium shrink-0">{sectionName}</span>
-        <span className="flex items-baseline gap-2 shrink-0">
-          <span style={{ color: P.faint }} className="text-xs">Net</span>
-          <span style={{ fontFamily: MONO, color: sums.net >= 0 ? P.credit : P.debit }} className="text-base tabular-nums">{fmt(sums.net)}</span>
-        </span>
-        <span className="flex items-baseline gap-2 shrink-0">
-          <span style={{ color: P.faint }} className="text-xs">Balance</span>
-          <span style={{ fontFamily: MONO, color: P.brassText }} className="text-base tabular-nums">
-            {balance.beforeAnchor ? "·" : fmt(balance.value)}
+    <div aria-hidden={!show} className={"mini-line" + (show ? " show" : "")}>
+      <div className="mini-line-in">
+        <span className="mtitle" style={{ color: P.text }}>{sectionName}</span>
+        {stats.map((st) => (
+          <span key={st.label} className="mstat">
+            <span style={{ color: P.faint }} className="text-sm">{st.label}</span>
+            <span style={{ fontFamily: MONO, color: st.tone }} className="text-base tabular-nums">{st.value}</span>
           </span>
-        </span>
+        ))}
+        <span style={{ flex: 1 }} />
       </div>
     </div>
   );
@@ -3406,8 +3417,20 @@ function Delta({ now, prev, invert }) {
   );
 }
 
-function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate }) {
+function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName }) {
   const fromBank = balance.source === "bank";
+
+  // The bar appears when the grid leaves the screen. A sentinel and an observer
+  // rather than a scroll handler, so it costs nothing per frame.
+  const gridRef = useRef(null);
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => setPinned(!e.isIntersecting), { threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   // Which cards are showing. Stored, so the choice survives a reload, and
   // validated on read so a card removed in a later version cannot leave a hole.
@@ -3461,7 +3484,12 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
   const visible = shown.filter((k) => cards[k]);
 
   return (
-    <section className="mt-1">
+    <section className="mt-1" ref={gridRef}>
+      <MiniLine
+        show={pinned}
+        sectionName={sectionName}
+        stats={visible.slice(0, 4).map((k) => ({ label: cards[k].label.split(" · ")[0], value: cards[k].value, tone: cards[k].tone }))}
+      />
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="eyebrow">Where you stand</div>
         <button
@@ -3555,6 +3583,57 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
         </div>
       </div>
     </section>
+  );
+}
+
+/* An icon in the header that opens a panel underneath it. This is where the
+   two banners went: the tour card and the setup checklist used to sit above
+   every screen, pushing the ledger down and saying the same thing every time.
+   The help is still one tap away; it just stops shouting before it is asked. */
+function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children }) {
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (!e.target.closest("[data-header-popover]")) onToggle(); };
+    const esc = (e) => e.key === "Escape" && onToggle();
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", esc); };
+  }, [open, onToggle]);
+
+  return (
+    <div className="relative" data-header-popover>
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggle(); }}
+        aria-label={label}
+        title={label}
+        aria-expanded={open}
+        style={{ color: open ? P.brassText : P.muted, padding: 9 }}
+        className="relative inline-flex items-center justify-center rounded-lg"
+      >
+        <Icon size={15} />
+        {dot && !open && (
+          <span
+            aria-hidden
+            style={{ position: "absolute", top: 5, right: 5, width: 7, height: 7, borderRadius: "50%", background: P.brass }}
+          />
+        )}
+      </button>
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 45,
+            width: "min(420px, calc(100vw - 32px))", maxHeight: "70vh", overflowY: "auto",
+            background: P.surface, borderRadius: R.panel, boxShadow: elev(3), padding: 4,
+          }}
+        >
+          {badge && (
+            <div style={{ color: P.faint }} className="text-xs px-4 pt-3">{badge} done</div>
+          )}
+          {children}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -6491,11 +6570,14 @@ const TOUR_COPY = {
   reports: ["The year, as a file", "Pick a period and the whole ledger is cut to it: the statement, the months behind it, and where the money went. Every block exports as a CSV your spreadsheet opens or a PDF you can send."],
 };
 
-function TourCard({ tab, onDismiss }) {
+function TourCard({ tab, onDismiss, asPanel }) {
   const copy = TOUR_COPY[tab];
   if (!copy) return null;
   return (
-    <div style={{ ...cardStyle(), borderLeft: `3px solid ${P.brass}` }} className="rounded-lg p-4 mb-5 flex items-start gap-3">
+    <div
+      style={asPanel ? { padding: 16 } : { ...cardStyle(), borderLeft: `3px solid ${P.brass}` }}
+      className={asPanel ? "flex items-start gap-3" : "rounded-lg p-4 mb-5 flex items-start gap-3"}
+    >
       <div className="flex-1">
         <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-widest mb-1">First time here</div>
         <div style={{ fontFamily: SERIF }} className="text-base mb-1">{copy[0]}</div>
@@ -6580,7 +6662,7 @@ function NewLedgerModal({ onboarding, onCreate, onClose, onSignOut }) {
    a welcome tour, so this is not one. It is the four things, each a button that
    does the thing, and it disappears on its own once they are done. */
 
-function SetupChecklist({ data, bankConns, onGo, openGuide, onDismiss }) {
+function SetupChecklist({ data, bankConns, onGo, openGuide, onDismiss, asPanel }) {
   const hasBank = (bankConns?.length || 0) > 0;
   const hasEntry = (data.transactions?.length || 0) > 0;
   const hasBudget = ["expense", "income"].some((t) => (data.categories?.[t] || []).some((c) => Number(c.planned) > 0));
@@ -6623,11 +6705,16 @@ function SetupChecklist({ data, bankConns, onGo, openGuide, onDismiss }) {
   if (doneCount === steps.length) return null;
 
   return (
-    <section style={cardStyle({ tone: "brass", level: 2 })} className="p-5 mb-6">
+    <section
+      style={asPanel ? { padding: 16 } : cardStyle({ tone: "brass", level: 2 })}
+      className={asPanel ? "" : "p-5 mb-6"}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Getting set up</h2>
-          <p style={{ color: P.muted }} className="text-sm">{doneCount} of {steps.length} done. This card goes away by itself.</p>
+          <p style={{ color: P.muted }} className="text-sm">
+            {doneCount} of {steps.length} done.{asPanel ? "" : " This card goes away by itself."}
+          </p>
         </div>
         <button onClick={onDismiss} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 shrink-0">
           hide it

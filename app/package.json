@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node ../scripts/check-tdz.mjs src/App.jsx && vite build",
+    "build": "npm run check && vite build",
     "preview": "vite preview",
-    "check": "node ../scripts/check-tdz.mjs src/App.jsx"
+    "check": "node ../scripts/check-tdz.mjs src/App.jsx && node ../scripts/check-css.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
