@@ -594,13 +594,30 @@ export default function App() {
 function AuthCard({ children }) {
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS }} className="flex items-center justify-center p-4">
-      <div style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3), borderRadius: R.panel }} className="p-7 w-full max-w-sm">
-        <div className="eyebrow mb-2">Down to brass tacks</div>
+      <div
+        style={{ background: P.surface, boxShadow: elev(3), borderRadius: R.panel }}
+        className="p-8 w-full max-w-md auth-card"
+      >
+        {/* The mark leads, then the name. The old eyebrow above the wordmark was
+            two pieces of branding stacked before anyone had done anything. */}
+        <div
+          style={{ background: P.surface2, borderRadius: R.control, width: 44, height: 44 }}
+          className="flex items-center justify-center mb-5"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path d="M4 9.5h11" stroke={P.credit} strokeWidth="2.6" strokeLinecap="round" />
+            <path d="M4 15h8" stroke={P.debit} strokeWidth="2.6" strokeLinecap="round" />
+            <path d="M18.5 6.5l-1.4 11" stroke={P.brass} strokeWidth="2.6" strokeLinecap="round" />
+          </svg>
+        </div>
         {/* Set rather than placed: the wordmark artwork is cream, drawn for the
             dark ledger, and disappeared into the paper of the light theme.
             Typed in the heading face it follows the palette either way. */}
         <div style={{ fontFamily: SERIF, color: P.text }} className="text-2xl leading-none">
           Brass<span style={{ color: P.brassText }}>t</span>ally
+        </div>
+        <div style={{ color: P.muted }} className="text-sm mt-1.5 mb-1">
+          Books for people who run a company and a life.
         </div>
         {children}
       </div>
@@ -1067,12 +1084,36 @@ function Ledger({ onSignOut }) {
     [data, month]
   );
   // ledger line shows CASH flow, entries paid/received in credits don't move money
+  // Once the ledger line scrolls out of view its figures pin to the top, so a
+  // long transaction list never costs you sight of the balance. A sentinel and
+  // an observer rather than a scroll handler, so it costs nothing per frame.
+  const ledgerLineRef = useRef(null);
+  const [miniBar, setMiniBar] = useState(false);
+  useEffect(() => {
+    const el = ledgerLineRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => setMiniBar(!e.isIntersecting), { threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ledgerLineRef.current]);
+
   const sums = useMemo(() => {
     const cash = monthTx.filter((t) => !isCredits(t));
     const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
     const exp = cash.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     return { inc, exp, net: inc - exp };
   }, [monthTx]);
+  // The month before, computed the same way, so each figure can say which
+  // direction it is moving rather than sitting there as a bare total.
+  const prevSums = useMemo(() => {
+    if (!data) return null;
+    const prev = shiftMonth(month, -1);
+    const cash = data.transactions.filter((t) => (t.date || "").startsWith(prev) && !isCredits(t));
+    const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+    const exp = cash.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    return { inc, exp, net: inc - exp, count: cash.length };
+  }, [data, month]);
+
   // Balance anchoring: "balance was $X as of anchorDate". Only transactions AFTER the
   // anchor count toward the balance, so untracked earlier months can't distort it.
   // Connected ledgers show the bank figure as Balance to date; books stay for delta.
@@ -1670,7 +1711,7 @@ function Ledger({ onSignOut }) {
   const closePreview = () => setPreview(null); // signed URLs expire on their own
 
   const tabs = [
-    ["overview", "Overview", LayoutGrid],
+    ["overview", "Snapshot", LayoutGrid],
     ["transactions", "Transactions", Receipt],
     ["pl", "P&L", TrendingUp],
     ["arap", "AR / AP", FileClock],
@@ -1695,8 +1736,8 @@ function Ledger({ onSignOut }) {
         ledger={data.ledger}
         onPickLedger={(l) => { if (l.id !== data.ledger.id) setCurrentLedger(l); }}
         onNewLedger={() => setNewLedgerOpen(true)}
-        onAccount={() => setAccountOpen(true)}
-        accountActive={accountOpen}
+        onAccount={() => { setTab("settings"); setChatOpen(false); }}
+        accountActive={tab === "settings"}
       />
       <div className="flex-1 min-w-0">
       {/* The ledger is a reading surface, so it stops widening past the point
@@ -1795,8 +1836,12 @@ function Ledger({ onSignOut }) {
         </header>
 
         {/* ===== signature ledger line ===== */}
+        <MiniLine sums={sums} balance={balance} show={miniBar} sectionName={tab === "settings" ? "Settings" : (tabs.find(([k]) => k === tab)?.[1] || "")} />
+        <div ref={ledgerLineRef}>
         <LedgerLine
           sums={sums}
+          prevSums={prevSums}
+          entryCount={monthTx.length}
           balance={balance}
           openBooks={openBooks}
           creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null}
@@ -1806,12 +1851,13 @@ function Ledger({ onSignOut }) {
           consolidationSettled={consolidation.settled}
           onConsolidate={() => setMatchOpen(true)}
         />
+        </div>
 
         {/* ===== tabs ===== */}
         <div className="mt-8 mb-5 fade-in-key" key={tab}>
           <div className="eyebrow mb-1.5">{monthLabel(month)}</div>
           <h2 style={{ fontFamily: SERIF }} className="text-2xl">
-            {tabs.find(([k]) => k === tab)?.[1]}
+            {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
           </h2>
         </div>
 
@@ -1847,6 +1893,17 @@ function Ledger({ onSignOut }) {
           dbTry(() => db.updateLedger(data.ledger.id, patch));
         }} />}
         {tab === "reports" && <ReportsTab data={data} month={month} balance={balance} onAsk={askAgent} />}
+        {tab === "settings" && (
+          <AccountModal
+            asPage
+            theme={theme}
+            setTheme={setTheme}
+            onSignOut={onSignOut}
+            onResetLedger={resetAll}
+            ledgerName={data.ledger.name}
+            onClose={() => setTab("overview")}
+          />
+        )}
         </div>
       </div>
 
@@ -1854,11 +1911,14 @@ function Ledger({ onSignOut }) {
       {/* capture panel floats above the dock */}
       </div>
 
-      <div className="fixed z-40" style={{ right: "12px", bottom: "84px", width: "min(26rem, calc(100vw - 24px))", pointerEvents: chatOpen ? "auto" : "none" }}>
+      <div
+        className="fixed z-40 tally-frame"
+        style={{ pointerEvents: chatOpen ? "auto" : "none" }}
+      >
         <div className={"capture-pop " + (chatOpen ? "open" : "")}>
           <div
             style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3) }}
-            className="rounded-lg overflow-hidden"
+            className="rounded-lg overflow-hidden tally-panel"
           >
             {/* Tally has a name and a face, because you talk to someone, not to
                 a feature. The brand stays in the header of the app. */}
@@ -1983,7 +2043,10 @@ function Ledger({ onSignOut }) {
       <ConfirmHost />
 
       <PreviewModal preview={preview} onClose={closePreview} />
-      {accountOpen && <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll} ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />}
+      {accountOpen && (
+        <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll}
+          ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />
+      )}
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
       {matchOpen && (
         <MatchView
@@ -3262,16 +3325,81 @@ function ImportModal({ data, addSub, onImport, onClose }) {
   );
 }
 
+/* The condensed form of the ledger line. Frosted, pinned, and only the two
+   figures that answer "am I alright" at a glance. It never appears on its own
+   section, only once the full card has scrolled past. */
+function MiniLine({ sums, balance, show, sectionName }) {
+  return (
+    <div
+      aria-hidden={!show}
+      className="mini-line"
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 35,
+        background: P.glass, borderBottom: `1px solid ${P.line}`,
+        backdropFilter: "blur(16px) saturate(1.4)", WebkitBackdropFilter: "blur(16px) saturate(1.4)",
+        transform: show ? "none" : "translateY(-101%)",
+        transition: "transform .32s cubic-bezier(.2,.8,.2,1)",
+        pointerEvents: show ? "auto" : "none",
+      }}
+    >
+      <div className="max-w-[1180px] mx-auto px-4 py-2.5 flex items-center gap-6 overflow-x-auto">
+        <span style={{ color: P.text }} className="text-sm font-medium shrink-0">{sectionName}</span>
+        <span className="flex items-baseline gap-2 shrink-0">
+          <span style={{ color: P.faint }} className="text-xs">Net</span>
+          <span style={{ fontFamily: MONO, color: sums.net >= 0 ? P.credit : P.debit }} className="text-base tabular-nums">{fmt(sums.net)}</span>
+        </span>
+        <span className="flex items-baseline gap-2 shrink-0">
+          <span style={{ color: P.faint }} className="text-xs">Balance</span>
+          <span style={{ fontFamily: MONO, color: P.brassText }} className="text-base tabular-nums">
+            {balance.beforeAnchor ? "·" : fmt(balance.value)}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /* ================= signature: the ledger line ================= */
-function LedgerLine({ sums, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate }) {
+/* A figure and, underneath it, which way it is going. Percentages are only
+   meaningful against a month that actually had activity, so a zero prior month
+   says "first month with activity" rather than dividing by nothing. */
+function Delta({ now, prev, invert }) {
+  if (prev == null) return null;
+  if (!prev) {
+    return <div style={{ color: P.faint }} className="text-xs mt-1">first month with activity</div>;
+  }
+  const pct = Math.round(((now - prev) / Math.abs(prev)) * 100);
+  if (pct === 0) return <div style={{ color: P.faint }} className="text-xs mt-1">level with last month</div>;
+  const up = pct > 0;
+  const good = invert ? !up : up;
+  return (
+    <div style={{ color: good ? P.credit : P.debit }} className="text-xs mt-1 flex items-center gap-1">
+      {up ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+      {Math.abs(pct)}% on last month
+    </div>
+  );
+}
+
+function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate }) {
   const max = Math.max(sums.inc, sums.exp, 1);
   const fromBank = balance.source === "bank";
   return (
     <Card level={2}>
       <div className="flex flex-wrap justify-between gap-5 mb-4">
-        <Stat size="text-xl" label="Money in" value={fmt(sums.inc)} tone={P.credit} />
-        <Stat size="text-xl" label="Money out" value={fmt(sums.exp)} tone={P.debit} />
-        <Stat size="text-xl" label="Net this month" value={fmt(sums.net)} tone={sums.net >= 0 ? P.credit : P.debit} />
+        <div>
+          <Stat size="text-xl" label="Money in" value={fmt(sums.inc)} tone={P.credit} />
+          <Delta now={sums.inc} prev={prevSums?.inc} />
+        </div>
+        <div>
+          <Stat size="text-xl" label="Money out" value={fmt(sums.exp)} tone={P.debit} />
+          <Delta now={sums.exp} prev={prevSums?.exp} invert />
+        </div>
+        <div>
+          <Stat size="text-xl" label="Net this month" value={fmt(sums.net)} tone={sums.net >= 0 ? P.credit : P.debit} />
+          <div style={{ color: P.faint }} className="text-xs mt-1">
+            {entryCount} {entryCount === 1 ? "entry" : "entries"} this month
+          </div>
+        </div>
         <div className="flex items-start gap-1.5">
           <button onClick={onReconcile} className="text-left" title={fromBank ? "Bank balance · tap to align books" : "Set or correct the balance against your real accounts"}>
             <div style={{ color: P.faint, letterSpacing: "0.07em" }} className="text-xs uppercase mb-1">
@@ -8007,7 +8135,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
 }
 
 /* ================= account: profile, membership, billing, settings ================= */
-function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, onClose }) {
+function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, onClose, asPage }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -8046,13 +8174,14 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
     </div>
   );
 
-  return (
-    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div role="dialog" aria-modal="true" style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3), borderRadius: R.panel }} className="modal-panel w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-between items-start">
-          <h3 style={{ fontFamily: SERIF }} className="text-xl">Account</h3>
-          <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
-        </div>
+  const body = (
+    <>
+        {!asPage && (
+          <div className="flex justify-between items-start">
+            <h3 style={{ fontFamily: SERIF }} className="text-xl">Account</h3>
+            <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
+          </div>
+        )}
 
         <Section title="Profile">
           <Label>Email</Label>
@@ -8097,7 +8226,7 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
 
         {msg && <p style={{ color: P.credit, fontFamily: MONO }} className="text-xs mt-3">{msg}</p>}
 
-        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4 space-y-2">
+        <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4 space-y-2" data-account-actions>
           <button
             onClick={() => { onClose(); onResetLedger(); }}
             style={{ color: P.debit, border: `1px solid ${P.debit}` }}
@@ -8108,6 +8237,23 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
           </button>
           <Btn tone="ghost" className="w-full justify-center" onClick={onSignOut}><LogOut size={14} /> Sign out</Btn>
         </div>
+    </>
+  );
+
+  // On the phone there is no Settings section to navigate to, so it stays a
+  // sheet. Where the rail has room, the same content is a page like any other.
+  if (asPage) {
+    return (
+      <div className="space-y-6 stagger">
+        <div style={cardStyle()} className="p-5 max-w-2xl">{body}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div role="dialog" aria-modal="true" style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3), borderRadius: R.panel }} className="modal-panel w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        {body}
       </div>
     </div>
   );
