@@ -1924,7 +1924,16 @@ function Ledger({ onSignOut }) {
         </div>
 
         <div key={`panel:${tab}`} className="tab-enter">
-        {tab === "overview" && <Overview data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month} insights={insights} onAsk={askAgent} />}
+        {tab === "overview" && (
+          <Overview
+            data={data} monthTx={monthTx} sums={sums} setPlanned={setPlanned} month={month}
+            insights={insights} onAsk={askAgent} balance={balance} consolidation={consolidation}
+            onGo={(where) => {
+              if (where === "reconcile") return balance.source === "bank" ? setMatchOpen(true) : setReconciling(true);
+              setTab(where);
+            }}
+          />
+        )}
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
@@ -3638,7 +3647,176 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
 }
 
 /* ================= Overview ================= */
-function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk }) {
+/* ================= what wants you =================
+   Three panels above the budget: what needs deciding, how close the month is to
+   closed, and the reports worth keeping to hand. The prototype opened Snapshot
+   with this, and it is the right thing to open with: a ledger's first question
+   is not "what are the numbers" but "what am I supposed to do about them". */
+
+const CLOSE_KEY = (m) => `close:${m}`;
+
+function NeedsAttention({ data, insights, balance, consolidation, month, onGo, onAsk }) {
+  const [exported, setExported] = useState(() => {
+    try { return Boolean(window.localStorage.getItem(CLOSE_KEY(month))); } catch { return false; }
+  });
+  useEffect(() => {
+    try { setExported(Boolean(window.localStorage.getItem(CLOSE_KEY(month)))); } catch {}
+  }, [month]);
+
+  const [pinned, setPinned] = useState(() => {
+    try {
+      const raw = JSON.parse(window.localStorage.getItem("pinned:reports") || "null");
+      if (Array.isArray(raw)) return raw;
+    } catch {}
+    return ["Profit and loss", "Where the money went", "Cash calendar"];
+  });
+  const [pinning, setPinning] = useState(false);
+  const PINNABLE = ["Profit and loss", "Where the money went", "Cash calendar", "Open books", "Credit pools", "Bank against books", "T2 GIFI draft"];
+  const pin = (r) => {
+    setPinned((cur) => {
+      const next = cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r];
+      try { window.localStorage.setItem("pinned:reports", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  // Everything below is derived from the ledger, not decoration. A step is done
+  // because the books say so, which is the only way a checklist earns trust.
+  const monthEnd = `${month}-31`;
+  const openThisMonth = data.payables.filter((p) => p.status === "open" && p.dueDate && p.dueDate <= monthEnd);
+  const overdue = data.receivables.filter((r) => r.status === "open" && r.dueDate && r.dueDate < todayStr());
+  const bankOff = balance.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01 && !consolidation?.settled;
+  const poolsUnreviewed = (data.credits || []).length > 0 && !(data.transactions || []).some((t) => isCredits(t) && (t.date || "").startsWith(month));
+
+  const steps = [
+    { label: "Consolidate the bank", done: !bankOff, go: () => onGo("reconcile") },
+    { label: `Settle ${monthLabel(month).split(" ")[0]} payables`, done: openThisMonth.length === 0, go: () => onGo("arap"), note: openThisMonth.length ? `${openThisMonth.length} left` : null },
+    { label: "Chase what is overdue", done: overdue.length === 0, go: () => onGo("arap"), note: overdue.length ? `${overdue.length} overdue` : null },
+    { label: "Review credit pools", done: !poolsUnreviewed, go: () => onGo("credits") },
+    { label: "Export the statement", done: exported, go: () => onGo("reports") },
+  ];
+  const doneCount = steps.filter((x) => x.done).length;
+  const pct = Math.round((doneCount / steps.length) * 100);
+
+  const toneFor = (sev) => (sev === "alert" ? P.debit : sev === "warn" ? P.brass : P.faint);
+  const decisions = insights.slice(0, 4);
+
+  return (
+    <>
+      <div className="flex items-baseline justify-between gap-3 mt-6 mb-3">
+        <h2 style={{ fontFamily: SERIF }} className="text-lg">What wants you</h2>
+        {decisions.length > 0 && (
+          <button onClick={() => onAsk?.("What needs my attention this month?")} style={{ color: P.brassText }} className="text-sm">
+            Ask about these
+          </button>
+        )}
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-4 stagger">
+        {/* 1. what needs deciding */}
+        <section style={cardStyle()} className="p-4">
+          <h3 style={{ fontFamily: SERIF }} className="text-base">Needs a decision</h3>
+          <p style={{ color: P.muted }} className="text-sm mb-3">
+            {decisions.length ? `${decisions.length} ${decisions.length === 1 ? "thing is" : "things are"} waiting on you.` : "Nothing is waiting on you."}
+          </p>
+          {decisions.length === 0 ? (
+            <div style={{ color: P.faint }} className="text-sm">The books agree with the bank and nothing is overdue.</div>
+          ) : decisions.map((i) => (
+            <button
+              key={i.id || i.title}
+              onClick={() => onAsk?.(i.ask || i.title)}
+              className="w-full flex items-start gap-2.5 py-2 text-left"
+              style={{ borderTop: `1px solid ${P.line}` }}
+            >
+              <span aria-hidden style={{ background: toneFor(i.severity), width: 7, height: 7, borderRadius: "50%", marginTop: 6 }} className="shrink-0" />
+              <span className="flex-1 min-w-0">
+                <span style={{ color: P.text }} className="text-sm block">{i.title}</span>
+                {i.detail && <span style={{ color: P.faint }} className="text-xs block truncate">{i.detail}</span>}
+              </span>
+            </button>
+          ))}
+        </section>
+
+        {/* 2. how close the month is to closed */}
+        <section style={cardStyle()} className="p-4">
+          <h3 style={{ fontFamily: SERIF }} className="text-base">Closing {monthLabel(month).split(" ")[0]}</h3>
+          <p style={{ color: P.muted }} className="text-sm mb-3">{doneCount} of {steps.length} done.</p>
+          <div className="flex items-baseline gap-2 mb-2">
+            <span style={{ fontFamily: MONO, color: pct === 100 ? P.credit : P.brassText }} className="text-2xl tabular-nums">{pct}%</span>
+            <span style={{ color: P.faint }} className="text-xs">{pct === 100 ? "closed" : "on track"}</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden mb-3" style={{ background: P.surface2 }}>
+            <div style={{ width: `${pct}%`, background: pct === 100 ? P.credit : P.brass }} className="h-full" />
+          </div>
+          {steps.map((st) => (
+            <button
+              key={st.label}
+              onClick={st.go}
+              className="w-full flex items-center gap-2 py-1.5 text-left text-sm"
+              style={{ borderTop: `1px solid ${P.line}`, color: st.done ? P.faint : P.text }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
+                  border: `1.5px solid ${st.done ? P.credit : P.line2}`,
+                  background: st.done ? P.credit : "transparent",
+                }}
+              />
+              <span className="flex-1 truncate">{st.label}</span>
+              {st.note && <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs shrink-0">{st.note}</span>}
+            </button>
+          ))}
+        </section>
+
+        {/* 3. the reports worth keeping to hand */}
+        <section style={cardStyle()} className="p-4">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h3 style={{ fontFamily: SERIF }} className="text-base">Pinned</h3>
+              <p style={{ color: P.muted }} className="text-sm mb-3">Reports you keep coming back to.</p>
+            </div>
+          </div>
+          {pinned.map((r) => (
+            <button
+              key={r}
+              onClick={() => onGo("reports")}
+              className="w-full flex items-center gap-2 py-2 text-left text-sm"
+              style={{ borderTop: `1px solid ${P.line}` }}
+            >
+              <span className="flex-1 truncate">{r}</span>
+              <ChevronRight size={15} style={{ color: P.faint }} className="shrink-0" />
+            </button>
+          ))}
+          {!pinning ? (
+            <button onClick={() => setPinning(true)} style={{ color: P.brassText }} className="text-sm mt-2">
+              + Pin a report
+            </button>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {PINNABLE.map((r) => {
+                const on = pinned.includes(r);
+                return (
+                  <button
+                    key={r}
+                    onClick={() => pin(r)}
+                    style={{ background: on ? P.brass : P.surface2, color: on ? P.onbrass : P.muted, borderRadius: R.pill }}
+                    className="px-2.5 py-1 text-xs"
+                  >
+                    {r}
+                  </button>
+                );
+              })}
+              <button onClick={() => setPinning(false)} style={{ color: P.faint }} className="text-xs px-2 py-1">done</button>
+            </div>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}
+
+function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk, balance, consolidation, onGo }) {
   const [drill, setDrill] = useState(null); // { type, category }
   const rows = (type) =>
     data.categories[type].map((c) => {
@@ -3651,7 +3829,14 @@ function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk
 
   return (
     <>
-      <InsightsStrip insights={insights} onAsk={onAsk} />
+      <NeedsAttention
+        data={data} insights={insights} balance={balance} consolidation={consolidation}
+        month={month} onGo={onGo} onAsk={onAsk}
+      />
+
+      <div className="flex items-baseline justify-between gap-3 mt-8 mb-3">
+        <h2 style={{ fontFamily: SERIF }} className="text-lg">Planned against actual</h2>
+      </div>
       <div className="grid md:grid-cols-2 gap-6 stagger">
         <BudgetTable title="Expenses" rows={expRows} extra={zeroExp} type="expense" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "expense", category: cat })} />
         <BudgetTable title="Income" rows={incRows} extra={[]} type="income" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "income", category: cat })} />
