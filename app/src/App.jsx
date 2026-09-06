@@ -1768,7 +1768,7 @@ function Ledger({ onSignOut }) {
         <header className="pt-6 pb-5 lg:pt-5 lg:pb-4 flex flex-wrap items-end lg:items-center justify-between gap-3">
           <div>
             <div className="eyebrow lg:hidden">Brasstally</div>
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-3 min-w-0 lg:hidden">
               <div className="relative min-w-0">
                 <button
                   onClick={() => setLedgerMenuOpen((o) => !o)}
@@ -1834,6 +1834,7 @@ function Ledger({ onSignOut }) {
               icon={HelpCircle}
               label="Getting set up"
               dot={!setupHidden && setupProgress.done < setupProgress.total}
+              quietWhenRead
               badge={!setupHidden ? `${setupProgress.done}/${setupProgress.total}` : null}
               open={headerPanel === "setup"}
               onToggle={() => setHeaderPanel((v) => (v === "setup" ? null : "setup"))}
@@ -1856,6 +1857,7 @@ function Ledger({ onSignOut }) {
               icon={Sparkles}
               label="What this screen is for"
               dot={!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`)}
+              quietWhenRead
               open={headerPanel === "tour"}
               onToggle={() => setHeaderPanel((v) => (v === "tour" ? null : "tour"))}
             >
@@ -1876,6 +1878,7 @@ function Ledger({ onSignOut }) {
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               title={theme === "dark" ? "Switch to light" : "Switch to dark"}
               aria-label={theme === "dark" ? "Switch to light" : "Switch to dark"}
+              className="lg:hidden"
               style={{ color: P.muted, padding: 9 }}
             >
               {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
@@ -1899,10 +1902,34 @@ function Ledger({ onSignOut }) {
           </div>
         </header>
 
+        {/* ===== the section, named once, above its own figures ===== */}
+        <div className="mt-2 mb-5 fade-in-key" key={`head:${tab}`}>
+          {tab !== "overview" && <div className="eyebrow mb-1.5">{monthLabel(month)}</div>}
+          <h2 style={{ fontFamily: SERIF }} className="text-3xl">
+            {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
+          </h2>
+        </div>
+
         {/* ===== signature ledger line ===== */}
         {tab === "overview" && (
         <LedgerLine
           sectionName="Snapshot"
+          counts={{
+            inCount: monthTx.filter((t) => t.type === "income" && !isCredits(t)).length,
+            outCount: monthTx.filter((t) => t.type === "expense" && !isCredits(t)).length,
+            arFoot: (() => {
+              const open = data.receivables.filter((r) => r.status === "open");
+              if (!open.length) return "nothing outstanding";
+              const next = [...open].sort((a, b) => String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")))[0];
+              return `${open.length} ${open.length === 1 ? "invoice" : "invoices"}${next?.dueDate ? `, due ${next.dueDate}` : ""}`;
+            })(),
+            apFoot: (() => {
+              const open = data.payables.filter((r) => r.status === "open");
+              if (!open.length) return "nothing outstanding";
+              const next = [...open].sort((a, b) => String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")))[0];
+              return `${open.length} ${open.length === 1 ? "payable" : "payables"}${next?.dueDate ? `, next due ${next.dueDate}` : ""}`;
+            })(),
+          }}
           sums={sums}
           prevSums={prevSums}
           entryCount={monthTx.length}
@@ -1916,14 +1943,6 @@ function Ledger({ onSignOut }) {
           onConsolidate={() => setMatchOpen(true)}
         />
         )}
-
-        {/* ===== tabs ===== */}
-        <div className="mt-8 mb-5 fade-in-key" key={`head:${tab}`}>
-          <div className="eyebrow mb-1.5">{monthLabel(month)}</div>
-          <h2 style={{ fontFamily: SERIF }} className="text-2xl">
-            {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
-          </h2>
-        </div>
 
         <div key={`panel:${tab}`} className="tab-enter">
         {tab === "overview" && (
@@ -3428,7 +3447,7 @@ function Delta({ now, prev, invert }) {
   );
 }
 
-function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName }) {
+function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName, counts }) {
   const fromBank = balance.source === "bank";
 
   // The bar appears when the grid leaves the screen. A sentinel and an observer
@@ -3464,28 +3483,43 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
   };
 
   const money = (n) => fmt(n);
+  const inCount = counts?.inCount ?? 0;
+  const outCount = counts?.outCount ?? 0;
+  const arFoot = counts?.arFoot || "settle in AR / AP to count it";
+  const apFoot = counts?.apFoot || "settle in AR / AP to count it";
+
   const cards = {
     balance: {
-      label: fromBank ? "Balance to date · bank" : "Balance to date · fix",
+      // The figure is the headline; the state of it is a sentence, not a
+      // string of symbols. "Δ −$1,397.97" is a thing to decode, "the books say
+      // X, a gap of Y" is a thing to read.
+      label: "Balance to date",
       value: balance.beforeAnchor ? "·" : money(balance.value),
-      tone: P.brassText, wide: true, onClick: onReconcile, underline: true,
-      foot: fromBank
-        ? `Bank as of ${balance.balanceAsOf ? String(balance.balanceAsOf).slice(0, 10) : "today"} · books ${money(balance.book)}${balance.delta != null && Math.abs(balance.delta) >= 0.01 ? ` · Δ ${money(balance.delta)}` : " · matched"}`
+      tone: P.text, wide: true, onClick: onReconcile,
+      lead: fromBank
+        ? (balance.delta != null && Math.abs(balance.delta) >= 0.01
+            ? `Books say ${money(balance.book)}, a gap of ${money(Math.abs(balance.delta))}`
+            : "Bank and books agree")
         : balance.beforeAnchor
-          ? `this month ends before your anchor (${balance.anchorDate})`
-          : `anchored ${money(balance.anchorAmount)} on ${balance.anchorDate}`,
+          ? `This month ends before your anchor`
+          : `Anchored at ${money(balance.anchorAmount)}`,
+      foot: fromBank
+        ? `Updated ${balance.balanceAsOf ? relDay(balance.balanceAsOf) : "today"}`
+        : `Set on ${balance.anchorDate}`,
       warn: needsConsolidation,
     },
     net: {
       label: "Net this month", value: money(sums.net),
       tone: sums.net >= 0 ? P.credit : P.debit, wide: true,
       delta: { now: sums.net, prev: prevSums?.net },
-      foot: `${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
+      foot: `Across ${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
     },
-    in:  { label: "Money in",  value: money(sums.inc), tone: P.credit, delta: { now: sums.inc, prev: prevSums?.inc } },
-    out: { label: "Money out", value: money(sums.exp), tone: P.debit,  delta: { now: sums.exp, prev: prevSums?.exp, invert: true } },
-    ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: "settle in AR / AP to count it" },
-    ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: "settle in AR / AP to count it" },
+    in:  { label: "Money in",  value: money(sums.inc), tone: P.credit, delta: { now: sums.inc, prev: prevSums?.inc },
+           foot: `${inCount} ${inCount === 1 ? "deposit" : "deposits"}` },
+    out: { label: "Money out", value: money(sums.exp), tone: P.debit,  delta: { now: sums.exp, prev: prevSums?.exp, invert: true },
+           foot: `${outCount} ${outCount === 1 ? "payment" : "payments"}` },
+    ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
+    ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
     credits: creditsLeft !== null
       ? { label: "Credits left", value: money(creditsLeft), tone: creditsLeft > 0 ? P.credit : P.debit,
           onClick: onCredits, underline: true, foot: "non-cash, across every pool" }
@@ -3501,8 +3535,7 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
         sectionName={sectionName}
         stats={visible.slice(0, 4).map((k) => ({ label: cards[k].label.split(" · ")[0], value: cards[k].value, tone: cards[k].tone }))}
       />
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="eyebrow">Where you stand</div>
+      <div className="flex items-center justify-end gap-3 mb-3 -mt-14 lg:-mt-16">
         <button
           onClick={() => setPicking((v) => !v)}
           aria-label="Choose which cards show"
@@ -3546,8 +3579,8 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
           const c = cards[k];
           const Inner = (
             <>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span style={{ color: P.muted }} className="text-sm">{c.label}</span>
+              <div className="flex items-center gap-1.5 mb-3">
+                <span style={{ color: P.text }} className="text-base">{c.label}</span>
                 {c.warn && (
                   <button
                     type="button"
@@ -3562,13 +3595,14 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
               </div>
               <div
                 style={{ fontFamily: MONO, color: c.tone }}
-                className={`tabular-nums ${c.wide ? "text-2xl" : "text-xl"} ${c.underline ? "underline decoration-dotted underline-offset-4" : ""}`}
+                className={`tabular-nums ${c.wide ? "text-4xl" : "text-3xl"} leading-none`}
               >
                 {c.value}
               </div>
               {c.delta && <Delta now={c.delta.now} prev={c.delta.prev} invert={c.delta.invert} />}
+              {c.lead && <div style={{ color: P.muted }} className="text-sm mt-3">{c.lead}</div>}
               {c.foot && (
-                <div style={{ color: P.faint }} className="text-xs mt-auto pt-3 leading-snug">{c.foot}</div>
+                <div style={{ color: P.faint }} className="text-sm mt-auto pt-4 leading-snug">{c.foot}</div>
               )}
             </>
           );
@@ -3577,7 +3611,7 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
               key={k}
               onClick={c.onClick}
               style={cardStyle()}
-              className={`p-4 flex flex-col ${c.wide ? "col-span-2" : ""} ${c.onClick ? "cursor-pointer" : ""}`}
+              className={`p-6 flex flex-col ${c.wide ? "col-span-2" : ""} ${c.onClick ? "cursor-pointer" : ""}`}
             >
               {Inner}
             </div>
@@ -3601,7 +3635,10 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
    two banners went: the tour card and the setup checklist used to sit above
    every screen, pushing the ledger down and saying the same thing every time.
    The help is still one tap away; it just stops shouting before it is asked. */
-function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children }) {
+function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children, quietWhenRead }) {
+  // Nothing to say means nothing on screen. An icon that is permanently lit is
+  // furniture; one that appears when it has news is a message.
+  const hidden = quietWhenRead && !dot && !open;
   useEffect(() => {
     if (!open) return;
     const close = (e) => { if (!e.target.closest("[data-header-popover]")) onToggle(); };
@@ -3610,6 +3647,8 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", esc); };
   }, [open, onToggle]);
+
+  if (hidden) return null;
 
   return (
     <div className="relative" data-header-popover>
@@ -3705,19 +3744,19 @@ function NeedsAttention({ data, insights, balance, consolidation, month, onGo, o
 
   return (
     <>
-      <div className="flex items-baseline justify-between gap-3 mt-6 mb-3">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg">What wants you</h2>
+      <div className="flex items-baseline justify-between gap-3 mt-10 mb-4">
+        <h2 style={{ fontFamily: SERIF }} className="text-2xl">What wants you</h2>
         {decisions.length > 0 && (
-          <button onClick={() => onAsk?.("What needs my attention this month?")} style={{ color: P.brassText }} className="text-sm">
-            Ask about these
+          <button onClick={() => onAsk?.("What needs my attention this month?")} style={{ color: P.brassText }} className="text-base">
+            See everything
           </button>
         )}
       </div>
 
       <div className="grid md:grid-cols-3 gap-4 stagger">
         {/* 1. what needs deciding */}
-        <section style={cardStyle()} className="p-4">
-          <h3 style={{ fontFamily: SERIF }} className="text-base">Needs a decision</h3>
+        <section style={cardStyle()} className="p-5">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Needs a decision</h3>
           <p style={{ color: P.muted }} className="text-sm mb-3">
             {decisions.length ? `${decisions.length} ${decisions.length === 1 ? "thing is" : "things are"} waiting on you.` : "Nothing is waiting on you."}
           </p>
@@ -3740,8 +3779,8 @@ function NeedsAttention({ data, insights, balance, consolidation, month, onGo, o
         </section>
 
         {/* 2. how close the month is to closed */}
-        <section style={cardStyle()} className="p-4">
-          <h3 style={{ fontFamily: SERIF }} className="text-base">Closing {monthLabel(month).split(" ")[0]}</h3>
+        <section style={cardStyle()} className="p-5">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Closing {monthLabel(month).split(" ")[0]}</h3>
           <p style={{ color: P.muted }} className="text-sm mb-3">{doneCount} of {steps.length} done.</p>
           <div className="flex items-baseline gap-2 mb-2">
             <span style={{ fontFamily: MONO, color: pct === 100 ? P.credit : P.brassText }} className="text-2xl tabular-nums">{pct}%</span>
@@ -3772,10 +3811,10 @@ function NeedsAttention({ data, insights, balance, consolidation, month, onGo, o
         </section>
 
         {/* 3. the reports worth keeping to hand */}
-        <section style={cardStyle()} className="p-4">
+        <section style={cardStyle()} className="p-5">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h3 style={{ fontFamily: SERIF }} className="text-base">Pinned</h3>
+              <h3 style={{ fontFamily: SERIF }} className="text-xl">Pinned</h3>
               <p style={{ color: P.muted }} className="text-sm mb-3">Reports you keep coming back to.</p>
             </div>
           </div>
