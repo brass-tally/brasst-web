@@ -1705,16 +1705,17 @@ function Ledger({ onSignOut }) {
         {/* ===== header ===== */}
         <header className="pt-6 pb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <div className="eyebrow">Brasstally</div>
+            <div className="eyebrow lg:hidden">Brasstally</div>
             <div className="flex items-center gap-3 min-w-0">
               <div className="relative min-w-0">
                 <button
                   onClick={() => setLedgerMenuOpen((o) => !o)}
                   title="Switch ledger"
-                  className="flex items-center gap-1.5 text-left min-w-0 max-w-[70vw] sm:max-w-xs"
+                  disabled={typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches}
+                  className="flex items-center gap-1.5 text-left min-w-0 max-w-[70vw] sm:max-w-xs lg:pointer-events-none"
                 >
                   <h1 style={{ fontFamily: SERIF }} className="text-3xl leading-tight truncate">{data.ledger.name}</h1>
-                  <ChevronDown size={20} style={{ color: P.brassText, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} className="shrink-0" />
+                  <ChevronDown size={20} style={{ color: P.brassText, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} className="shrink-0 lg:hidden" />
                 </button>
                 {ledgerMenuOpen && (
                   <>
@@ -1759,6 +1760,7 @@ function Ledger({ onSignOut }) {
               onClick={() => setAccountOpen(true)}
               title="Profile, membership, and settings"
               aria-label="Account"
+              className="lg:hidden"
               style={{ color: P.muted, padding: 9 }}
             >
               <User size={15} />
@@ -4917,25 +4919,63 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
     ]);
   };
 
+  const openARItems = data.receivables.filter((r) => r.status === "open");
+  const openAPItems = data.payables.filter((r) => r.status === "open");
+  const parties = new Set(openAPItems.map((x) => x.party)).size;
+  const settledThisMonth = [...data.receivables, ...data.payables]
+    .filter((i) => i.status !== "open" && String(i.settledOn || "").startsWith(todayStr().slice(0, 7)));
+  // The one obligation the page is usually opened to check.
+  const nextUp = [...openAPItems, ...openARItems]
+    .filter((i) => i.dueDate)
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)))[0];
+
+  const kpis = [
+    { label: "Owed to you", value: openAR, tone: P.credit,
+      foot: `${openARItems.length} open ${openARItems.length === 1 ? "invoice" : "invoices"}` },
+    { label: "You owe them", value: openAP, tone: P.debit,
+      foot: `${openAPItems.length} across ${parties} ${parties === 1 ? "party" : "parties"}` },
+    { label: "Net position", value: net, tone: net >= 0 ? P.credit : P.debit,
+      foot: net >= 0 ? "more coming in than going out" : "more going out than coming in" },
+    { label: "Settled this month", value: settledThisMonth.reduce((a, b) => a + b.amount, 0), tone: P.muted,
+      foot: `${settledThisMonth.length} locked ${settledThisMonth.length === 1 ? "entry" : "entries"}` },
+  ];
+
   return (
     <div className="space-y-6 stagger">
-      <div style={cardStyle()} className="p-5">
-        <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
-          <Stat label="Owed to you" value={fmt(openAR)} color={P.credit} />
-          <Stat label="You owe" value={fmt(openAP)} color={P.debit} />
-          <Stat label="Net position" value={fmt(net)} color={net >= 0 ? P.credit : P.debit} />
-          <div className="flex items-center gap-2">
-            <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
-            <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
-              <Download size={14} /> Export CSV
-            </Btn>
-          </div>
-        </div>
-        <div className="flex h-2 rounded-full overflow-hidden" style={{ background: P.bg }}>
-          <div style={{ width: `${(openAR / (openAR + openAP || 1)) * 100}%`, background: P.credit }} />
-          <div style={{ width: `${(openAP / (openAR + openAP || 1)) * 100}%`, background: P.debit }} />
-        </div>
+      <div className="flex items-center justify-end gap-2">
+        <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
+        <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
+          <Download size={14} /> Export CSV
+        </Btn>
       </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {kpis.map((k) => (
+          <div key={k.label} style={cardStyle()} className="p-4 flex flex-col">
+            <div style={{ color: P.muted }} className="text-sm mb-1.5">{k.label}</div>
+            <div style={{ fontFamily: MONO, color: k.tone }} className="text-xl tabular-nums">
+              {k.value < 0 ? "-" : ""}{fmt(Math.abs(k.value))}
+            </div>
+            <div style={{ color: P.faint }} className="text-xs mt-auto pt-3 leading-snug">{k.foot}</div>
+          </div>
+        ))}
+      </div>
+
+      {nextUp && (
+        <div style={cardStyle()} className="p-4 flex items-center gap-3">
+          <CalendarDays size={18} style={{ color: P.brassText }} className="shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm truncate">
+              Next up: <strong>{nextUp.party}</strong>{nextUp.description ? ` · ${nextUp.description}` : ""}
+            </div>
+            <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs">due {nextUp.dueDate}</div>
+          </div>
+          <span style={{ fontFamily: MONO, color: data.payables.includes(nextUp) ? P.debit : P.credit }}
+                className="text-base tabular-nums shrink-0">
+            {fmt(nextUp.amount)}
+          </span>
+        </div>
+      )}
       <div className="grid md:grid-cols-2 gap-6">
         <ARList kind="receivables" title="Receivables · they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
         <ARList kind="payables" title="Payables · you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
@@ -5202,9 +5242,11 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
     );
   };
 
+  const openTotal = open.reduce((a, b) => a + b.amount, 0);
+
   return (
-    <section style={cardStyle()} className="p-5">
-      <div className="flex justify-between items-center mb-3 gap-2">
+    <section style={cardStyle()} className="p-5 arap-panel">
+      <div className="flex justify-between items-center mb-1 gap-2">
         <h2 style={{ fontFamily: SERIF }} className="text-lg flex-1">{title}</h2>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
           onChange={(e) => { onInvoice(e.target.files[0]); e.target.value = ""; }} />
@@ -5238,6 +5280,11 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         </div>
       )}
 
+      <div style={{ color: P.faint }} className="text-xs mb-3">
+        {open.length} open · {fmt(openTotal)}{kind === "payables" ? " committed" : ""}
+      </div>
+
+      <div className="arap-scroll">
       {open.length === 0 && !adding ? (
         <EmptyState compact icon={Check} title="Nothing open">Everything here is settled.</EmptyState>
       ) : (
@@ -5295,7 +5342,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 
       {settled.length > 0 && (
         <div className="mt-4" style={{ borderTop: `1px solid ${P.line}`, paddingTop: "12px" }}>
-          <Label>Settled · locked</Label>
+          <Label>Settled and locked</Label>
           {settledSeq.slice(0, 6).map((g) => {
             if (g.items.length > 1) {
               const gTotal = g.items.reduce((s, x) => s + x.amount, 0);
@@ -5338,6 +5385,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
           )}
         </div>
       )}
+      </div>
     </section>
   );
 }
