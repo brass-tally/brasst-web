@@ -1099,24 +1099,6 @@ function Ledger({ onSignOut }) {
     return () => io.disconnect();
   }, [ledgerLineRef.current]);
 
-  // One message, at most, and only when the conversation is closed. The queue
-  // dedupes on an id that embeds the value, so a drift that changes speaks
-  // again while an unchanged one stays quiet.
-  const nudges = useNudges(
-    {
-      insights,
-      balance,
-      consolidation,
-      obligations: data ? [...data.receivables, ...data.payables] : [],
-      today: todayStr(),
-    },
-    { enabled: !chatOpen }
-  );
-
-  useEffect(() => {
-    if (nudges.peek && !chatOpen) setChatUnread(true);
-  }, [nudges.peek, chatOpen]);
-
   const sums = useMemo(() => {
     const cash = monthTx.filter((t) => !isCredits(t));
     const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -1212,6 +1194,24 @@ function Ledger({ onSignOut }) {
     () => (data ? computeInsights(data, { balance, month, bankConns, recon, consolidation, duplicates }) : []),
     [data, balance, month, bankConns, recon, consolidation, duplicates],
   );
+
+  // One message, at most, and only when the conversation is closed. The queue
+  // dedupes on an id that embeds the value, so a drift that changes speaks
+  // again while an unchanged one stays quiet.
+  const nudges = useNudges(
+    {
+      insights,
+      balance,
+      consolidation,
+      obligations: data ? [...data.receivables, ...data.payables] : [],
+      today: todayStr(),
+    },
+    { enabled: !chatOpen }
+  );
+
+  useEffect(() => {
+    if (nudges.peek && !chatOpen) setChatUnread(true);
+  }, [nudges.peek, chatOpen]);
   dataRef.current = data;
   balanceRef.current = balance;
 
