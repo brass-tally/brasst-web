@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -26,6 +26,8 @@ import {
 import { GUIDES, guideOpener } from "./lib/guides";
 import { ToastContainer } from "./components/Toast";
 import { Rail } from "./shell/Rail";
+import { TallyPeek } from "./shell/Peek";
+import { useNudges } from "./shell/useNudges";
 import { notify, createNotification } from "./lib/notifications";
 import {
   P, PALETTES, elev, R, MONO, SANS, SERIF, applyThemeVars, THEME_KEY,
@@ -1097,6 +1099,24 @@ function Ledger({ onSignOut }) {
     return () => io.disconnect();
   }, [ledgerLineRef.current]);
 
+  // One message, at most, and only when the conversation is closed. The queue
+  // dedupes on an id that embeds the value, so a drift that changes speaks
+  // again while an unchanged one stays quiet.
+  const nudges = useNudges(
+    {
+      insights,
+      balance,
+      consolidation,
+      obligations: data ? [...data.receivables, ...data.payables] : [],
+      today: todayStr(),
+    },
+    { enabled: !chatOpen }
+  );
+
+  useEffect(() => {
+    if (nudges.peek && !chatOpen) setChatUnread(true);
+  }, [nudges.peek, chatOpen]);
+
   const sums = useMemo(() => {
     const cash = monthTx.filter((t) => !isCredits(t));
     const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -1972,6 +1992,12 @@ function Ledger({ onSignOut }) {
           </div>
         </div>
       </div>
+
+      <TallyPeek
+        peek={chatOpen ? null : nudges.peek}
+        onOpen={() => { setChatOpen(true); setChatUnread(false); nudges.clear(); }}
+        onDismiss={nudges.dismiss}
+      />
 
       {/* On desktop the dock is gone, so Tally gets a corner of her own. Same
           state, same panel, just a trigger that survives the rail. */}
@@ -3381,85 +3407,154 @@ function Delta({ now, prev, invert }) {
 }
 
 function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate }) {
-  const max = Math.max(sums.inc, sums.exp, 1);
   const fromBank = balance.source === "bank";
+
+  // Which cards are showing. Stored, so the choice survives a reload, and
+  // validated on read so a card removed in a later version cannot leave a hole.
+  const ALL = ["balance", "net", "in", "out", "ar", "ap", "credits"];
+  const [shown, setShown] = useState(() => {
+    try {
+      const raw = JSON.parse(window.localStorage.getItem("snapshot:cards") || "null");
+      if (Array.isArray(raw) && raw.length) return raw.filter((k) => ALL.includes(k));
+    } catch { /* private mode */ }
+    return ["balance", "net", "in", "out", "ar", "ap"];
+  });
+  const [picking, setPicking] = useState(false);
+  const toggle = (k) => {
+    setShown((cur) => {
+      const next = cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k];
+      if (!next.length) return cur;           // never leave the page blank
+      try { window.localStorage.setItem("snapshot:cards", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const money = (n) => fmt(n);
+  const cards = {
+    balance: {
+      label: fromBank ? "Balance to date · bank" : "Balance to date · fix",
+      value: balance.beforeAnchor ? "·" : money(balance.value),
+      tone: P.brassText, wide: true, onClick: onReconcile, underline: true,
+      foot: fromBank
+        ? `Bank as of ${balance.balanceAsOf ? String(balance.balanceAsOf).slice(0, 10) : "today"} · books ${money(balance.book)}${balance.delta != null && Math.abs(balance.delta) >= 0.01 ? ` · Δ ${money(balance.delta)}` : " · matched"}`
+        : balance.beforeAnchor
+          ? `this month ends before your anchor (${balance.anchorDate})`
+          : `anchored ${money(balance.anchorAmount)} on ${balance.anchorDate}`,
+      warn: needsConsolidation,
+    },
+    net: {
+      label: "Net this month", value: money(sums.net),
+      tone: sums.net >= 0 ? P.credit : P.debit, wide: true,
+      delta: { now: sums.net, prev: prevSums?.net },
+      foot: `${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
+    },
+    in:  { label: "Money in",  value: money(sums.inc), tone: P.credit, delta: { now: sums.inc, prev: prevSums?.inc } },
+    out: { label: "Money out", value: money(sums.exp), tone: P.debit,  delta: { now: sums.exp, prev: prevSums?.exp, invert: true } },
+    ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: "settle in AR / AP to count it" },
+    ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: "settle in AR / AP to count it" },
+    credits: creditsLeft !== null
+      ? { label: "Credits left", value: money(creditsLeft), tone: creditsLeft > 0 ? P.credit : P.debit,
+          onClick: onCredits, underline: true, foot: "non-cash, across every pool" }
+      : null,
+  };
+
+  const visible = shown.filter((k) => cards[k]);
+
   return (
-    <Card level={2}>
-      <div className="flex flex-wrap justify-between gap-5 mb-4">
-        <div>
-          <Stat size="text-xl" label="Money in" value={fmt(sums.inc)} tone={P.credit} />
-          <Delta now={sums.inc} prev={prevSums?.inc} />
-        </div>
-        <div>
-          <Stat size="text-xl" label="Money out" value={fmt(sums.exp)} tone={P.debit} />
-          <Delta now={sums.exp} prev={prevSums?.exp} invert />
-        </div>
-        <div>
-          <Stat size="text-xl" label="Net this month" value={fmt(sums.net)} tone={sums.net >= 0 ? P.credit : P.debit} />
-          <div style={{ color: P.faint }} className="text-xs mt-1">
-            {entryCount} {entryCount === 1 ? "entry" : "entries"} this month
-          </div>
-        </div>
-        <div className="flex items-start gap-1.5">
-          <button onClick={onReconcile} className="text-left" title={fromBank ? "Bank balance · tap to align books" : "Set or correct the balance against your real accounts"}>
-            <div style={{ color: P.faint, letterSpacing: "0.07em" }} className="text-xs uppercase mb-1">
-              {fromBank ? "Balance to date · bank" : "Balance to date · fix"}
-            </div>
-            <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4" >
-              {balance.beforeAnchor ? "·" : fmt(balance.value)}
-            </div>
-          </button>
-          {needsConsolidation && (
-            <button
-              type="button"
-              onClick={onConsolidate}
-              title={consolidationSettled ? "Consolidated, but the gap isn't fully explained yet. Tap to review." : "Bank and books disagree. Tap to consolidate."}
-              style={{ color: consolidationSettled ? P.muted : P.debit }}
-              className="mt-0.5 rounded p-0.5"
-            >
-              <AlertTriangle size={14} />
-            </button>
-          )}
-        </div>
-        {creditsLeft !== null && (
-          <button onClick={onCredits} className="text-left" title="Non-cash credits remaining across all pools, tap to manage">
-            <div style={{ color: P.faint, letterSpacing: "0.07em" }} className="text-xs uppercase mb-1">Credits left</div>
-            <div style={{ fontFamily: MONO, color: creditsLeft > 0 ? P.credit : P.debit }} className="text-xl tabular-nums underline decoration-dotted underline-offset-4">
-              {fmt(creditsLeft)}
-            </div>
-          </button>
-        )}
+    <section className="mt-1">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="eyebrow">Where you stand</div>
+        <button
+          onClick={() => setPicking((v) => !v)}
+          aria-label="Choose which cards show"
+          title="Choose cards"
+          style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.control, color: picking ? P.brassText : P.muted }}
+          className="w-9 h-9 inline-flex items-center justify-center shrink-0"
+        >
+          <Sliders size={17} />
+        </button>
       </div>
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-2">
-          <div style={{ fontFamily: MONO, color: P.credit }} className="text-xs w-8">IN</div>
-          <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: P.bg }}>
-            <div style={{ width: `${(sums.inc / max) * 100}%`, background: P.credit }} className="h-full" />
+
+      {picking && (
+        <div style={cardStyle()} className="p-4 mb-3">
+          <div style={{ color: P.faint }} className="text-xs mb-2">
+            {visible.length} of {ALL.filter((k) => cards[k]).length} showing
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <div style={{ fontFamily: MONO, color: P.debit }} className="text-xs w-8">OUT</div>
-          <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: P.bg }}>
-            <div style={{ width: `${(sums.exp / max) * 100}%`, background: P.debit }} className="h-full" />
+          <div className="flex flex-wrap gap-2">
+            {ALL.filter((k) => cards[k]).map((k) => {
+              const on = shown.includes(k);
+              return (
+                <button
+                  key={k}
+                  onClick={() => toggle(k)}
+                  style={{
+                    background: on ? P.brass : P.surface2,
+                    color: on ? P.onbrass : P.muted,
+                    borderRadius: R.pill,
+                  }}
+                  className="px-3 py-1.5 text-sm"
+                >
+                  {cards[k].label.split(" · ")[0]}
+                </button>
+              );
+            })}
           </div>
-        </div>
-      </div>
-      {(openBooks.ar > 0 || openBooks.ap > 0) && (
-        <div style={{ fontFamily: MONO, color: P.faint, borderTop: `1px solid ${P.line}` }} className="text-xs mt-3 pt-2 flex flex-wrap gap-x-4">
-          <span>open books:</span>
-          {openBooks.ar > 0 && <span style={{ color: P.credit }}>+{fmt(openBooks.ar)} owed to you</span>}
-          {openBooks.ap > 0 && <span style={{ color: P.debit }}>−{fmt(openBooks.ap)} you owe</span>}
-          <span>settle in AR / AP to count them</span>
         </div>
       )}
-      <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs mt-2">
-        {fromBank
-          ? `Bank as of ${balance.balanceAsOf ? String(balance.balanceAsOf).slice(0, 10) : "today"} · books ${fmt(balance.book)}${balance.delta != null && Math.abs(balance.delta) >= 0.01 ? ` · Δ ${fmt(balance.delta)}` : " · matched"} · tap to re-anchor`
-          : balance.beforeAnchor
-            ? `this month ends before your balance anchor (${balance.anchorDate}), no balance shown`
-            : `anchored: ${fmt(balance.anchorAmount)} on ${balance.anchorDate} · tap the balance to correct it`}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {visible.map((k) => {
+          const c = cards[k];
+          const Inner = (
+            <>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span style={{ color: P.muted }} className="text-sm">{c.label}</span>
+                {c.warn && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onConsolidate(); }}
+                    title={consolidationSettled ? "Consolidated, but the gap is not fully explained. Tap to review." : "Bank and books disagree. Tap to consolidate."}
+                    style={{ color: consolidationSettled ? P.muted : P.debit }}
+                    className="shrink-0"
+                  >
+                    <AlertTriangle size={14} />
+                  </button>
+                )}
+              </div>
+              <div
+                style={{ fontFamily: MONO, color: c.tone }}
+                className={`tabular-nums ${c.wide ? "text-2xl" : "text-xl"} ${c.underline ? "underline decoration-dotted underline-offset-4" : ""}`}
+              >
+                {c.value}
+              </div>
+              {c.delta && <Delta now={c.delta.now} prev={c.delta.prev} invert={c.delta.invert} />}
+              {c.foot && (
+                <div style={{ color: P.faint }} className="text-xs mt-auto pt-3 leading-snug">{c.foot}</div>
+              )}
+            </>
+          );
+          return (
+            <div
+              key={k}
+              onClick={c.onClick}
+              style={cardStyle()}
+              className={`p-4 flex flex-col ${c.wide ? "col-span-2" : ""} ${c.onClick ? "cursor-pointer" : ""}`}
+            >
+              {Inner}
+            </div>
+          );
+        })}
       </div>
-    </Card>
+
+      <div className="flex items-center gap-2 mt-3">
+        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: P.surface2 }}>
+          <div style={{ width: `${(sums.inc / Math.max(sums.inc, sums.exp, 1)) * 100}%`, background: P.credit }} className="h-full" />
+        </div>
+        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: P.surface2 }}>
+          <div style={{ width: `${(sums.exp / Math.max(sums.inc, sums.exp, 1)) * 100}%`, background: P.debit }} className="h-full" />
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -366,3 +366,14 @@ h1, h2, h3 {
    controls the rest of the app now uses. */
 .auth-card input, .auth-card select { font-size: 16px; padding: 12px 14px; }
 .auth-card button { min-height: 44px; }
+
+/* The peek sits above whichever Tally trigger is on screen: the dock button on
+   a phone, the corner button once the rail takes over. */
+.tally-peek {
+  position: fixed; z-index: 45; padding: 14px 16px;
+  right: 16px; bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+  width: min(330px, calc(100vw - 32px));
+  transform-origin: bottom right;
+}
+@media (min-width: 1024px) { .tally-peek { bottom: 96px; right: 24px; } }
+@media (prefers-reduced-motion: reduce) { .tally-peek { transition: none !important; } }
