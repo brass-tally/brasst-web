@@ -1900,8 +1900,9 @@ function Ledger({ onSignOut }) {
         </header>
 
         {/* ===== signature ledger line ===== */}
+        {tab === "overview" && (
         <LedgerLine
-          sectionName={tab === "settings" ? "Settings" : (tabs.find(([k]) => k === tab)?.[1] || "")}
+          sectionName="Snapshot"
           sums={sums}
           prevSums={prevSums}
           entryCount={monthTx.length}
@@ -1914,6 +1915,7 @@ function Ledger({ onSignOut }) {
           consolidationSettled={consolidation.settled}
           onConsolidate={() => setMatchOpen(true)}
         />
+        )}
 
         {/* ===== tabs ===== */}
         <div className="mt-8 mb-5 fade-in-key" key={`head:${tab}`}>
@@ -5202,6 +5204,25 @@ function ProfitLoss({ data, month }) {
 
   return (
     <div className="space-y-6 stagger">
+      {/* Every section opens with its own figures, the way Snapshot does. Three
+          cards here, because a profit and loss has exactly three answers. */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Revenue", value: revenue, tone: P.credit, change: revenueChange },
+          { label: "Expenses", value: costs, tone: P.debit, change: costsChange, invert: true },
+          { label: net >= 0 ? "Net income" : "Net loss", value: net, tone: net >= 0 ? P.credit : P.debit, change: netChange },
+        ].map((c) => (
+          <div key={c.label} style={cardStyle()} className="p-4 flex flex-col">
+            <div style={{ color: P.muted }} className="text-sm mb-1.5">{c.label}</div>
+            <div style={{ fontFamily: MONO, color: c.tone }} className="text-xl tabular-nums">{fmt(Math.abs(c.value))}</div>
+            <div className="mt-auto pt-3 flex items-center gap-2">
+              <span style={{ color: P.faint }} className="text-xs">{monthLabel(month)}</span>
+              <PLChange value={c.change} invert={c.invert} />
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="flex gap-2 items-center">
         <div className="flex-1" />
         <Btn tone="ghost" onClick={exportCSV} title="Download this statement + underlying transactions as CSV">
