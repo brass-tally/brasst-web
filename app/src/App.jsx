@@ -1854,7 +1854,7 @@ function Ledger({ onSignOut }) {
         </div>
 
         {/* ===== tabs ===== */}
-        <div className="mt-8 mb-5 fade-in-key" key={tab}>
+        <div className="mt-8 mb-5 fade-in-key" key={`head:${tab}`}>
           <div className="eyebrow mb-1.5">{monthLabel(month)}</div>
           <h2 style={{ fontFamily: SERIF }} className="text-2xl">
             {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
@@ -1867,7 +1867,7 @@ function Ledger({ onSignOut }) {
             setSeenTours((s) => ({ ...s, [tab]: true }));
           }} />
         )}
-        <div key={tab} className="tab-enter">
+        <div key={`panel:${tab}`} className="tab-enter">
         {tab === "overview" && !setupHidden && (
           <SetupChecklist
             data={data}
