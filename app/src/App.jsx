@@ -1765,7 +1765,7 @@ function Ledger({ onSignOut }) {
           where a row's date and its amount stop being one glance apart. */}
       <div className="px-4 w-full mx-auto max-w-[1180px]" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
         {/* ===== header ===== */}
-        <header className="pt-6 pb-5 lg:pt-5 lg:pb-4 flex flex-wrap items-end lg:items-center justify-between gap-3">
+        <header className="pt-6 pb-5 lg:pt-4 lg:pb-3 flex flex-wrap items-end lg:items-center justify-between gap-3">
           <div>
             <div className="eyebrow lg:hidden">Brasstally</div>
             <div className="flex items-center gap-3 min-w-0 lg:hidden">
@@ -1902,12 +1902,16 @@ function Ledger({ onSignOut }) {
           </div>
         </header>
 
-        {/* ===== the section, named once, above its own figures ===== */}
-        <div className="mt-2 mb-5 fade-in-key" key={`head:${tab}`}>
-          {tab !== "overview" && <div className="eyebrow mb-1.5">{monthLabel(month)}</div>}
-          <h2 style={{ fontFamily: SERIF }} className="text-[28px] leading-tight">
+        {/* The page says its name once, small, on the same line as the month,
+            and then hands the screen to the content. A 28px title above every
+            section spent the first inch of every page telling you where you
+            already knew you were. The rail is lit, and the bar names the
+            section again the moment the figures scroll away. */}
+        <div className="mb-4 flex items-baseline gap-2 fade-in-key" key={`head:${tab}`}>
+          <span style={{ color: P.text }} className="text-[15px] font-semibold">
             {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
-          </h2>
+          </span>
+          <span style={{ color: P.faint }} className="text-[14px]">{monthLabel(month)}</span>
         </div>
 
         {/* ===== signature ledger line ===== */}
@@ -3535,7 +3539,7 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
         sectionName={sectionName}
         stats={visible.slice(0, 4).map((k) => ({ label: cards[k].label.split(" · ")[0], value: cards[k].value, tone: cards[k].tone }))}
       />
-      <div className="flex items-center justify-end gap-3 mb-3 -mt-14 lg:-mt-16">
+      <div className="flex items-center justify-end gap-3 mb-3 -mt-11">
         <button
           onClick={() => setPicking((v) => !v)}
           aria-label="Choose which cards show"
@@ -5596,8 +5600,8 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         </div>
       )}
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="Receivables · they owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
-        <ARList kind="payables" title="Payables · you owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
+        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
+        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
       </div>
     </div>
   );
@@ -5821,18 +5825,26 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
     return (
       <div key={i.id} style={{ background: inGroup ? P.surface : P.bg, border: `1px solid ${overdue ? P.debit : P.line}`, opacity: future ? 0.7 : 1 }} className="rounded-lg p-3 flex items-center gap-2">
         <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} className="flex-1 min-w-0 text-left" title="Edit">
-          <div className="text-sm truncate">{i.party}</div>
-          <div style={{ fontFamily: MONO, color: overdue ? P.debit : P.faint }} className="text-xs flex items-center gap-1 flex-wrap" data-meta>
-    {isRec(i) && <RecMark />}
-    {i.description || "·"} · due {i.dueDate}{overdue ? " · overdue" : ""}{future ? ` · upcoming in ${daysUntil(i.dueDate)}d` : ""}
-    {isRec(i) ? ` · ${freqLabel(i.frequency || "monthly")}` : ""}
-    {i.subcategory ? ` · ${i.subcategory}` : ""}
+          {/* Who and what for, on one line; when and how underneath. The old
+              shape put the party alone on the first line and everything else
+              in a mono footnote, which read as metadata rather than as the
+              thing itself. */}
+          <div className="text-[15px] truncate" style={{ color: P.text }}>
+            {i.party}{i.description ? <span style={{ color: P.muted }}> · {i.description}</span> : null}
+          </div>
+          <div style={{ color: overdue ? P.debit : P.faint }} className="text-[13.5px] flex items-center gap-1.5 flex-wrap mt-0.5" data-meta>
+            {isRec(i) && <RecMark />}
+            <span>due {i.dueDate}</span>
+            {overdue && <span>· overdue</span>}
+            {future && <span>· in {daysUntil(i.dueDate)} days</span>}
+            {isRec(i) && <span>· {freqLabel(i.frequency || "monthly")}</span>}
+            {i.subcategory && <span>· {i.subcategory}</span>}
           </div>
           {isCredits(i) && (
     <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs">{creditName(data, i.creditId)} credits, no cash moves</div>
           )}
         </button>
-        <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(i.amount)}</div>
+        <div style={{ fontFamily: MONO, color: tone }} className="text-[15px] tabular-nums shrink-0">{fmt(i.amount)}</div>
         {i.attachmentId && (
           <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brassText, padding: 6, margin: -6 }}>
     <Paperclip size={13} />
@@ -5866,13 +5878,17 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
   return (
     <section style={cardStyle()} className="p-5 arap-panel">
       <div className="flex justify-between items-center mb-1 gap-2">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg flex-1">{title}</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl flex-1">{title}</h2>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
           onChange={(e) => { onInvoice(e.target.files[0]); e.target.value = ""; }} />
         {adding
-          ? <button onClick={cancelAdd} style={{ color: P.muted }} className="text-sm px-1" title="Close">Cancel</button>
-          : <button onClick={() => setAdding(true)} style={{ color: P.brassText }} className="text-sm px-1 inline-flex items-center gap-1">
-              <Plus size={15} /> Add
+          ? <button onClick={cancelAdd} style={{ color: P.muted }} className="text-[15px] px-2" title="Close">Cancel</button>
+          : <button
+              onClick={() => setAdding(true)}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+            >
+              <Plus size={16} /> Add
             </button>}
       </div>
 
@@ -5899,7 +5915,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         </div>
       )}
 
-      <div style={{ color: P.faint }} className="text-xs mb-3">
+      <div style={{ color: P.faint }} className="text-[14px] mb-4">
         {open.length} open · {fmt(openTotal)}{kind === "payables" ? " committed" : ""}
       </div>
 
@@ -5918,12 +5934,12 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
                 <button onClick={() => toggleGroup(g.party)} className="w-full p-3 flex items-center gap-2 text-left">
                   <ChevronDown size={15} style={{ color: P.brassText, transform: expanded ? "none" : "rotate(-90deg)", transition: "transform .18s" }} className="shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate">{g.party}</div>
-                    <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
+                    <div className="text-[15px] truncate" style={{ color: P.text }}>{g.party}</div>
+                    <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
                       {g.items.length} items · next due {nextDue}
                     </div>
                   </div>
-                  <div style={{ fontFamily: MONO, color: tone }} className="text-sm tabular-nums">{fmt(total)}</div>
+                  <div style={{ fontFamily: MONO, color: tone }} className="text-[15px] tabular-nums shrink-0">{fmt(total)}</div>
                 </button>
                 {expanded && (
                   <div className="px-3 pb-3 space-y-2">
