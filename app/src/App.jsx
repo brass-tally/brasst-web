@@ -1896,30 +1896,59 @@ function Ledger({ onSignOut }) {
                 {ledgerMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setLedgerMenuOpen(false)} />
+                    {/* Two lines per ledger, an initials tile, and a check on
+                        the open one. The old version was a 14px row with the
+                        kind in tracked mono and "+ new ledger…" in 12px, which
+                        is a desktop context menu wearing the app's colours. */}
                     <div
-                      style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(2), borderRadius: R.card }}
-                      className="absolute left-0 top-full mt-2 z-50 min-w-56 overflow-hidden py-1"
+                      style={{ background: P.surface, boxShadow: elev(3), borderRadius: R.panel }}
+                      className="absolute left-0 top-full mt-2 z-50 p-2 overflow-hidden"
+                      role="menu"
                     >
-                      {ledgers.map((l) => (
-                        <button
-                          key={l.id}
-                          onClick={() => { setLedgerMenuOpen(false); if (l.id !== data.ledger.id) setCurrentLedger(l); }}
-                          style={{ color: l.id === data.ledger.id ? P.text : P.muted }}
-                          className="w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-3 hover:opacity-80"
-                        >
-                          <span className="truncate">{l.name}</span>
-                          {l.id === data.ledger.id
-                            ? <Check size={14} style={{ color: P.brassText }} className="shrink-0" />
-                            : <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs shrink-0">{kindLabel(l.kind).split(" ")[0]}</span>}
-                        </button>
-                      ))}
+                      {ledgers.map((l) => {
+                        const on = l.id === data.ledger.id;
+                        return (
+                          <button
+                            key={l.id}
+                            role="menuitem"
+                            onClick={() => { setLedgerMenuOpen(false); if (!on) setCurrentLedger(l); }}
+                            style={{ background: on ? P.surface2 : "transparent", borderRadius: 14 }}
+                            className="w-full flex items-center gap-3 p-3 text-left press"
+                          >
+                            <span
+                              aria-hidden
+                              style={{
+                                background: on ? P.brass : P.surface2, color: on ? P.onbrass : P.muted,
+                                width: 38, height: 38, borderRadius: 12,
+                              }}
+                              className="flex items-center justify-center shrink-0 text-[13px] font-semibold"
+                            >
+                              {l.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()}
+                            </span>
+                            <span className="flex-1 min-w-0">
+                              <span style={{ color: P.text }} className="text-[16px] block truncate">{l.name}</span>
+                              <span style={{ color: P.faint }} className="text-[13.5px] block">
+                                {l.kind === "personal" ? "Personal ledger" : "Business ledger"}
+                              </span>
+                            </span>
+                            {on && <Check size={18} style={{ color: P.brassText }} className="shrink-0" />}
+                          </button>
+                        );
+                      })}
                       <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-1 pt-1">
                         <button
                           onClick={() => { setLedgerMenuOpen(false); setNewLedgerOpen(true); }}
-                          style={{ color: P.brassText, fontFamily: MONO }}
-                          className="w-full text-left px-3 py-2 text-xs"
+                          style={{ color: P.brassText, borderRadius: 14 }}
+                          className="w-full flex items-center gap-3 p-3 text-left press"
                         >
-                          + new ledger…
+                          <span
+                            aria-hidden
+                            style={{ background: P.surface2, color: P.muted, width: 38, height: 38, borderRadius: 12 }}
+                            className="flex items-center justify-center shrink-0"
+                          >
+                            <Plus size={18} />
+                          </span>
+                          <span className="text-[16px]">New ledger</span>
                         </button>
                       </div>
                     </div>
@@ -6463,9 +6492,13 @@ function ProfitLoss({ data, month }) {
       <section style={cardStyle()} className="p-5">
         <div className="flex items-baseline justify-between mb-3">
           <h2 style={{ fontFamily: SERIF }} className="text-xl">Six-month trend</h2>
-          <div className="flex items-center gap-3 text-xs" style={{ color: P.faint, fontFamily: MONO }}>
-            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.credit, display: "inline-block" }} /> income</span>
-            <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.debit, display: "inline-block" }} /> expense</span>
+          <div className="flex items-center gap-4 text-[14px]" style={{ color: P.faint }}>
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden style={{ width: 8, height: 8, borderRadius: 99, background: P.credit, display: "inline-block" }} /> Money in
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden style={{ width: 8, height: 8, borderRadius: 99, background: P.debit, display: "inline-block" }} /> Money out
+            </span>
           </div>
         </div>
         <div className="flex items-end gap-3 h-32">
@@ -6542,8 +6575,18 @@ function CatBarRow({ cat, value, max, count, shareOfCosts, index = 0 }) {
   );
 }
 
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 function TrendBar({ t, maxTrend, active, index = 0 }) {
   const [hover, setHover] = useState(false);
+  // A period with nothing in it makes maxTrend 0, and `t.inc / 0` is NaN, which
+  // React writes out as height:NaN% and the browser discards. The result was a
+  // chart with no bars, no baseline and one lonely month label: it read as
+  // broken rather than as empty, which it was.
+  const scale = Math.max(maxTrend, 1);
+  // Clamped as well as guarded: if maxTrend is ever stale relative to the data
+  // a bar would render taller than its own column and spill over the card.
+  const pct = (v) => Math.min((v / scale) * 100, 100);
   return (
     <div
       className="flex-1 flex flex-col items-center gap-1 relative"
@@ -6554,20 +6597,21 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
       <ChartTip show={hover}>
         {monthLabel(t.m)}: +{fmt(t.inc)} / −{fmt(t.exp)} · net {fmt(t.net)}
       </ChartTip>
-      <div className="flex items-end gap-0.5 w-full justify-center" style={{ height: 96 }}>
+      <div className="flex items-end gap-0.5 w-full justify-center relative" style={{ height: 96 }}>
+        <span aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 1, background: P.line }} />
         {/* Months stagger left to right, income a beat ahead of spend, so the
             pair reads as one gesture per month instead of a wall going up. */}
         <div
-          style={{ height: `${(t.inc / maxTrend) * 100}%`, background: P.credit, width: "30%", minHeight: t.inc ? 2 : 0, animationDelay: `${index * 50}ms` }}
+          style={{ height: `${pct(t.inc)}%`, background: P.credit, width: "30%", minHeight: t.inc ? 2 : 0, animationDelay: `${index * 50}ms` }}
           className="rounded-t bar-rise-y"
         />
         <div
-          style={{ height: `${(t.exp / maxTrend) * 100}%`, background: P.debit, width: "30%", minHeight: t.exp ? 2 : 0, animationDelay: `${index * 50 + 25}ms` }}
+          style={{ height: `${pct(t.exp)}%`, background: P.debit, width: "30%", minHeight: t.exp ? 2 : 0, animationDelay: `${index * 50 + 25}ms` }}
           className="rounded-t bar-rise-y"
         />
       </div>
-      <div style={{ fontFamily: MONO, color: active ? P.brass : P.faint }} className="text-xs">
-        {t.m.slice(5)}
+      <div style={{ color: active ? P.brassText : P.faint }} className="text-[13px]">
+        {MONTH_SHORT[Number(t.m.slice(5)) - 1] || t.m.slice(5)}
       </div>
     </div>
   );
@@ -8000,14 +8044,20 @@ function ReportsTab({ data, month, balance, onAsk }) {
             <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.debit, display: "inline-block" }} /> expense</span>
           </div>
         </div>
-        {r.months.length === 0 ? (
-          <p style={{ color: P.faint }} className="text-sm">Nothing recorded in this period.</p>
+        {r.months.length === 0 || maxMonth === 0 ? (
+          <p style={{ color: P.faint }} className="text-[15px]">
+            {r.months.length === 0
+              ? "Nothing recorded in this period."
+              : "No money moved in this period, so there is nothing to chart yet."}
+          </p>
         ) : (
           /* A twelve-month window scrolls sideways, and a scroll container clips
-             in both axes, so the bar tooltips need room reserved above them. */
+             in both axes, so the bar tooltips need room reserved above them.
+             Columns stop stretching past 72px, because one month spread across
+             the full width does not read as a chart. */
           <div className="flex items-end gap-2 overflow-x-auto pt-7 pb-1" style={{ minHeight: 128 }}>
             {r.months.map((m, i) => (
-              <div key={m.m} style={{ minWidth: 34 }} className="flex-1">
+              <div key={m.m} style={{ minWidth: 34, maxWidth: 72 }} className="flex-1">
                 <TrendBar index={i} t={m} maxTrend={maxMonth} active={m.m === month} />
               </div>
             ))}
