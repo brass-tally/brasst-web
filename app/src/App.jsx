@@ -2000,21 +2000,21 @@ function Ledger({ onSignOut }) {
           >
             {/* Tally has a name and a face, because you talk to someone, not to
                 a feature. The brand stays in the header of the app. */}
-            <div className="flex items-center gap-2.5 px-3 py-2.5" style={{ borderBottom: `1px solid ${P.line}` }}>
+            <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${P.line}` }}>
               <span
                 aria-hidden
-                style={{ background: P.brass + "22", border: `1px solid ${P.brass}`, color: P.brassText, fontFamily: SERIF, width: 28, height: 28 }}
-                className="rounded-full text-sm flex items-center justify-center shrink-0"
+                style={{ background: P.brass, color: P.onbrass, width: 34, height: 34, borderRadius: 12 }}
+                className="text-[15px] font-semibold flex items-center justify-center shrink-0"
               >
                 T
               </span>
               <div className="flex-1 min-w-0 leading-tight">
-                <div style={{ color: P.text }} className="text-sm">Tally</div>
-                <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs truncate">
+                <div style={{ color: P.text }} className="text-[16px] font-semibold">Tally</div>
+                <div style={{ color: P.faint }} className="text-[13.5px] truncate">
                   {data.ledger.name} · your bookkeeper
                 </div>
               </div>
-              <button onClick={() => setChatOpen(false)} aria-label="Close" style={{ color: P.muted }} className="p-1"><X size={15} /></button>
+              <button onClick={() => setChatOpen(false)} aria-label="Close" style={{ color: P.muted }} className="p-1.5"><X size={17} /></button>
             </div>
             <Capture
               key={data.ledger.id}
@@ -3551,29 +3551,84 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
         </button>
       </div>
 
+      {/* A sheet, not an inline tray. Choosing which cards show is a decision
+          about the page, so it happens over the page rather than pushing it
+          down and reflowing the very thing you are deciding about. Each row
+          carries the card's own footnote, so you are picking a card you
+          recognise rather than a label. */}
       {picking && (
-        <div style={cardStyle()} className="p-4 mb-3">
-          <div style={{ color: P.faint }} className="text-xs mb-2">
-            {visible.length} of {ALL.filter((k) => cards[k]).length} showing
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {ALL.filter((k) => cards[k]).map((k) => {
-              const on = shown.includes(k);
-              return (
-                <button
-                  key={k}
-                  onClick={() => toggle(k)}
-                  style={{
-                    background: on ? P.brass : P.surface2,
-                    color: on ? P.onbrass : P.muted,
-                    borderRadius: R.pill,
-                  }}
-                  className="px-3 py-1.5 text-sm"
-                >
-                  {cards[k].label.split(" · ")[0]}
+        <div
+          className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: P.overlay }}
+          onClick={() => setPicking(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Customise Snapshot"
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: P.surface, boxShadow: elev(3), borderRadius: R.panel }}
+            className="modal-panel w-full max-w-md max-h-[85vh] overflow-y-auto"
+          >
+            <div className="px-6 pt-6 pb-4">
+              <div className="flex items-start justify-between gap-3">
+                <h3 style={{ fontFamily: SERIF }} className="text-xl">Customise Snapshot</h3>
+                <button onClick={() => setPicking(false)} aria-label="Close" style={{ color: P.muted }} className="p-1 shrink-0">
+                  <X size={17} />
                 </button>
-              );
-            })}
+              </div>
+              <p style={{ color: P.muted }} className="text-[15px] mt-1">
+                {visible.length} of {ALL.filter((k) => cards[k]).length} showing. The first two run full width.
+              </p>
+            </div>
+
+            <div className="px-6 pb-6">
+              {ALL.filter((k) => cards[k]).map((k, i) => {
+                const on = shown.includes(k);
+                const c = cards[k];
+                const last = on && visible.length === 1;
+                return (
+                  <div
+                    key={k}
+                    className="flex items-center gap-4 py-4"
+                    style={i === 0 ? {} : { borderTop: `1px solid ${P.line}` }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div style={{ color: P.text }} className="text-[16px]">{c.label}</div>
+                      {(c.foot || c.lead) && (
+                        <div style={{ color: P.faint }} className="text-[14px] mt-0.5 truncate">{c.foot || c.lead}</div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => toggle(k)}
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={c.label}
+                      disabled={last}
+                      title={last ? "Keep at least one card" : undefined}
+                      style={{
+                        width: 48, height: 28, borderRadius: 999, flexShrink: 0, position: "relative",
+                        background: on ? P.brass : P.surface2,
+                        border: `1px solid ${on ? P.brass : P.line}`,
+                        opacity: last ? 0.5 : 1,
+                        cursor: last ? "not-allowed" : "pointer",
+                        transition: "background .2s ease",
+                      }}
+                    >
+                      <span
+                        aria-hidden
+                        style={{
+                          position: "absolute", top: 2, left: 2, width: 22, height: 22, borderRadius: "50%",
+                          background: P.surface, boxShadow: elev(1),
+                          transform: on ? "translateX(20px)" : "none",
+                          transition: "transform .22s cubic-bezier(.2,.8,.2,1)",
+                        }}
+                      />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -4508,8 +4563,8 @@ function Capture({
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {GUIDES[m.guideId].steps.map((q) => (
                     <button key={q} type="button" onClick={() => { setGuideId(m.guideId); ask(q, m.guideId); }}
-                      style={{ border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
-                      className="rounded-full px-2.5 py-1 text-xs text-left">
+                      style={{ background: P.surface2, color: P.text, borderRadius: 12 }}
+                      className="px-3 py-2 text-[14px] text-left leading-snug">
                       {q}
                     </button>
                   ))}
@@ -4520,9 +4575,9 @@ function Capture({
               {m.followUp && (
                 <div className="mt-2">
                   <button type="button" onClick={() => ask(m.followUp)}
-                    style={{ border: `1px solid ${P.brass}`, color: P.brassText, fontFamily: MONO }}
-                    className="rounded-full px-2.5 py-1 text-xs text-left inline-flex items-center gap-1.5">
-                    <Search size={11} /> Look into it
+                    style={{ background: P.brass, color: P.onbrass, borderRadius: 12 }}
+                    className="px-3 py-2 text-[14px] font-medium text-left inline-flex items-center gap-2">
+                    <Search size={13} /> Look into it
                   </button>
                 </div>
               )}
@@ -4541,7 +4596,7 @@ function Capture({
             stay up until the first question, and never re-offer something Tally
             has already put on the table unprompted. */}
         {!msgs.some((m) => m.role === "user") && !busy && (
-          <div className="flex flex-wrap gap-1.5 pt-1">
+          <div className="flex flex-col gap-2 pt-1">
             {[...new Set([...insights.slice(0, 3).map((i) => i.ask), ...DEFAULT_ASKS])]
               .filter((q) => !msgs.some((m) => m.followUp === q))
               .slice(0, 3)
@@ -4550,8 +4605,8 @@ function Capture({
                   key={q}
                   type="button"
                   onClick={() => ask(q)}
-                  style={{ border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
-                  className="rounded-full px-2.5 py-1 text-xs text-left"
+                  style={{ background: P.surface2, color: P.text, borderRadius: 14 }}
+                  className="w-full px-4 py-3 text-[14.5px] text-left leading-snug"
                 >
                   {q}
                 </button>
@@ -4563,20 +4618,39 @@ function Capture({
         )}
         <div ref={endRef} />
       </div>
-      <div className="p-3 flex gap-2" style={{ borderTop: `1px solid ${P.line}` }}>
+      <div className="p-3 flex items-center gap-2" style={{ borderTop: `1px solid ${P.line}` }}>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ""; }} />
-        <Btn tone="ghost" onClick={() => fileRef.current.click()} title="Attach a receipt screenshot or invoice PDF">
-          <Camera size={16} />
-        </Btn>
-        <Input
-          placeholder="Ask Tally, or type an entry…"
+        <button
+          onClick={() => fileRef.current.click()}
+          title="Attach a receipt screenshot or invoice PDF"
+          aria-label="Attach a receipt or invoice"
+          style={{ background: P.surface2, color: P.muted, width: 40, height: 40, borderRadius: 13 }}
+          className="flex items-center justify-center shrink-0"
+        >
+          <Camera size={18} />
+        </button>
+        <input
+          placeholder="Ask Tally, or type an entry"
+          aria-label="Message Tally"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !busy && handleText()}
+          style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+          className="flex-1 min-w-0 px-4 py-2.5 text-[15px] outline-none border-none"
         />
-        <Btn onClick={handleText} disabled={busy || !input.trim()}>
-          <Send size={15} />
-        </Btn>
+        <button
+          onClick={handleText}
+          disabled={busy || !input.trim()}
+          aria-label="Send"
+          style={{
+            background: P.brass, color: P.onbrass, width: 40, height: 40, borderRadius: 13,
+            opacity: busy || !input.trim() ? 0.4 : 1,
+            cursor: busy || !input.trim() ? "not-allowed" : "pointer",
+          }}
+          className="flex items-center justify-center shrink-0"
+        >
+          <Send size={17} />
+        </button>
       </div>
     </div>
   );
@@ -6962,8 +7036,8 @@ function ReportsTab({ data, month, balance, onAsk }) {
               "What are my recurring costs totalling a year, and which ones went up?",
             ].map((q) => (
               <button key={q} type="button" onClick={() => onAsk(q)}
-                style={{ border: `1px solid ${P.line}`, color: P.muted, fontFamily: MONO }}
-                className="rounded-full px-2.5 py-1 text-xs text-left">
+                style={{ background: P.surface2, color: P.text, borderRadius: 12 }}
+                className="px-3.5 py-2.5 text-[14.5px] text-left leading-snug">
                 {q}
               </button>
             ))}
