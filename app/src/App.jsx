@@ -1821,12 +1821,14 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.setTheme(t));
   };
 
-  const openPreview = async (attachmentId, fallbackName) => {
+  // The third argument is the entry the file belongs to. A receipt on its own
+  // is a picture; a receipt beside its tax treatment is a record.
+  const openPreview = async (attachmentId, fallbackName, entry = null) => {
     try {
       const att = await attachmentToBlobURL(attachmentId, fallbackName);
-      setPreview({ ...att, attachmentId });
+      setPreview({ ...att, attachmentId, entry });
     } catch {
-      setPreview({ error: true, name: fallbackName });
+      setPreview({ error: true, name: fallbackName, entry });
     }
   };
   const closePreview = () => setPreview(null); // signed URLs expire on their own
@@ -2260,7 +2262,7 @@ function Ledger({ onSignOut }) {
       <ToastContainer notifications={notifications} onDismiss={dismissNotification} palette={P} />
       <ConfirmHost />
 
-      <PreviewModal preview={preview} onClose={closePreview} />
+      <PreviewModal preview={preview} onClose={closePreview} policy={taxPolicy} />
       {menuOpen && (
         <MenuSheet
           tab={tab}
@@ -2339,7 +2341,11 @@ function Ledger({ onSignOut }) {
 }
 
 /* ================= attachment preview modal ================= */
-function PreviewModal({ preview, onClose }) {
+function PreviewModal({ preview, onClose, policy = TAX_POLICY }) {
+  // Fit to the panel, or full size and scrollable. A long receipt scaled to
+  // 70vh is unreadable, and the container never scrolled because the image had
+  // already been shrunk to fit it.
+  const [zoom, setZoom] = useState(false);
   useEffect(() => {
     if (!preview) return;
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -2349,47 +2355,151 @@ function PreviewModal({ preview, onClose }) {
   if (!preview) return null;
   const isImage = preview.type?.startsWith("image/");
   const isPdf = preview.type === "application/pdf";
+  const entry = preview.entry;
+  const t = entry ? deriveTreatment(entry, policy) : null;
+  const code = entry ? (TAX_CODES[entry.taxCode] || TAX_CODES.none) : null;
+
   return (
-    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+    <div
+      className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
+      style={{ background: P.overlay }}
+      onClick={onClose}
+    >
       <div
         role="dialog"
         aria-modal="true"
-        style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3), borderRadius: R.panel }}
-        className="modal-panel w-full max-w-3xl max-h-full flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+        aria-label={preview.name || "Filed document"}
+        style={{
+          background: P.surface, boxShadow: elev(3), borderRadius: R.panel,
+          maxHeight: "calc(100dvh - max(24px, env(safe-area-inset-top)) - 24px)",
+        }}
+        className="modal-panel w-full max-w-4xl flex flex-col overflow-hidden"
+        onClick={(ev) => ev.stopPropagation()}
       >
-        <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: `1px solid ${P.line}` }}>
-          <FileText size={14} style={{ color: P.brassText }} />
-          <div className="text-sm truncate flex-1" style={{ color: P.text }}>{preview.name || "Filed document"}</div>
+        <div className="flex items-center gap-2 px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${P.line}` }}>
+          <FileText size={16} style={{ color: P.brassText }} className="shrink-0" />
+          <div className="text-[15px] truncate flex-1" style={{ color: P.text }}>{preview.name || "Filed document"}</div>
+          {isImage && !preview.error && (
+            <button
+              onClick={() => setZoom((z) => !z)}
+              title={zoom ? "Fit to the panel" : "Full size"}
+              aria-label={zoom ? "Fit to the panel" : "Full size"}
+              style={{ background: zoom ? P.surface2 : "transparent", color: P.muted, borderRadius: 12 }}
+              className="w-11 h-11 flex items-center justify-center shrink-0 press"
+            >
+              <Search size={17} />
+            </button>
+          )}
           {!preview.error && (
             <button
               onClick={() => downloadAttachment(preview.attachmentId, preview.name)}
               title="Download"
-              style={{ color: P.muted }}
-              className="p-1"
+              aria-label="Download"
+              style={{ color: P.muted, borderRadius: 12 }}
+              className="w-11 h-11 flex items-center justify-center shrink-0 press"
             >
-              <Download size={15} />
+              <Download size={17} />
             </button>
           )}
-          <button onClick={onClose} title="Close" style={{ color: P.muted }} className="p-1">
-            <X size={16} />
+          <button onClick={onClose} title="Close" aria-label="Close"
+            style={{ background: P.surface2, color: P.text, borderRadius: 12 }}
+            className="w-11 h-11 flex items-center justify-center shrink-0 press">
+            <X size={18} />
           </button>
         </div>
-        {preview.error ? (
-          <p style={{ color: P.debit }} className="text-sm p-6">
-            Couldn't load this file from storage. It may have been removed, try re-attaching it.
-          </p>
-        ) : isImage ? (
-          <div className="overflow-auto flex items-center justify-center p-4" style={{ background: P.bg, maxHeight: "75vh" }}>
-            <img src={preview.url} alt={preview.name} className="max-w-full rounded" style={{ maxHeight: "70vh" }} />
+
+        {/* The document scrolls, and the treatment travels with it. On a wide
+            screen they sit side by side; on a phone the figures come first,
+            because that is the part you came back to check. */}
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+          <div className="flex-1 min-h-0 min-w-0 overflow-auto" style={{ background: P.bg, WebkitOverflowScrolling: "touch" }}>
+            {preview.error ? (
+              <p style={{ color: P.debit }} className="text-[15px] p-6">
+                Couldn't load this file from storage. It may have been removed, so try re-attaching it.
+              </p>
+            ) : isImage ? (
+              <div className={zoom ? "p-4" : "p-4 flex items-center justify-center min-h-full"}>
+                <img
+                  src={preview.url}
+                  alt={preview.name}
+                  className="rounded"
+                  style={zoom ? { maxWidth: "none", width: "auto" } : { maxWidth: "100%", height: "auto" }}
+                />
+              </div>
+            ) : isPdf ? (
+              <>
+                {/* iOS Safari renders only the first page of a PDF in an iframe
+                    and will not scroll it, so on a phone the honest thing is a
+                    button that opens it properly rather than a broken frame. */}
+                <iframe
+                  src={preview.url}
+                  title={preview.name}
+                  className="w-full hidden sm:block"
+                  style={{ height: "70vh", border: "none", background: "#525659" }}
+                />
+                <div className="sm:hidden p-6 text-center">
+                  <p style={{ color: P.muted }} className="text-[15px] mb-4">
+                    A phone cannot scroll a PDF inside the app. Opening it uses the built-in reader, where you can
+                    scroll and pinch.
+                  </p>
+                  <a
+                    href={preview.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                    className="px-5 py-3 text-[15px] font-medium inline-flex items-center gap-2 press"
+                  >
+                    Open the document <ExternalLink size={16} />
+                  </a>
+                </div>
+              </>
+            ) : (
+              <p style={{ color: P.muted }} className="text-[15px] p-6">
+                No inline preview for this file type. Use the download button above.
+              </p>
+            )}
           </div>
-        ) : isPdf ? (
-          <iframe src={preview.url} title={preview.name} className="w-full" style={{ height: "75vh", border: "none", background: "#525659" }} />
-        ) : (
-          <p style={{ color: P.muted }} className="text-sm p-6">
-            No inline preview for this file type, use the download button above.
-          </p>
-        )}
+
+          {t && (
+            <div
+              className="shrink-0 lg:w-80 overflow-y-auto order-first lg:order-last"
+              style={{ borderTop: `1px solid ${P.line}`, background: P.surface }}
+            >
+              <div className="p-5">
+                <div style={{ color: P.text }} className="text-[16px]">{entry.description}</div>
+                <div style={{ color: P.faint }} className="text-[13.5px] mb-4">
+                  {entry.date} · {entry.category}{entry.subcategory ? ` · ${entry.subcategory}` : ""}
+                </div>
+
+                <div style={{ color: P.muted }} className="text-[13.5px] mb-2">How this is treated</div>
+                {[
+                  ["Tax line", `${t.gifi.code} · ${t.gifi.name}`],
+                  ["Total on the receipt", fmt(entry.amount)],
+                  entry.taxAmount > 0 ? [`${code.label}`, fmt(entry.taxAmount)] : ["Tax recorded", "none"],
+                  t.recoverable > 0 ? ["Credit claimable", fmt(t.recoverable)] : null,
+                  t.deductible < 1 ? ["Deductible share", `${Math.round(t.deductible * 100)}%`] : null,
+                  t.capital ? ["Capitalised", `CCA class ${t.capital.class}`] : null,
+                  ["Reduces taxable income by", fmt(t.deductibleAmount)],
+                ].filter(Boolean).map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-3 py-2 text-[14.5px]" style={{ borderTop: `1px solid ${P.line}` }}>
+                    <span style={{ color: P.muted }}>{k}</span>
+                    <span style={{ color: P.text, fontFamily: MONO }} className="tabular-nums shrink-0">{v}</span>
+                  </div>
+                ))}
+
+                {t.notes.map((n) => (
+                  <p key={n} style={{ color: P.faint }} className="text-[13.5px] mt-3 leading-snug">{n}</p>
+                ))}
+                {!entry.taxAmount && entry.taxCode !== "zero" && entry.taxCode !== "exempt" && (
+                  <p style={{ color: P.brassText }} className="text-[13.5px] mt-3 leading-snug">
+                    No tax was recorded against this entry. If the receipt shows GST or HST, adding it is what makes
+                    the credit claimable.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -4337,7 +4447,7 @@ function TaxPack({ data, month, openPreview, ledgerName }) {
               return (
                 <button
                   key={t.id}
-                  onClick={() => openPreview(t.attachmentId, t.attachmentName)}
+                  onClick={() => openPreview(t.attachmentId, t.attachmentName, t)}
                   className="w-full flex items-center gap-3.5 py-3 text-left press"
                   style={{ borderTop: `1px solid ${P.line}` }}
                 >
@@ -5816,7 +5926,7 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
   if (tx.attachmentId)
     return (
       <button
-        onClick={() => openPreview(tx.attachmentId, tx.attachmentName)}
+        onClick={() => openPreview(tx.attachmentId, tx.attachmentName, tx)}
         title={`View ${tx.attachmentName || "filed document"}`}
         style={{ color: P.brassText, padding: 6, margin: -6 }}
         className="shrink-0"
@@ -6809,7 +6919,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         </button>
         <div style={{ fontFamily: MONO, color: tone }} className="text-[15px] tabular-nums shrink-0">{fmt(i.amount)}</div>
         {i.attachmentId && (
-          <button onClick={() => openPreview(i.attachmentId, i.attachmentName)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brassText, padding: 6, margin: -6 }}>
+          <button onClick={() => openPreview(i.attachmentId, i.attachmentName, i)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brassText, padding: 6, margin: -6 }}>
     <Paperclip size={13} />
           </button>
         )}
@@ -6986,7 +7096,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
                 {isCredits(noteFor) ? ` · via ${creditName(data, noteFor.creditId)} credits` : ""}
               </p>
               {noteFor.attachmentId && (
-                <button onClick={() => openPreview(noteFor.attachmentId, noteFor.attachmentName)}
+                <button onClick={() => openPreview(noteFor.attachmentId, noteFor.attachmentName, noteFor)}
                   style={{ color: P.brassText }} className="text-xs inline-flex items-center gap-1 mt-2">
                   <Paperclip size={11} /> View filed invoice
                 </button>
