@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -1832,55 +1832,54 @@ function Ledger({ onSignOut }) {
               onClick={() => setAccountOpen(true)}
               title="Profile, membership, and settings"
               aria-label="Account"
-              className="lg:hidden"
+              className="hidden"
               style={{ color: P.muted, padding: 9 }}
             >
               <User size={15} />
             </Btn>
-            {/* What used to be two banners taking the top of every screen. The
-                help is still one tap away, it just stops shouting before you
-                have asked. A dot appears when there is something new. */}
-            <HeaderPopover
-              icon={HelpCircle}
-              label="Getting set up"
-              dot={!setupHidden && setupProgress.done < setupProgress.total}
-              quietWhenRead
-              badge={!setupHidden ? `${setupProgress.done}/${setupProgress.total}` : null}
-              open={headerPanel === "setup"}
-              onToggle={() => setHeaderPanel((v) => (v === "setup" ? null : "setup"))}
+            {/* One control, not four. Account, theme, and the setup checklist
+                all live on the Settings page, so the header does not need a
+                button for each of them; the dot says whether Settings has
+                anything waiting. The tour moved to a text link beside the page
+                name, where the thing it explains actually is. */}
+            <button
+              onClick={() => { setTab("settings"); setChatOpen(false); }}
+              aria-label="Settings"
+              title="Ledgers, appearance, and your account"
+              style={{
+                background: tab === "settings" ? P.brass : P.surface,
+                color: tab === "settings" ? P.onbrass : P.muted,
+                boxShadow: tab === "settings" ? "none" : elev(1),
+                borderRadius: 13,
+              }}
+              className="relative w-10 h-10 flex items-center justify-center shrink-0"
             >
-              <SetupChecklist
-                asPanel
-                data={data}
-                bankConns={bankConns}
-                openGuide={openGuide}
-                onGo={(where) => {
-                  setHeaderPanel(null);
-                  if (where === "capture") return setChatOpen(true);
-                  setTab(where);
-                }}
-                onDismiss={() => { window.localStorage.setItem("setup:hidden", "1"); setSetupHidden(true); setHeaderPanel(null); }}
-              />
-            </HeaderPopover>
+              <SettingsIcon size={17} />
+              {!setupHidden && setupProgress.done < setupProgress.total && tab !== "settings" && (
+                <span aria-hidden style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, borderRadius: "50%", background: P.brass }} />
+              )}
+            </button>
 
-            <HeaderPopover
-              icon={Sparkles}
-              label="What this screen is for"
-              dot={!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`)}
-              quietWhenRead
-              open={headerPanel === "tour"}
-              onToggle={() => setHeaderPanel((v) => (v === "tour" ? null : "tour"))}
-            >
-              <TourCard
-                asPanel
-                tab={tab}
-                onDismiss={() => {
-                  window.localStorage.setItem(`tour:${tab}`, "1");
-                  setSeenTours((st) => ({ ...st, [tab]: true }));
-                  setHeaderPanel(null);
+            {headerPanel === "tour" && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: "absolute", top: "100%", right: 0, zIndex: 45, marginTop: 8,
+                  width: "min(420px, calc(100vw - 32px))",
+                  background: P.surface, borderRadius: R.panel, boxShadow: elev(3),
                 }}
-              />
-            </HeaderPopover>
+              >
+                <TourCard
+                  asPanel
+                  tab={tab}
+                  onDismiss={() => {
+                    window.localStorage.setItem(`tour:${tab}`, "1");
+                    setSeenTours((st) => ({ ...st, [tab]: true }));
+                    setHeaderPanel(null);
+                  }}
+                />
+              </div>
+            )}
 
             <Btn
               tone="ghost"
@@ -1888,7 +1887,7 @@ function Ledger({ onSignOut }) {
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               title={theme === "dark" ? "Switch to light" : "Switch to dark"}
               aria-label={theme === "dark" ? "Switch to light" : "Switch to dark"}
-              className="lg:hidden"
+              className="hidden"
               style={{ color: P.muted, padding: 9 }}
             >
               {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
@@ -1923,11 +1922,22 @@ function Ledger({ onSignOut }) {
             section spent the first inch of every page telling you where you
             already knew you were. The rail is lit, and the bar names the
             section again the moment the figures scroll away. */}
-        <div className="mb-4 flex items-baseline gap-2 fade-in-key" key={`head:${tab}`}>
+        {/* The stepper above already names the month, and it is the thing that
+            changes it. Saying "September 2026" again underneath was the same
+            fact twice in two different type sizes. */}
+        <div className="mb-4 flex items-baseline gap-3 fade-in-key" key={`head:${tab}`}>
           <span style={{ color: P.text }} className="text-[15px] font-semibold">
             {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
           </span>
-          <span style={{ color: P.faint }} className="text-[14px]">{monthLabel(month)}</span>
+          {!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`) && (
+            <button
+              onClick={() => setHeaderPanel(headerPanel === "tour" ? null : "tour")}
+              style={{ color: P.brassText }}
+              className="text-[14px]"
+            >
+              What is this screen for?
+            </button>
+          )}
         </div>
 
         {/* ===== signature ledger line ===== */}
@@ -1989,6 +1999,15 @@ function Ledger({ onSignOut }) {
         {tab === "reports" && <ReportsTab data={data} month={month} balance={balance} onAsk={askAgent} />}
         {tab === "settings" && (
           <SettingsPage
+            setup={!setupHidden ? (
+              <SetupChecklist
+                data={data}
+                bankConns={bankConns}
+                openGuide={openGuide}
+                onGo={(where) => { if (where === "capture") return setChatOpen(true); setTab(where); }}
+                onDismiss={() => { window.localStorage.setItem("setup:hidden", "1"); setSetupHidden(true); }}
+              />
+            ) : null}
             theme={theme}
             setTheme={setTheme}
             ledgers={ledgers}
@@ -3767,7 +3786,7 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
    Its own page rather than the account sheet in page clothes. Two cards over
    an Account section, which is the order the prototype puts them in and the
    order people look: which books am I in, how does it look, then who am I. */
-function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLedger, onSignOut, onResetLedger }) {
+function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLedger, onSignOut, onResetLedger, setup }) {
   const [pal, setPal] = useState(currentPalette);
 
   const applyPalette = (name) => {
@@ -3882,6 +3901,10 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
           </div>
         </section>
       </div>
+
+      {/* The checklist used to be a header icon with a dot. It is a card here,
+          which is where someone goes looking for "what have I not set up yet". */}
+      {setup}
 
       <h2 style={{ fontFamily: SERIF }} className="text-2xl mt-2">Account</h2>
       <div className="grid md:grid-cols-2 gap-4">
@@ -5589,11 +5612,13 @@ function ProfitLoss({ data, month }) {
           { label: "Expenses", value: costs, tone: P.debit, change: costsChange, invert: true },
           { label: net >= 0 ? "Net income" : "Net loss", value: net, tone: net >= 0 ? P.credit : P.debit, change: netChange },
         ].map((c) => (
-          <div key={c.label} style={cardStyle()} className="p-4 flex flex-col">
-            <div style={{ color: P.muted }} className="text-sm mb-1.5">{c.label}</div>
-            <div style={{ fontFamily: MONO, color: c.tone }} className="text-xl tabular-nums">{fmt(Math.abs(c.value))}</div>
-            <div className="mt-auto pt-3 flex items-center gap-2">
-              <span style={{ color: P.faint }} className="text-xs">{monthLabel(month)}</span>
+          <div key={c.label} style={cardStyle()} className="p-4 flex flex-col min-w-0">
+            <div style={{ color: P.text }} className="text-[15px] mb-2">{c.label}</div>
+            <div style={{ fontFamily: MONO, color: c.tone }} className="text-[22px] k-fig tabular-nums leading-none truncate">{fmt0(Math.abs(c.value))}</div>
+            {/* The month was already on the stepper, and pairing it with the
+                change badge on one line is what pushed "100%" out of the card
+                on a phone. The change sits under its own figure now. */}
+            <div className="mt-2">
               <PLChange value={c.change} invert={c.invert} />
             </div>
           </div>
@@ -5609,29 +5634,37 @@ function ProfitLoss({ data, month }) {
 
       <section style={cardStyle()} className="p-5">
         <h2 style={{ fontFamily: SERIF }} className="text-xl mb-3">{monthLabel(month)} statement</h2>
-        <div className="space-y-2" style={{ fontFamily: MONO }}>
+        <div className="space-y-2.5">
           <PLRow label="Revenue" value={revenue} color={P.credit} change={revenueChange} />
           <PLRow label="Costs & expenses" value={-costs} color={P.debit} change={costsChange} invertChange />
           {recCosts > 0 && (
-            <div style={{ color: P.faint }} className="flex justify-between text-xs pl-4">
-              <span className="inline-flex items-center gap-1"><Repeat size={10} /> recurring / one-time</span>
-              <span className="tabular-nums">{fmt(-recCosts)} / {fmt(-(costs - recCosts))}</span>
+            <div style={{ color: P.faint }} className="flex justify-between gap-3 text-[13.5px] pl-4">
+              <span className="inline-flex items-center gap-1.5"><Repeat size={12} /> recurring, then one-time</span>
+              <span className="tabular-nums shrink-0" style={{ fontFamily: MONO }}>{fmt0(-recCosts)} / {fmt0(-(costs - recCosts))}</span>
             </div>
           )}
           {creditCosts > 0 && (
-            <div style={{ color: P.faint }} className="flex justify-between text-xs pl-4">
-              <span>covered by credits (no cash out)</span>
-              <span className="tabular-nums" style={{ color: P.brassText }}>{fmt(-creditCosts)}</span>
+            <div style={{ color: P.faint }} className="flex justify-between gap-3 text-[13.5px] pl-4">
+              <span>covered by credits, so no cash left</span>
+              <span className="tabular-nums shrink-0" style={{ color: P.brassText, fontFamily: MONO }}>{fmt0(-creditCosts)}</span>
             </div>
           )}
-          <div style={{ borderTop: `1px double ${P.brass}` }} className="pt-2 flex justify-between text-base">
-            <span style={{ color: P.text }}>Net {net >= 0 ? "profit" : "loss"}</span>
-            <span style={{ color: net >= 0 ? P.credit : P.debit }} className="tabular-nums flex items-center gap-1">
-              {net >= 0 ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />}{fmt(net)}
-              {margin !== null && <span style={{ color: P.faint }} className="text-xs ml-1">({margin.toFixed(0)}%)</span>}
+          <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-3 mt-1 flex justify-between items-baseline gap-3">
+            <span style={{ color: P.text }} className="text-[17px] font-semibold">
+              Net {net >= 0 ? "profit" : "loss"}
+            </span>
+            <span className="flex items-baseline gap-2.5 shrink-0">
               <PLChange value={netChange} />
+              <span style={{ color: net >= 0 ? P.credit : P.debit, fontFamily: MONO }} className="tabular-nums text-[19px]">
+                {fmt(net)}
+              </span>
             </span>
           </div>
+          {margin !== null && (
+            <div style={{ color: P.faint }} className="text-[14px] text-right">
+              a {margin.toFixed(0)}% margin on revenue
+            </div>
+          )}
         </div>
         {(openAR > 0 || openAP > 0) && (
           <p style={{ color: P.faint }} className="text-xs mt-3">
@@ -5699,21 +5732,21 @@ const PLChange = ({ value, invert = false }) => {
 };
 
 const PLRow = ({ label, value, color, change, invertChange }) => (
-  <div className="flex justify-between items-center text-sm">
-    <span style={{ color: P.muted }}>{label}</span>
-    <span className="flex items-center gap-2">
+  <div className="flex justify-between items-baseline gap-3">
+    <span style={{ color: P.text }} className="text-[15px] min-w-0 truncate">{label}</span>
+    <span className="flex items-baseline gap-2.5 shrink-0">
       {change !== undefined && <PLChange value={change} invert={invertChange} />}
-      <span style={{ color }} className="tabular-nums">{fmt(value)}</span>
+      <span style={{ color, fontFamily: MONO }} className="tabular-nums text-[15px]">{fmt(value)}</span>
     </span>
   </div>
 );
 
 function StatTile({ label, value, hint }) {
   return (
-    <div style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.control }} className="p-2.5">
-      <div style={{ color: P.faint }} className="text-xs mb-1 truncate">{label}</div>
-      <div style={{ fontFamily: MONO, color: P.text }} className="text-base tabular-nums">{value}</div>
-      {hint && <div style={{ color: P.faint }} className="text-xs mt-0.5 truncate">{hint}</div>}
+    <div style={{ background: P.surface2, borderRadius: 14 }} className="p-4 min-w-0">
+      <div style={{ color: P.muted }} className="text-[14px] mb-1.5">{label}</div>
+      <div style={{ fontFamily: MONO, color: P.text }} className="text-[19px] tabular-nums leading-none truncate">{value}</div>
+      {hint && <div style={{ color: P.faint }} className="text-[13.5px] mt-2">{hint}</div>}
     </div>
   );
 }
