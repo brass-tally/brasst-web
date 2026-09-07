@@ -30,7 +30,8 @@ import { TallyPeek } from "./shell/Peek";
 import { useNudges } from "./shell/useNudges";
 import { notify, createNotification } from "./lib/notifications";
 import {
-  P, PALETTES, elev, R, MONO, SANS, SERIF, applyThemeVars, THEME_KEY,
+  P, PALETTES, THEMES, PALETTE_NAMES, currentPalette, setPalette,
+  elev, R, MONO, SANS, SERIF, applyThemeVars, THEME_KEY,
   Card, cardStyle, Panel, SectionHeading, Stat,
   Btn, IconButton,
   Label, Input, CodeInput, Textarea, Select, Checkbox, CONTROL,
@@ -1002,8 +1003,10 @@ function Ledger({ onSignOut }) {
       try {
         const loaded = await db.loadAll(currentLedger);
         const t = loaded.settings.theme === "light" ? "light" : "dark";
-        Object.assign(P, PALETTES[t]);
-        applyThemeVars(P);
+        // The palette is a separate choice from the mode, so both are applied
+        // together. Doing only the mode is how a chosen palette silently
+        // reverted to Ember on every reload.
+        setPalette(currentPalette(), t);
         try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
         setThemeState(t);
         setMonth(thisMonth());
@@ -1710,7 +1713,7 @@ function Ledger({ onSignOut }) {
   };
 
   const setTheme = (t) => {
-    Object.assign(P, PALETTES[t]);
+    setPalette(currentPalette(), t);
     // Mirror onto the document root so stylesheet rules follow the swap, and
     // into storage so the next load — and the landing page, which reads the
     // same key — paints the right theme before any JS runs.
@@ -1972,14 +1975,15 @@ function Ledger({ onSignOut }) {
         }} />}
         {tab === "reports" && <ReportsTab data={data} month={month} balance={balance} onAsk={askAgent} />}
         {tab === "settings" && (
-          <AccountModal
-            asPage
+          <SettingsPage
             theme={theme}
             setTheme={setTheme}
+            ledgers={ledgers}
+            ledger={data.ledger}
+            onPickLedger={(l) => setCurrentLedger(l)}
+            onNewLedger={() => setNewLedgerOpen(true)}
             onSignOut={onSignOut}
             onResetLedger={resetAll}
-            ledgerName={data.ledger.name}
-            onClose={() => setTab("overview")}
           />
         )}
         </div>
@@ -3746,6 +3750,172 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
   );
 }
 
+/* ================= Settings =================
+   Its own page rather than the account sheet in page clothes. Two cards over
+   an Account section, which is the order the prototype puts them in and the
+   order people look: which books am I in, how does it look, then who am I. */
+function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLedger, onSignOut, onResetLedger }) {
+  const [pal, setPal] = useState(currentPalette);
+
+  const applyPalette = (name) => {
+    setPalette(name, theme);
+    setPal(name);
+  };
+
+  return (
+    <div className="space-y-6 stagger">
+      <div>
+        <h2 style={{ fontFamily: SERIF }} className="text-2xl">Settings</h2>
+        <p style={{ color: P.muted }} className="text-[15px]">Ledgers, appearance, and your account.</p>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <section style={cardStyle()} className="p-5">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Ledgers</h3>
+          <p style={{ color: P.muted }} className="text-[15px] mb-4">Business and personal stay separate books.</p>
+          {(ledgers || []).map((l) => {
+            const on = l.id === ledger.id;
+            return (
+              <button
+                key={l.id}
+                onClick={() => !on && onPickLedger(l)}
+                style={{
+                  background: on ? "transparent" : P.surface2,
+                  border: `1.5px solid ${on ? P.brass : "transparent"}`,
+                  borderRadius: 16,
+                }}
+                className="w-full flex items-center gap-3 p-4 mb-2 text-left"
+              >
+                <span className="flex-1 min-w-0">
+                  <span style={{ color: P.text }} className="text-[16px] block truncate">{l.name}</span>
+                  <span style={{ color: P.faint }} className="text-[14px]">
+                    {l.kind === "personal" ? "Personal ledger" : "Business ledger"}
+                  </span>
+                </span>
+                {on && (
+                  <span
+                    style={{ background: P.brass + "22", color: P.brassText, borderRadius: R.pill }}
+                    className="text-[13.5px] px-2.5 py-1 shrink-0"
+                  >
+                    Open
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          <button onClick={onNewLedger} style={{ color: P.brassText }} className="text-[15px] mt-1">
+            + New ledger
+          </button>
+        </section>
+
+        <section style={cardStyle()} className="p-5">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Appearance</h3>
+          <p style={{ color: P.muted }} className="text-[15px] mb-4">Applies everywhere, including the landing page.</p>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {PALETTE_NAMES.map((name) => {
+              const swatch = THEMES[name][theme === "dark" ? "dark" : "light"];
+              const on = name === pal;
+              return (
+                <button
+                  key={name}
+                  onClick={() => applyPalette(name)}
+                  aria-pressed={on}
+                  style={{
+                    background: on ? "transparent" : P.surface2,
+                    border: `1.5px solid ${on ? P.brass : "transparent"}`,
+                    borderRadius: 16,
+                  }}
+                  className="p-3 text-left"
+                >
+                  <span className="flex gap-1.5 mb-2.5">
+                    {[swatch.brass, swatch.credit, swatch.debit].map((c, i) => (
+                      <span key={i} aria-hidden style={{ background: c, width: 14, height: 14, borderRadius: "50%" }} />
+                    ))}
+                  </span>
+                  <span style={{ color: P.text }} className="text-[15px] capitalize">{name}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-4 mt-5 pt-5" style={{ borderTop: `1px solid ${P.line}` }}>
+            <div className="flex-1 min-w-0">
+              <div style={{ color: P.text }} className="text-[16px]">Night theme</div>
+              <div style={{ color: P.faint }} className="text-[14px]">Everyone starts on paper</div>
+            </div>
+            <button
+              onClick={() => { const next = theme === "dark" ? "light" : "dark"; setTheme(next); setPalette(pal, next); }}
+              role="switch"
+              aria-checked={theme === "dark"}
+              aria-label="Night theme"
+              style={{
+                width: 48, height: 28, borderRadius: 999, flexShrink: 0, position: "relative",
+                background: theme === "dark" ? P.brass : P.surface2,
+                border: `1px solid ${theme === "dark" ? P.brass : P.line}`,
+                transition: "background .2s ease",
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  position: "absolute", top: 2, left: 2, width: 22, height: 22, borderRadius: "50%",
+                  background: P.surface, boxShadow: elev(1),
+                  transform: theme === "dark" ? "translateX(20px)" : "none",
+                  transition: "transform .22s cubic-bezier(.2,.8,.2,1)",
+                }}
+              />
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <h2 style={{ fontFamily: SERIF }} className="text-2xl mt-2">Account</h2>
+      <div className="grid md:grid-cols-2 gap-4">
+        <section style={cardStyle()} className="p-5">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Membership</h3>
+          <p style={{ color: P.muted }} className="text-[15px] mb-3">Where your plan stands.</p>
+          <div className="flex items-center justify-between gap-3 py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+            <span className="text-[15px]">Plan</span>
+            <span style={{ background: P.brass + "22", color: P.brassText, borderRadius: R.pill }} className="text-[13.5px] px-2.5 py-1">
+              Early access
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3 py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+            <span className="text-[15px]">Ledgers</span>
+            <span style={{ color: P.faint }} className="text-[15px]">Unlimited</span>
+          </div>
+          <div className="flex items-center justify-between gap-3 py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+            <span className="text-[15px]">Billing</span>
+            <span style={{ color: P.faint }} className="text-[15px]">Nothing due</span>
+          </div>
+        </section>
+
+        <section style={cardStyle()} className="p-5">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Danger zone</h3>
+          <p style={{ color: P.muted }} className="text-[15px] mb-4">
+            Resetting erases every entry in {ledger.name}. Your other ledgers are untouched.
+          </p>
+          <button
+            onClick={onResetLedger}
+            style={{ background: P.surface2, color: P.debit, borderRadius: R.pill }}
+            className="w-full px-4 py-3 text-[15px] font-medium inline-flex items-center justify-center gap-2 mb-2"
+          >
+            <RotateCcw size={16} /> Reset this ledger
+          </button>
+          <button
+            onClick={onSignOut}
+            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+            className="w-full px-4 py-3 text-[15px] font-medium inline-flex items-center justify-center gap-2"
+          >
+            <LogOut size={16} /> Sign out
+          </button>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 /* ================= Overview ================= */
 /* ================= what wants you =================
    Three panels above the budget: what needs deciding, how close the month is to
@@ -4516,8 +4686,8 @@ function Capture({
 
   return (
     <div
-      style={embedded ? {} : cardStyle()}
-      className={(embedded ? "" : "rounded-lg ") + "flex flex-col"}
+      style={embedded ? { minHeight: 0 } : cardStyle()}
+      className={(embedded ? "flex-1 " : "rounded-lg ") + "flex flex-col min-h-0"}
     >
       {guideId && GUIDES[guideId] && (
         <div className="flex items-center gap-2 px-3 pt-2">
@@ -4531,7 +4701,10 @@ function Capture({
           </button>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: embedded ? "45vh" : "55vh", minHeight: embedded ? 240 : 320 }}>
+      <div
+        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3"
+        style={embedded ? {} : { maxHeight: "55vh", minHeight: 320 }}
+      >
         {msgs.map((m, i) => (
           <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
             <div
@@ -7836,8 +8009,8 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
       <section style={cardStyle()} className="p-5">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Corporate tax (T2)</h2>
-            <p style={{ color: P.muted }} className="text-sm">Your year, mapped onto the forms CRA expects</p>
+            <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Corporate tax, T2</h2>
+            <p style={{ color: P.muted }} className="text-[15px]">GIFI draft, deadlines, and the filing route for {fy}.</p>
           </div>
           <GuideAnchor id="filing-t2" onOpen={openGuide} label="Walk me through it" />
         </div>
@@ -8313,13 +8486,22 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
     <section style={cardStyle()} className="p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Bank feed</h2>
-          <p style={{ color: P.muted }} className="text-sm">Connections belong to this ledger ({data.ledger.name}). Each ledger links its own bank accounts.</p>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Bank feed</h2>
+          <p style={{ color: P.muted }} className="text-[15px]">Connections belong to this ledger. Each ledger links its own accounts.</p>
         </div>
         <div className="flex items-center gap-2">
           <GuideAnchor id="bank-feed" onOpen={openGuide} label={connected ? "Something wrong?" : "Help me connect"} />
-          <span style={{ fontFamily: MONO, color: conns?.length ? P.credit : P.faint, border: `1px solid ${conns?.length ? P.credit : P.line}` }} className="text-xs rounded-full px-2 py-0.5 whitespace-nowrap">
-            {conns === null ? "checking…" : conns.length ? `${conns.length} connected` : "not connected"}
+          {/* A filled tint rather than an outline: the state is the point, and
+              a hairline pill in mono read as a build flag. */}
+          <span
+            style={{
+              background: conns?.length ? P.credit + "1f" : P.surface2,
+              color: conns?.length ? P.credit : P.faint,
+              borderRadius: R.pill,
+            }}
+            className="text-[14px] px-3 py-1 whitespace-nowrap"
+          >
+            {conns === null ? "Checking" : conns.length ? "Connected" : "Not connected"}
           </span>
         </div>
       </div>
@@ -8329,12 +8511,15 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
           {conns.map((c) => {
             const stale = bank.needsReconnect(c);
             return (
-            <div key={c.id} style={{ background: P.bg, border: `1px solid ${stale ? P.debit : P.line}` }} className="rounded-lg p-3 flex items-center gap-2 flex-wrap">
+            <div key={c.id} style={{ background: P.surface2, border: stale ? `1px solid ${P.debit}` : "none", borderRadius: 16 }} className="p-4 flex items-center gap-3 flex-wrap">
               <div className="flex-1 min-w-0">
-                <div className="text-sm truncate">{c.institution || "Bank"}</div>
-                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-                  {c.current_balance != null ? `${fmt(Number(c.current_balance))} · ` : ""}
-                  {c.last_synced ? `last synced ${stamp(c.last_synced)}` : "never synced"}
+                <div className="text-[16px] truncate" style={{ color: P.text }}>{c.institution || "Bank"}</div>
+                <div style={{ color: P.faint }} className="text-[14px] mt-0.5">
+                  {c.last_synced ? `Last synced ${stamp(c.last_synced)}` : "Never synced"}
+                  {Array.isArray(c.accounts) && c.accounts.length
+                    ? ` · ${c.accounts.length} ${c.accounts.length === 1 ? "account" : "accounts"}`
+                    : ""}
+                  {c.current_balance != null ? ` · ${fmt(Number(c.current_balance))}` : ""}
                 </div>
                 {stale && (
                   <div style={{ color: P.debit }} className="text-xs mt-1">
@@ -8346,9 +8531,14 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
                 ? <Btn onClick={() => reconnect(c.id)} disabled={busy}>
                     {busy ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Reconnect
                   </Btn>
-                : <Btn tone="ghost" onClick={() => sync(c.id)} disabled={syncing === c.id}>
-                    {syncing === c.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Sync now
-                  </Btn>}
+                : <button
+                    onClick={() => sync(c.id)}
+                    disabled={syncing === c.id}
+                    style={{ background: P.surface, color: P.text, borderRadius: R.pill, boxShadow: elev(1) }}
+                    className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+                  >
+                    {syncing === c.id ? <Loader2 size={15} className="animate-spin" /> : null} Sync now
+                  </button>}
               <button onClick={() => disconnect(c.id)} style={{ color: P.faint, padding: 6, margin: -6 }} title="Disconnect"><Trash2 size={13} /></button>
             </div>
             );
@@ -8360,17 +8550,24 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
           "Connect a bank" again reads as "add another account" and is the
           fastest way to end up with the same account linked twice, which
           double-counts the balance. It comes back when the last one is removed. */}
-      <div className="flex flex-wrap items-center gap-3 mt-4">
+      <div className="mt-4">
         {connected ? (
-          <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">
+          <p style={{ color: P.faint }} className="text-[14px]">
             {conns.length === 1 ? "This ledger is connected to your bank." : `This ledger is connected to ${conns.length} banks.`} Remove one with the bin icon to connect a different bank.
-          </span>
+          </p>
         ) : (
           <>
-            <Btn onClick={connect} disabled={busy}>
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Connect a bank
-            </Btn>
-            <span style={{ color: P.faint, fontFamily: MONO }} className="text-xs">no signup needed · you sign in with your own bank · Brasstally never sees the password</span>
+            <button
+              onClick={connect}
+              disabled={busy}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill, opacity: busy ? 0.6 : 1 }}
+              className="px-5 py-3 text-[15px] font-medium inline-flex items-center gap-2"
+            >
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Connect a bank
+            </button>
+            <p style={{ color: P.faint }} className="text-[14px] mt-3">
+              You sign in with your own bank. Brasstally never sees the password.
+            </p>
           </>
         )}
         {resumable && !connected && (
@@ -8747,11 +8944,11 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
       </p>
 
       {/* status pipeline */}
-      <div className="flex items-center gap-1 mb-4">
+      <div className="flex items-start gap-3 mb-5">
         {FILING_STATUSES.map(([k, label], i) => (
-          <button key={k} onClick={() => save({ status: k })} className="flex-1 text-left" title={`Mark as ${label}`}>
-            <div style={{ height: 4, borderRadius: 99, background: i <= statusIdx ? P.brass : P.line }} />
-            <div style={{ fontFamily: MONO, color: i <= statusIdx ? P.text : P.faint }} className="text-xs mt-1 truncate">{label}</div>
+          <button key={k} onClick={() => save({ status: k })} className="flex-1 text-left min-w-0" title={`Mark as ${label}`}>
+            <div style={{ height: 5, borderRadius: 99, background: i <= statusIdx ? P.brass : P.surface2 }} />
+            <div style={{ color: i <= statusIdx ? P.text : P.faint }} className="text-[14px] mt-2 truncate">{label}</div>
           </button>
         ))}
       </div>

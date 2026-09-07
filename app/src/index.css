@@ -383,7 +383,11 @@ h1, h2, h3 {
    there is room for a conversation to breathe. Same panel and same Capture
    inside either way; only the frame changes. */
 .tally-frame { right: 12px; bottom: 84px; width: min(26rem, calc(100vw - 24px)); }
-.tally-panel { max-height: min(70vh, 620px); display: flex; flex-direction: column; }
+/* A real height, not a ceiling. With only a max-height the panel sized itself
+   to its content, and once the transcript was short the composer floated in the
+   middle of a tall white box. Fixed height plus a growing transcript puts the
+   composer on the bottom edge, which is where every chat composer lives. */
+.tally-panel { height: min(70vh, 560px); display: flex; flex-direction: column; overflow: hidden; }
 
 @media (min-width: 1024px) {
   .tally-frame { top: 0; bottom: 0; right: 0; width: min(430px, 38vw); padding: 14px; display: flex; }

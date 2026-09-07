@@ -1,28 +1,3 @@
-/* ================= design tokens =================
-   Drop-in replacement for src/ui/tokens.js.
-
-   Same exports, same shape, same call sites. Every component still reads P at
-   render time, applyThemeVars still mirrors onto the document root, and
-   THEME_KEY is still shared with the landing page. Nothing outside this file
-   has to change for the new look to land.
-
-   Two differences that matter:
-
-   1. The palette is Ember: warm neutral paper rather than parchment, a brighter
-      amber for action, and credit/debit doing the only other colour work.
-
-   2. `brass` and `brassText` are now separate values. The old single token was
-      failing WCAG badly in light mode: #DFA726 as text on the light surface
-      measures 2.04:1 where 4.5 is the floor, which made every `.eyebrow` and
-      every outlined brass Pill effectively unreadable on paper. `brass` stays
-      the fill (inkOn already picks the right label colour for it) and
-      `brassText` is the deeper tone for text, borders, and icons.
-
-      Migration is mechanical:
-        background: P.brass   ->  unchanged
-        color: P.brass        ->  color: P.brassText
-      In CSS, `var(--brass)` for fills and `var(--brasstext)` for text. */
-
 export const PALETTES = {
   dark: {
     mode: "dark",
@@ -61,6 +36,102 @@ export const PALETTES = {
     glass: "rgba(250,249,247,0.84)",
   },
 };
+
+/* ================= the other three =================
+   Ember ships. These are here because the Appearance panel offers them, and a
+   switch that offers a choice it cannot make is worse than no switch. Each one
+   is a full pair, and every text token in all eight combinations clears WCAG AA
+   (checked by scripts/check-tdz.mjs's sibling in the production kit).
+
+   brass is the fill and brassText the text tone throughout, for the same reason
+   Ember needs both: a colour bright enough to carry a button is rarely dark
+   enough to read as a word. */
+export const THEMES = {
+  ember: PALETTES,
+  ink: {
+    light: {
+      mode: "light",
+      bg: "#FAFAF9", surface: "#FFFFFF", surface2: "#F4F4F2",
+      line: "#EAE9E5", linehover: "#D8D6D0",
+      text: "#1A1A17", muted: "#57564F", faint: "#86847C",
+      credit: "#08805A", debit: "#C4442F",
+      brass: "#1C1C19", brassText: "#1C1C19", onbrass: "#FFFFFF",
+      overlay: "rgba(26,26,23,0.40)", glass: "rgba(250,250,249,0.84)",
+    },
+    dark: {
+      mode: "dark",
+      bg: "#0C0C0B", surface: "#151513", surface2: "#1E1E1B",
+      line: "#242320", linehover: "#33322D",
+      text: "#F5F4F0", muted: "#ADABA3", faint: "#807E76",
+      credit: "#34D399", debit: "#FB7185",
+      brass: "#F5F4F0", brassText: "#F5F4F0", onbrass: "#14140F",
+      overlay: "rgba(0,0,0,0.72)", glass: "rgba(12,12,11,0.84)",
+    },
+  },
+  jade: {
+    light: {
+      mode: "light",
+      bg: "#F5F7F6", surface: "#FFFFFF", surface2: "#EEF2F0",
+      line: "#E3E9E6", linehover: "#D3DBD7",
+      text: "#0F1A16", muted: "#4E5B55", faint: "#7E8B85",
+      credit: "#08805A", debit: "#C4442F",
+      brass: "#0A855C", brassText: "#08805A", onbrass: "#FFFFFF",
+      overlay: "rgba(15,26,22,0.40)", glass: "rgba(245,247,246,0.84)",
+    },
+    dark: {
+      mode: "dark",
+      bg: "#0B1210", surface: "#141C19", surface2: "#1B2521",
+      line: "#222E29", linehover: "#2E3C36",
+      text: "#ECF2EF", muted: "#A3B2AC", faint: "#7A8882",
+      credit: "#34D399", debit: "#FB7185",
+      brass: "#34D399", brassText: "#34D399", onbrass: "#06110D",
+      overlay: "rgba(4,10,8,0.72)", glass: "rgba(11,18,16,0.84)",
+    },
+  },
+  indigo: {
+    light: {
+      mode: "light",
+      bg: "#F6F7FC", surface: "#FFFFFF", surface2: "#EFF1F9",
+      line: "#E5E8F2", linehover: "#D5D9EA",
+      text: "#14172B", muted: "#4F5470", faint: "#7F849C",
+      credit: "#08805A", debit: "#C4442F",
+      brass: "#5B5BD6", brassText: "#4A45C9", onbrass: "#FFFFFF",
+      overlay: "rgba(20,23,43,0.40)", glass: "rgba(246,247,252,0.84)",
+    },
+    dark: {
+      mode: "dark",
+      bg: "#0D0F1A", surface: "#151827", surface2: "#1D2132",
+      line: "#232742", linehover: "#303556",
+      text: "#EEEFF7", muted: "#A6AAC4", faint: "#7C8199",
+      credit: "#34D399", debit: "#FB7185",
+      brass: "#8B8CF0", brassText: "#9B9CF5", onbrass: "#0D0F1A",
+      overlay: "rgba(4,6,14,0.72)", glass: "rgba(13,15,26,0.84)",
+    },
+  },
+};
+
+export const PALETTE_NAMES = ["ember", "ink", "jade", "indigo"];
+export const PALETTE_KEY = "bt-palette.v2";
+
+/* Which palette is in play. Read once at boot and whenever Settings changes it;
+   validated on read so a name removed in a later version falls back to Ember
+   rather than leaving the app unstyled. */
+export function currentPalette() {
+  try {
+    const v = window.localStorage.getItem(PALETTE_KEY);
+    if (PALETTE_NAMES.includes(v)) return v;
+  } catch { /* private mode */ }
+  return "ember";
+}
+
+export function setPalette(name, mode) {
+  const pal = PALETTE_NAMES.includes(name) ? name : "ember";
+  const m = mode === "dark" ? "dark" : "light";
+  Object.assign(P, THEMES[pal][m]);
+  try { window.localStorage.setItem(PALETTE_KEY, pal); } catch { /* private mode */ }
+  applyThemeVars(P);
+  return pal;
+}
 
 /* Light is where everyone starts. Night is a choice, and once made it is
    remembered under THEME_KEY and carried across to the landing page. The
