@@ -304,7 +304,19 @@ export function normalizeDraft(raw, { categories = { expense: [], income: [] }, 
     subcategory,
     account: d.account === "personal" || d.account === "business" ? d.account : ledgerKind === "personal" ? "personal" : "business",
     recurrence: d.recurrence === "recurring" ? "recurring" : d.recurrence === "once" ? "once" : fallback?.recurrence || "once",
+
+    /* Tax comes through as read, not as computed. A zero here means the reader
+       found no tax line, which is a different fact from "the tax was nil", and
+       the summary flags the difference so an unclaimed credit is visible rather
+       than silently absent. */
+    taxAmount: coerceAmount(d.taxAmount) || 0,
+    taxCode: TAX_CODE_SET.has(d.taxCode) ? d.taxCode : "none",
+    subtotal: coerceAmount(d.subtotal) || 0,
+    capital: false,
+
     note: String(d.note || "").trim(),
     source: "model",
   };
 }
+
+const TAX_CODE_SET = new Set(["hst13", "hst15", "gst5", "gstpst", "gstqst", "zero", "exempt", "none"]);

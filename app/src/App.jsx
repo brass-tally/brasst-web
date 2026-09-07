@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -12,6 +12,7 @@ import * as bank from "./lib/bank";
 import { jsPDF } from "jspdf";
 import { askClaude, friendlyError } from "./lib/extract";
 import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
+import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross } from "./lib/tax";
 import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
   proposeMatches, explainDelta, clearedIndex, consolidationPlan,
@@ -418,6 +419,68 @@ const subPromptInfo = (cats) => {
   return lines.length ? lines.join(" | ") : "none defined";
 };
 
+/* What one entry means once tax is applied. Shown under a receipt draft, so
+   the tax consequence is visible at the moment of filing rather than found in
+   March. Every line is derived by lib/tax.js, and the wording says what it is:
+   preparation, not advice. */
+function TaxLine({ draft, policy }) {
+  const t = deriveTreatment(draft, policy);
+  const code = TAX_CODES[draft.taxCode] || TAX_CODES.none;
+  const rows = [
+    ["Tax line", `${t.gifi.code} · ${t.gifi.name}`],
+    draft.taxAmount > 0 ? [`${code.label} paid`, fmt(draft.taxAmount)] : null,
+    t.recoverable > 0 ? ["Recoverable as a credit", fmt(t.recoverable)] : null,
+    t.deductible < 1 ? ["Deductible share", `${Math.round(t.deductible * 100)}%`] : null,
+    t.capital ? ["Capitalised", `CCA class ${t.capital.class}`] : null,
+    ["Reduces taxable income by", fmt(t.deductibleAmount)],
+  ].filter(Boolean);
+
+  return (
+    <div style={{ background: P.surface2, borderRadius: 14 }} className="p-3.5 mt-3">
+      <div style={{ color: P.muted }} className="text-[13.5px] mb-2">For your accountant</div>
+      {rows.map(([k, v]) => (
+        <div key={k} className="flex justify-between gap-3 py-1 text-[14px]">
+          <span style={{ color: P.muted }}>{k}</span>
+          <span style={{ color: P.text, fontFamily: MONO }} className="tabular-nums shrink-0">{v}</span>
+        </div>
+      ))}
+      {t.notes.map((n) => (
+        <div key={n} style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">{n}</div>
+      ))}
+      {!draft.taxAmount && draft.taxCode === "none" && (
+        <div style={{ color: P.brassText }} className="text-[13px] mt-2 leading-snug">
+          No tax line was printed on this one. If there was GST or HST on it, adding the amount is what makes it claimable.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* An open payable this receipt probably pays.
+   Party is matched loosely, because a receipt says "VERCEL INC." where the
+   payable says "Vercel". The amount has to be close, because a payable is
+   often entered from an estimate. Deliberately conservative: settling the
+   wrong bill is worse than not offering, so no match is the safer failure. */
+function findOpenPayable(data, draft) {
+  const norm = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const needle = norm(draft.description);
+  if (needle.length < 3) return null;
+  const scored = (data.payables || [])
+    .filter((p) => p.status === "open")
+    .map((p) => {
+      const party = norm(p.party);
+      const desc = norm(p.description);
+      const hit = party && (party.includes(needle) || needle.includes(party) || (desc && desc.includes(needle)));
+      return hit ? { p, gap: Math.abs(Number(p.amount) - Number(draft.amount)) } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.gap - b.gap);
+  if (!scored.length) return null;
+  const best = scored[0];
+  const tolerance = Math.max(1, Number(best.p.amount) * 0.05);
+  return best.gap <= tolerance ? best.p : null;
+}
+
 function extractionPrompt(cats, ledgerName) {
   return `You extract transaction data for a budget app. The ledger is "${ledgerName}".
 Expense categories: ${cats.expense.map((c) => c.name).join(", ")}.
@@ -425,7 +488,10 @@ Income categories: ${cats.income.map((c) => c.name).join(", ")}.
 Subcategories per category (use only if clearly applicable, else null): ${subPromptInfo(cats)}.
 Today's date: ${todayStr()}.
 Respond ONLY with raw JSON (no markdown, no preamble):
-{"type":"expense"|"income","amount":number,"date":"YYYY-MM-DD","description":"vendor/short description","category":"one of the listed categories for that type","subcategory":"one of that category's subcategories or null","account":"business"|"personal","recurrence":"recurring"|"once","note":"one short line on anything you were unsure about, else empty string"}
+{"type":"expense"|"income","amount":number,"date":"YYYY-MM-DD","description":"vendor/short description","category":"one of the listed categories for that type","subcategory":"one of that category's subcategories or null","account":"business"|"personal","recurrence":"recurring"|"once","taxAmount":number,"taxCode":"hst13"|"hst15"|"gst5"|"gstpst"|"gstqst"|"zero"|"exempt"|"none","subtotal":number,"note":"one short line on anything you were unsure about, else empty string"}
+taxAmount: the GST/HST/QST actually printed on the receipt, as a number. Read it, do not calculate it: receipts round, and a basket can mix rates or include zero-rated items. If no tax line is printed, use 0 and set taxCode to "none".
+taxCode: which regime the printed tax matches. 13% is hst13 (Ontario), 15% is hst15 (Atlantic), 5% alone is gst5, 5% plus a separate provincial line is gstpst (BC, SK, MB), 5% plus QST is gstqst (Quebec), a zero-rated item is zero, an exempt service like most financial or medical is exempt.
+subtotal: the amount before tax. amount stays the total paid including tax.
 Software/SaaS/cloud/contractor items are business expenses, pick the closest business category (software, hosting, salaries, etc.). If the date is missing, use today's date. Amount is the total paid.
 recurrence: "recurring" for subscriptions, SaaS, hosting, rent/mortgage, salaries, retainers, utilities, anything billed on a repeating cycle; "once" for one-off purchases.`;
 }
@@ -443,7 +509,7 @@ function extractionSchema(cats) {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["type", "amount", "date", "description", "category", "subcategory", "account", "recurrence", "note"],
+    required: ["type", "amount", "date", "description", "category", "subcategory", "account", "recurrence", "taxAmount", "taxCode", "subtotal", "note"],
     properties: {
       type: { type: "string", enum: ["expense", "income"] },
       amount: { type: "number" },
@@ -453,6 +519,9 @@ function extractionSchema(cats) {
       subcategory: nullableString(subs),
       account: { type: "string", enum: ["business", "personal"] },
       recurrence: { type: "string", enum: ["recurring", "once"] },
+      taxAmount: { type: "number" },
+      taxCode: { type: "string", enum: ["hst13", "hst15", "gst5", "gstpst", "gstqst", "zero", "exempt", "none"] },
+      subtotal: { type: "number" },
       note: { type: "string" },
     },
   };
@@ -951,8 +1020,17 @@ function Ledger({ onSignOut }) {
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
   const [setupHidden, setSetupHidden] = useState(() => Boolean(window.localStorage.getItem("setup:hidden")));
+  // Your capitalisation policy and registration status live on the ledger, so
+  // a second ledger in another province is a column rather than a fork.
+  const taxPolicy = useMemo(() => ({
+    capitalThreshold: Number(data?.ledger?.capitalThreshold ?? TAX_POLICY.capitalThreshold),
+    province: data?.ledger?.province || TAX_POLICY.province,
+    gstRegistered: data?.ledger?.gstRegistered ?? TAX_POLICY.gstRegistered,
+  }), [data?.ledger?.capitalThreshold, data?.ledger?.province, data?.ledger?.gstRegistered]);
+
+  const [receiptSettle, setReceiptSettle] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [legal, setLegal] = useState(null);               // "data" | "privacy" | "terms" | null
+  const [backTo, setBackTo] = useState("overview");
   // The same arithmetic the checklist does, so the dot on the icon and the
   // panel underneath it can never disagree.
   const setupProgress = useMemo(() => {
@@ -1535,6 +1613,20 @@ function Ledger({ onSignOut }) {
       if (killedTxId) await db.deleteTransaction(killedTxId);
     });
   };
+  /* A receipt that pays a bill settles the bill, with the receipt filed as the
+     evidence. This is the path that stops the double count: one settled
+     obligation and one transaction, linked, instead of an open payable sitting
+     beside a duplicate entry. */
+  const settleFromReceipt = ({ item, draft }, att) => {
+    // Ledger cannot reach ARList's dialog state, so it asks rather than
+    // reaching in: the request is put down here, AR/AP picks it up, opens the
+    // confirm with the receipt already attached, and clears it.
+    setReceiptSettle({ item, draft, att });
+    setChatOpen(false);
+    setTab("arap");
+    window.scrollTo({ top: 0 });
+  };
+
   const resetAll = async () => {
     const ok = await askConfirm({
       title: `Wipe "${data.ledger.name}" and start it fresh?`,
@@ -1558,7 +1650,11 @@ function Ledger({ onSignOut }) {
     const latest = recs.reduce((m, t) => (t.date && t.date > m ? t.date : m), "");
     if (latest) setMonth(latest.slice(0, 7));
     setImporting(false);
-    setBankReview(null);
+    // `setBankReview(null)` used to sit here. That setter does not exist in this
+    // component, or anywhere: the bank review state lives in the match modal.
+    // Every statement import threw a ReferenceError at this line and lost the
+    // consolidation record that follows it, silently, because the rows had
+    // already been written by then.
     // An import folds outside lines into the books, so it belongs in the same
     // history as a reconciliation — it's the other way the books change without
     // anyone typing an entry.
@@ -1749,8 +1845,12 @@ function Ledger({ onSignOut }) {
   const TAB_TITLES = {
     overview: "Snapshot", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
     credits: "Credits", calendar: "Calendar", integrations: "Connectors",
-    reports: "Reports", settings: "Settings",
+    reports: "Reports", settings: "Settings", profile: "Profile", taxpack: "Tax pack",
+    "legal-data": "Your data", "legal-privacy": "Privacy", "legal-terms": "Terms",
   };
+  // Where Back goes. Set when the menu navigates, so a document opened from
+  // Settings returns to Settings rather than dropping you on Snapshot.
+  const MENU_ROUTES = ["taxpack", "profile", "legal-data", "legal-privacy", "legal-terms"];
 
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS, "--ring": P.brass }}
@@ -1957,7 +2057,14 @@ function Ledger({ onSignOut }) {
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
-        {tab === "arap" && <ARAP openGuide={openGuide} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} />}
+        {tab === "arap" && (
+          <ARAP
+            openGuide={openGuide} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR}
+            removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit}
+            openPreview={openPreview}
+            receiptSettle={receiptSettle} onReceiptSettleUsed={() => setReceiptSettle(null)}
+          />
+        )}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
         {tab === "integrations" && <IntegrationsTab data={data} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
@@ -1966,6 +2073,26 @@ function Ledger({ onSignOut }) {
           dbTry(() => db.updateLedger(data.ledger.id, patch));
         }} />}
         {tab === "reports" && <ReportsTab data={data} month={month} balance={balance} onAsk={askAgent} />}
+        {MENU_ROUTES.includes(tab) && (
+          <BackBar to={TAB_TITLES[backTo] || "Snapshot"} onBack={() => { setTab(backTo); window.scrollTo({ top: 0 }); }} />
+        )}
+        {tab === "profile" && (
+          <AccountModal
+            asPage
+            theme={theme}
+            setTheme={setTheme}
+            onSignOut={onSignOut}
+            onResetLedger={resetAll}
+            ledgerName={data.ledger.name}
+            onClose={() => setTab(backTo)}
+          />
+        )}
+        {tab === "taxpack" && (
+          <TaxPack data={data} month={month} openPreview={openPreview} ledgerName={data.ledger.name} />
+        )}
+        {tab === "legal-data" && <LegalPage which="data" />}
+        {tab === "legal-privacy" && <LegalPage which="privacy" />}
+        {tab === "legal-terms" && <LegalPage which="terms" />}
         {tab === "settings" && (
           <SettingsPage
             setup={!setupHidden ? (
@@ -2034,6 +2161,8 @@ function Ledger({ onSignOut }) {
               consolidation={consolidation}
               bankConns={bankConns}
               insights={insights}
+              taxPolicy={taxPolicy}
+              onSettleFromReceipt={settleFromReceipt}
               seed={chatSeed}
               onSeedUsed={() => setChatSeed(null)}
               guide={chatGuide}
@@ -2137,12 +2266,17 @@ function Ledger({ onSignOut }) {
           tab={tab}
           setupPending={!setupHidden && setupProgress.done < setupProgress.total}
           onClose={() => setMenuOpen(false)}
-          onGo={(where) => { setMenuOpen(false); setTab(where); setChatOpen(false); window.scrollTo({ top: 0 }); }}
-          onProfile={() => { setMenuOpen(false); setAccountOpen(true); }}
-          onLegal={(which) => { setMenuOpen(false); setLegal(which); }}
+          onGo={(where) => {
+            setMenuOpen(false);
+            // Only remember a return point when leaving a real section, so
+            // Back never bounces you between two menu pages.
+            if (!MENU_ROUTES.includes(tab)) setBackTo(tab);
+            setTab(where);
+            setChatOpen(false);
+            window.scrollTo({ top: 0 });
+          }}
         />
       )}
-      {legal && <LegalSheet which={legal} onClose={() => setLegal(null)} />}
 
       {accountOpen && (
         <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll}
@@ -3763,6 +3897,21 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
   );
 }
 
+/* The way back. A page you arrived at from the menu needs a way out that lands
+   where you came from, not on Snapshot: opening Privacy from Settings and then
+   being dropped on the dashboard loses your place for no reason. */
+function BackBar({ to, onBack }) {
+  return (
+    <button
+      onClick={onBack}
+      style={{ background: P.surface, color: P.text, boxShadow: elev(1), borderRadius: R.pill }}
+      className="mb-4 inline-flex items-center gap-2 pl-3 pr-4 py-2.5 text-[15px] font-medium press"
+    >
+      <ChevronLeft size={18} /> Back to {to}
+    </button>
+  );
+}
+
 /* ================= the menu =================
    Everything you reach occasionally rather than live in: the two sections that
    came off the dock, your account, and the three documents anyone handing a
@@ -3770,7 +3919,7 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
 
    A sheet rather than a dropdown, because on a phone a dropdown anchored to a
    corner either runs off the screen or shrinks its own targets. */
-function MenuSheet({ onClose, onGo, onProfile, onLegal, tab, setupPending }) {
+function MenuSheet({ onClose, onGo, tab, setupPending }) {
   useEffect(() => {
     const esc = (e) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", esc);
@@ -3780,21 +3929,21 @@ function MenuSheet({ onClose, onGo, onProfile, onLegal, tab, setupPending }) {
   const Item = ({ icon: Icon, label, hint, onClick, active, dot }) => (
     <button
       onClick={onClick}
-      style={{ background: active ? P.surface2 : "transparent", borderRadius: 14 }}
-      className="w-full flex items-center gap-3.5 px-3 py-3.5 text-left"
+      style={{ background: active ? P.surface2 : "transparent", borderRadius: 16 }}
+      className="w-full flex items-center gap-4 px-3 py-4 text-left press"
     >
       <span
-        style={{ background: active ? P.brass : P.surface2, color: active ? P.onbrass : P.muted, borderRadius: 11 }}
-        className="w-9 h-9 flex items-center justify-center shrink-0 relative"
+        style={{ background: active ? P.brass : P.surface2, color: active ? P.onbrass : P.muted, borderRadius: 13 }}
+        className="w-11 h-11 flex items-center justify-center shrink-0 relative"
       >
-        <Icon size={17} />
+        <Icon size={19} />
         {dot && (
           <span aria-hidden style={{ position: "absolute", top: 4, right: 4, width: 7, height: 7, borderRadius: "50%", background: P.brass }} />
         )}
       </span>
       <span className="flex-1 min-w-0">
-        <span style={{ color: P.text }} className="text-[16px] block">{label}</span>
-        {hint && <span style={{ color: P.faint }} className="text-[13.5px] block truncate">{hint}</span>}
+        <span style={{ color: P.text }} className="text-[17px] block">{label}</span>
+        {hint && <span style={{ color: P.faint }} className="text-[14px] block truncate">{hint}</span>}
       </span>
       <ChevronRight size={16} style={{ color: P.faint }} className="shrink-0" />
     </button>
@@ -3802,28 +3951,43 @@ function MenuSheet({ onClose, onGo, onProfile, onLegal, tab, setupPending }) {
 
   return (
     <div
-      className="modal-overlay fixed inset-0 z-50 flex items-start justify-end p-3 sm:p-4"
+      className="modal-overlay fixed inset-0 z-50 flex items-stretch justify-end lg:items-start lg:p-4"
       style={{ background: P.overlay }}
       onClick={onClose}
     >
+      {/* Full screen on a phone. A 320px card floating in a corner is a desktop
+          shape: it wastes the screen, shrinks its own targets, and reads as an
+          interruption rather than a place you have gone. */}
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Menu"
         onClick={(e) => e.stopPropagation()}
-        style={{
-          background: P.surface, boxShadow: elev(3), borderRadius: R.panel,
-          marginTop: "max(8px, env(safe-area-inset-top))",
-          maxHeight: "calc(100dvh - max(24px, env(safe-area-inset-top)) - 24px)",
-        }}
-        className="modal-panel w-full max-w-sm overflow-y-auto"
+        style={{ background: P.surface, boxShadow: elev(3) }}
+        className="menu-panel w-full lg:max-w-sm overflow-y-auto"
       >
-        <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-2">
-          <h3 style={{ fontFamily: SERIF }} className="text-xl">Menu</h3>
-          <button onClick={onClose} aria-label="Close" style={{ color: P.muted }} className="p-1.5"><X size={18} /></button>
+        <div
+          className="flex items-center justify-between gap-3 px-5 pb-3 sticky top-0 z-10"
+          style={{
+            paddingTop: "max(18px, env(safe-area-inset-top))",
+            background: P.surface,
+            borderBottom: `1px solid ${P.line}`,
+          }}
+        >
+          <h3 style={{ fontFamily: SERIF }} className="text-2xl lg:text-xl">Menu</h3>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            style={{ background: P.surface2, color: P.text, borderRadius: 14 }}
+            className="w-11 h-11 flex items-center justify-center shrink-0 press"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <div className="px-2 pb-2">
+          <Item icon={Landmark} label="Tax pack" hint="A year's figures, and every receipt behind them"
+            active={tab === "taxpack"} onClick={() => onGo("taxpack")} />
           <Item icon={BarChart3} label="Reports" hint="Statements and exports for any period"
             active={tab === "reports"} onClick={() => onGo("reports")} />
           <Item icon={Plug} label="Connectors" hint="Bank feed and tax filing"
@@ -3834,7 +3998,8 @@ function MenuSheet({ onClose, onGo, onProfile, onLegal, tab, setupPending }) {
           <div style={{ color: P.faint }} className="text-[13.5px]">You</div>
         </div>
         <div className="px-2 pb-2">
-          <Item icon={User} label="Profile" hint="Email, name, and password" onClick={onProfile} />
+          <Item icon={User} label="Profile" hint="Email, name, and password"
+            active={tab === "profile"} onClick={() => onGo("profile")} />
           <Item icon={SettingsIcon} label="Settings" hint="Ledgers, appearance, and setup"
             active={tab === "settings"} onClick={() => onGo("settings")} dot={setupPending} />
         </div>
@@ -3844,9 +4009,11 @@ function MenuSheet({ onClose, onGo, onProfile, onLegal, tab, setupPending }) {
         </div>
         <div className="px-2 pb-4">
           <Item icon={Shield} label="How your financial data is handled" hint="Bank access, storage, and who can see it"
-            onClick={() => onLegal("data")} />
-          <Item icon={FileText} label="Privacy policy" onClick={() => onLegal("privacy")} />
-          <Item icon={FileText} label="Terms of use" onClick={() => onLegal("terms")} />
+            active={tab === "legal-data"} onClick={() => onGo("legal-data")} />
+          <Item icon={FileText} label="Privacy policy"
+            active={tab === "legal-privacy"} onClick={() => onGo("legal-privacy")} />
+          <Item icon={FileText} label="Terms of use"
+            active={tab === "legal-terms"} onClick={() => onGo("legal-terms")} />
         </div>
       </div>
     </div>
@@ -3859,7 +4026,7 @@ function MenuSheet({ onClose, onGo, onProfile, onLegal, tab, setupPending }) {
    build: Plaid holds the bank credentials, Supabase holds the rows, row level
    security scopes them to the signed-in user, and receipts sit in a private
    bucket keyed by user id. */
-function LegalSheet({ which, onClose }) {
+function LegalPage({ which }) {
   const APP_SITE = "https://brasstally.com";
   const copy = {
     data: {
@@ -3892,20 +4059,10 @@ function LegalSheet({ which, onClose }) {
   }[which];
 
   return (
-    <div className="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={copy.title}
-        onClick={(e) => e.stopPropagation()}
-        style={{ background: P.surface, boxShadow: elev(3), borderRadius: R.panel, maxHeight: "86dvh" }}
-        className="modal-panel w-full max-w-lg overflow-y-auto"
-      >
-        <div className="flex items-start justify-between gap-3 px-6 pt-6 pb-2">
-          <h3 style={{ fontFamily: SERIF }} className="text-xl">{copy.title}</h3>
-          <button onClick={onClose} aria-label="Close" style={{ color: P.muted }} className="p-1.5 shrink-0"><X size={18} /></button>
-        </div>
-        <div className="px-6 pb-6">
+    <div className="space-y-6 stagger">
+      <section style={cardStyle()} className="p-5 max-w-2xl">
+        <h3 style={{ fontFamily: SERIF }} className="text-2xl mb-2">{copy.title}</h3>
+        <div>
           {copy.body.map(([h, b]) => (
             <div key={h} className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
               <div style={{ color: P.text }} className="text-[16px] mb-1">{h}</div>
@@ -3922,7 +4079,314 @@ function LegalSheet({ which, onClose }) {
             {copy.linkLabel} <ExternalLink size={15} />
           </a>
         </div>
+      </section>
+    </div>
+  );
+}
+
+/* ================= the tax pack =================
+   One page an accountant can be sent: the period's figures, the breakdown by
+   tax line, and every receipt behind them in one list.
+
+   It lives in the menu rather than inside Reports because it is a destination
+   for someone who is not you. "Open the tax pack" is a sentence you can say to
+   a bookkeeper; "go to Reports, pick a period, scroll to the fourth block" is
+   not.
+
+   Nothing here is a new calculation. Every figure comes from lib/tax.js, which
+   is tested, so this page and a single receipt's breakdown can never disagree. */
+function TaxPack({ data, month, openPreview, ledgerName }) {
+  const YEARS = useMemo(() => {
+    const ys = new Set((data.transactions || []).map((t) => (t.date || "").slice(0, 4)).filter(Boolean));
+    ys.add(month.slice(0, 4));
+    return [...ys].sort().reverse();
+  }, [data.transactions, month]);
+
+  const [year, setYear] = useState(month.slice(0, 4));
+  const [quarter, setQuarter] = useState("all");   // all | q1..q4
+
+  const inPeriod = (dateStr) => {
+    if (!dateStr || dateStr.slice(0, 4) !== year) return false;
+    if (quarter === "all") return true;
+    const m = Number(dateStr.slice(5, 7));
+    return m >= (Number(quarter[1]) - 1) * 3 + 1 && m <= Number(quarter[1]) * 3;
+  };
+
+  const txs = useMemo(
+    () => (data.transactions || []).filter((t) => inPeriod(t.date) && !t.plExclude),
+    [data.transactions, year, quarter]
+  );
+
+  const policy = useMemo(() => ({
+    capitalThreshold: Number(data?.ledger?.capitalThreshold ?? TAX_POLICY.capitalThreshold),
+    province: data?.ledger?.province || TAX_POLICY.province,
+    gstRegistered: data?.ledger?.gstRegistered ?? TAX_POLICY.gstRegistered,
+  }), [data?.ledger]);
+
+  const sum = useMemo(() => summarise(txs, policy), [txs, policy]);
+
+  /* The receipt vault. Every entry in the period with a file behind it, plus
+     the ones without, because a deduction with no receipt is the thing an
+     auditor asks about first and the gap should be visible here rather than
+     discovered later. */
+  const withDoc = txs.filter((t) => t.attachmentId);
+  const withoutDoc = txs.filter((t) => !t.attachmentId && t.type === "expense");
+  const missingTax = txs.filter((t) => t.type === "expense" && !t.taxAmount && t.taxCode !== "zero" && t.taxCode !== "exempt");
+
+  const label = quarter === "all" ? year : `${quarter.toUpperCase()} ${year}`;
+
+  const exportPack = () => {
+    const rows = [
+      ["Brasstally tax pack", ledgerName, label],
+      [],
+      ["Summary"],
+      ["Revenue", sum.revenue.toFixed(2)],
+      ["GST/HST collected on sales", sum.collected.toFixed(2)],
+      ["Expenses, gross", sum.expensesGross.toFixed(2)],
+      ["Deductible after credits and limits", sum.deductible.toFixed(2)],
+      ["Input tax credits claimable", sum.itc.toFixed(2)],
+      ["Net tax position (positive is owing)", sum.netTaxPosition.toFixed(2)],
+      ["Meals and entertainment, gross", sum.mealsGross.toFixed(2)],
+      ["Capitalised, not expensed", sum.capitalTotal.toFixed(2)],
+      ["Paid from credit pools", sum.creditsPaid.toFixed(2)],
+      [],
+      ["By tax line"],
+      ["GIFI", "Name", "Entries", "Gross", "Deductible", "Tax paid", "Credit claimable"],
+      ...sum.lines.map((l) => [l.code, l.name, l.count, l.gross.toFixed(2), l.deductible.toFixed(2), l.tax.toFixed(2), l.itc.toFixed(2)]),
+      [],
+      ["Capital additions"],
+      ["Description", "Amount", "CCA class", "Class name"],
+      ...sum.capitalItems.map((c) => [c.description, Number(c.amount).toFixed(2), c.class, c.name]),
+      [],
+      ["Every entry"],
+      ["Date", "Description", "Category", "Type", "Gross", "Tax", "Code", "Capital", "GIFI", "Deductible", "Credit", "Receipt"],
+      ...txs.map((t) => {
+        const d = deriveTreatment(t, policy);
+        return [
+          t.date, t.description, t.category, t.type,
+          Number(t.amount).toFixed(2), Number(t.taxAmount || 0).toFixed(2), t.taxCode || "none",
+          t.capital ? "yes" : "no", d.gifi.code, d.deductibleAmount.toFixed(2), d.recoverable.toFixed(2),
+          t.attachmentName || (t.attachmentId ? "on file" : "MISSING"),
+        ];
+      }),
+      [],
+      ["Prepared by Brasstally from the entries in this ledger. Figures are a starting point for a preparer, not advice."],
+      [`Capitalisation policy: assets of ${policy.capitalThreshold} or more with a useful life beyond one year are capitalised.`],
+      [`GST/HST registered: ${policy.gstRegistered ? "yes" : "no"} · Province: ${policy.province}`],
+    ];
+    downloadCSV(`brasstally-tax-pack-${ledgerName.replace(/\s+/g, "-")}-${label.replace(/\s+/g, "-")}.csv`, rows);
+  };
+
+  const Figure = ({ label: l, value, tone, foot }) => (
+    <div style={cardStyle()} className="p-5 min-w-0">
+      <div style={{ color: P.text }} className="text-[15px] mb-2.5">{l}</div>
+      <div style={{ fontFamily: MONO, color: tone || P.text }} className="text-[26px] k-fig tabular-nums leading-none truncate">
+        {fmt0(value)}
       </div>
+      {foot && <div style={{ color: P.faint }} className="text-[14px] mt-3 leading-snug">{foot}</div>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6 stagger">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 style={{ fontFamily: SERIF }} className="text-2xl">Tax pack</h2>
+          <p style={{ color: P.muted }} className="text-[15px]">
+            Everything a preparer needs for {label}, and every receipt behind it.
+          </p>
+        </div>
+        <button
+          onClick={exportPack}
+          style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
+        >
+          <Download size={16} /> Export the pack
+        </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {YEARS.map((y) => (
+          <button
+            key={y}
+            onClick={() => setYear(y)}
+            style={{
+              background: y === year ? P.brass : P.surface, color: y === year ? P.onbrass : P.muted,
+              boxShadow: y === year ? "none" : elev(1), borderRadius: R.pill,
+            }}
+            className="px-4 py-2.5 text-[15px] font-medium press"
+          >
+            {y}
+          </button>
+        ))}
+        <span style={{ width: 1, height: 24, background: P.line }} className="mx-1 hidden sm:block" />
+        {[["all", "Full year"], ["q1", "Q1"], ["q2", "Q2"], ["q3", "Q3"], ["q4", "Q4"]].map(([k, l]) => (
+          <button
+            key={k}
+            onClick={() => setQuarter(k)}
+            style={{
+              background: k === quarter ? P.surface2 : "transparent",
+              color: k === quarter ? P.text : P.faint, borderRadius: R.pill,
+            }}
+            className="px-3.5 py-2.5 text-[14.5px] press"
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {txs.length === 0 ? (
+        <EmptyState icon={FileText} title={`Nothing in ${label}`}>
+          Entries dated in this period will show here with their tax treatment.
+        </EmptyState>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Figure label="Revenue" value={sum.revenue} tone={P.credit}
+              foot={sum.collected > 0 ? `${fmt0(sum.collected)} of HST collected on it` : "no tax collected"} />
+            <Figure label="Deductible expenses" value={sum.deductible} tone={P.debit}
+              foot={`from ${fmt0(sum.expensesGross)} spent`} />
+            <Figure label="Credits claimable" value={sum.itc} tone={P.credit}
+              foot="GST/HST paid on business inputs" />
+            <Figure
+              label={sum.netTaxPosition >= 0 ? "Net tax owing" : "Net tax refundable"}
+              value={Math.abs(sum.netTaxPosition)}
+              tone={sum.netTaxPosition >= 0 ? P.debit : P.credit}
+              foot="collected, less credits claimable"
+            />
+          </div>
+
+          {sum.flags.length > 0 && (
+            <div style={cardStyle()} className="p-5">
+              <h3 style={{ fontFamily: SERIF }} className="text-xl mb-1">Before you send it</h3>
+              <p style={{ color: P.muted }} className="text-[15px] mb-3">
+                Not errors. The things a preparer would otherwise have to ask you about.
+              </p>
+              {sum.flags.map((f) => (
+                <div key={f.text} className="flex items-start gap-3 py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+                  <span aria-hidden style={{ background: f.level === "warn" ? P.debit : P.brass, width: 7, height: 7, borderRadius: "50%", marginTop: 7 }} className="shrink-0" />
+                  <span style={{ color: P.text }} className="text-[15px] leading-snug">{f.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={cardStyle()} className="p-5">
+            <h3 style={{ fontFamily: SERIF }} className="text-xl mb-1">By tax line</h3>
+            <p style={{ color: P.muted }} className="text-[15px] mb-4">
+              Your categories, grouped onto the GIFI lines a T2 uses.
+            </p>
+            <div className="overflow-x-auto -mx-1 px-1">
+              <table className="w-full" style={{ borderCollapse: "collapse", minWidth: 520 }}>
+                <thead>
+                  <tr style={{ color: P.faint }} className="text-[13.5px] text-left">
+                    <th className="pb-2 font-normal">Line</th>
+                    <th className="pb-2 font-normal text-right">Gross</th>
+                    <th className="pb-2 font-normal text-right">Deductible</th>
+                    <th className="pb-2 font-normal text-right">Tax paid</th>
+                    <th className="pb-2 font-normal text-right">Credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sum.lines.map((l) => (
+                    <tr key={l.code} style={{ borderTop: `1px solid ${P.line}` }}>
+                      <td className="py-3 pr-3">
+                        <span style={{ color: P.text }} className="text-[15px] block">{l.name}</span>
+                        <span style={{ color: P.faint, fontFamily: MONO }} className="text-[13px]">
+                          {l.code} · {l.count} {l.count === 1 ? "entry" : "entries"}
+                        </span>
+                      </td>
+                      <td style={{ fontFamily: MONO, color: P.text }} className="py-3 text-right tabular-nums text-[15px]">{fmt0(l.gross)}</td>
+                      <td style={{ fontFamily: MONO, color: P.text }} className="py-3 text-right tabular-nums text-[15px]">{fmt0(l.deductible)}</td>
+                      <td style={{ fontFamily: MONO, color: P.faint }} className="py-3 text-right tabular-nums text-[15px]">{l.tax ? fmt0(l.tax) : "·"}</td>
+                      <td style={{ fontFamily: MONO, color: l.itc ? P.credit : P.faint }} className="py-3 text-right tabular-nums text-[15px]">{l.itc ? fmt0(l.itc) : "·"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {sum.capitalItems.length > 0 && (
+              <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${P.line}` }}>
+                <div style={{ color: P.text }} className="text-[15px] mb-2">Capital additions, for the CCA schedule</div>
+                {sum.capitalItems.map((c, i) => (
+                  <div key={i} className="flex justify-between gap-3 py-1.5 text-[14.5px]">
+                    <span style={{ color: P.muted }} className="min-w-0 truncate">{c.description} · class {c.class}</span>
+                    <span style={{ fontFamily: MONO, color: P.text }} className="tabular-nums shrink-0">{fmt0(c.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={cardStyle()} className="p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-3 mb-1">
+              <h3 style={{ fontFamily: SERIF }} className="text-xl">Receipts on file</h3>
+              <span style={{ color: P.faint }} className="text-[14px]">
+                {withDoc.length} of {txs.length} entries have one
+              </span>
+            </div>
+            <p style={{ color: P.muted }} className="text-[15px] mb-4">
+              Tap one to open it. The file is the evidence behind the deduction.
+            </p>
+
+            {withDoc.length === 0 && (
+              <div style={{ color: P.faint }} className="text-[15px]">No files attached in this period yet.</div>
+            )}
+            {withDoc.map((t) => {
+              const d = deriveTreatment(t, policy);
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => openPreview(t.attachmentId, t.attachmentName)}
+                  className="w-full flex items-center gap-3.5 py-3 text-left press"
+                  style={{ borderTop: `1px solid ${P.line}` }}
+                >
+                  <span style={{ background: P.surface2, color: P.muted, borderRadius: 11 }}
+                    className="w-11 h-11 flex items-center justify-center shrink-0">
+                    <Paperclip size={17} />
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span style={{ color: P.text }} className="text-[15px] block truncate">{t.description}</span>
+                    <span style={{ color: P.faint }} className="text-[13.5px] block truncate">
+                      {t.date} · {d.gifi.code} {d.gifi.name}
+                      {t.taxAmount ? ` · ${fmt0(t.taxAmount)} tax` : ""}
+                      {t.capital ? ` · capital class ${d.capital?.class}` : ""}
+                    </span>
+                  </span>
+                  <span style={{ fontFamily: MONO, color: t.type === "income" ? P.credit : P.text }}
+                    className="tabular-nums text-[15px] shrink-0">
+                    {fmt0(t.amount)}
+                  </span>
+                </button>
+              );
+            })}
+
+            {(withoutDoc.length > 0 || missingTax.length > 0) && (
+              <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${P.line}` }}>
+                {withoutDoc.length > 0 && (
+                  <div style={{ color: P.muted }} className="text-[14.5px] leading-snug mb-1.5">
+                    {withoutDoc.length} {withoutDoc.length === 1 ? "expense has" : "expenses have"} no file attached,
+                    {" "}{fmt0(withoutDoc.reduce((a, b) => a + b.amount, 0))} in total. A deduction without a receipt is
+                    the first thing an auditor asks about.
+                  </div>
+                )}
+                {missingTax.length > 0 && (
+                  <div style={{ color: P.muted }} className="text-[14.5px] leading-snug">
+                    {missingTax.length} {missingTax.length === 1 ? "entry has" : "entries have"} no tax recorded. Any
+                    GST or HST on those is unclaimed until the amount is entered.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <p style={{ color: P.faint }} className="text-[14px] leading-relaxed max-w-2xl">
+            Prepared from the entries in this ledger. Figures are a starting point for you or your accountant, not
+            advice. Your capitalisation policy: assets of {fmt0(policy.capitalThreshold)} or more with a useful life
+            beyond one year are capitalised. GST/HST registered: {policy.gstRegistered ? "yes" : "no"}.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -4614,6 +5078,7 @@ const DEFAULT_ASKS = [
 function Capture({
   data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, consolidation, bankConns,
   insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, brief, onBriefUsed, apply, onGo,
+  onSettleFromReceipt, taxPolicy = TAX_POLICY,
 }) {
   // A gap that's already been consolidated isn't news — opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
@@ -4787,7 +5252,23 @@ function Capture({
         { maxTokens: 2048, schema: extractionSchema(data.categories) }
       );
       const draft = normalizeDraft(raw, { categories: data.categories, ledgerKind: data.ledger.kind });
-      push({ role: "assistant", text: draft.note || "Here's what I read, confirm or adjust:", draft, att });
+
+      /* Does this receipt pay something already on the books?
+         Without this the receipt became a second entry while the payable stayed
+         open, so "You owe" overstated by the amount you had just paid, and the
+         settle flow with its required receipt was skipped. The receipt is the
+         evidence that flow asks for. */
+      const match = draft.type === "expense" ? findOpenPayable(data, draft) : null;
+      if (match) {
+        push({
+          role: "assistant",
+          text: `That looks like the ${fmt(match.amount)} you owe ${match.party}${match.description ? ` for ${match.description}` : ""}. Settling it files this receipt against the bill, so it is not counted twice.`,
+          settleSuggestion: { item: match, draft },
+          att,
+        });
+      } else {
+        push({ role: "assistant", text: draft.note || "Here's what I read, confirm or adjust:", draft, att });
+      }
     } catch (e) {
       push({ role: "assistant", text: `I couldn't read that one. ${friendlyError(e)}. Try a clearer file, or type the details (e.g. “Figma $45 on March 10”).` });
     }
@@ -4938,7 +5419,30 @@ function Capture({
                 </div>
               )}
               {m.nudge && <NudgeCard nudge={m.nudge} data={data} apply={apply} onDone={(line) => push({ role: "assistant", text: line, done: true })} />}
-              {m.draft && <DraftCard draft={m.draft} att={m.att} data={data} addSub={addSub} onSave={saveDraft} />}
+              {m.settleSuggestion && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <button
+                    onClick={() => onSettleFromReceipt(m.settleSuggestion, m.att)}
+                    style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                    className="px-4 py-2.5 text-[15px] font-medium press"
+                  >
+                    Settle that bill
+                  </button>
+                  <button
+                    onClick={() => push({ role: "assistant", text: "Filing it as a new entry instead.", draft: m.settleSuggestion.draft, att: m.att })}
+                    style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                    className="px-4 py-2.5 text-[15px] font-medium press"
+                  >
+                    No, a separate entry
+                  </button>
+                </div>
+              )}
+              {m.draft && (
+                <>
+                  <DraftCard draft={m.draft} att={m.att} data={data} addSub={addSub} onSave={saveDraft} />
+                  <TaxLine draft={m.draft} policy={taxPolicy} />
+                </>
+              )}
               {m.proposal && <ProposalCard proposal={m.proposal} data={data} apply={apply} />}
               {m.link && (
                 <div className="mt-2">
@@ -5960,7 +6464,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -6041,7 +6545,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
       )}
       <div className="grid md:grid-cols-2 gap-6">
         <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
-        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" />
+        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} />
       </div>
     </div>
   );
@@ -6096,9 +6600,19 @@ function ARFields({ kind, f, set, data, addSub, addCredit }) {
   );
 }
 
-function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action }) {
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed }) {
   const [adding, setAdding] = useState(false);
   const [settleFor, setSettleFor] = useState(null);   // item awaiting the confirm dialog
+
+  /* A receipt arrived from Tally that pays one of these. Open the confirm on
+     it, with the receipt already in hand, so the required-evidence step is
+     satisfied by the thing that started the flow. */
+  useEffect(() => {
+    if (!receiptSettle || kind !== "payables") return;
+    const live = items.find((i) => i.id === receiptSettle.item.id && i.status === "open");
+    if (live) setSettleFor({ ...live, __receipt: receiptSettle.att, __draft: receiptSettle.draft });
+    onReceiptSettleUsed?.();
+  }, [receiptSettle, kind, items, onReceiptSettleUsed]);
   const [openGroups, setOpenGroups] = useState({});   // party -> expanded?
   const [noteFor, setNoteFor] = useState(null);
   const [editingId, setEditingId] = useState(null);

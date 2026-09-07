@@ -570,3 +570,15 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
 @media (prefers-reduced-motion: reduce) {
   .press, .press:active { transition: none; transform: none; }
 }
+
+/* The menu is a place on a phone and a panel on a desktop. Full bleed below
+   lg, with the header sticky so Close stays reachable in a long list. */
+.menu-panel { height: 100dvh; border-radius: 0; }
+.menu-panel > :last-child { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+@media (min-width: 1024px) {
+  .menu-panel {
+    height: auto;
+    max-height: calc(100dvh - 32px);
+    border-radius: 24px;
+  }
+}

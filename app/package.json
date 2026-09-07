@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "npm run check && vite build",
     "preview": "vite preview",
-    "check": "node ../scripts/check-tdz.mjs src/App.jsx && node ../scripts/check-css.mjs"
+    "check": "node ../scripts/check-tdz.mjs src/App.jsx && node ../scripts/check-css.mjs && node ../scripts/check-handlers.mjs src/App.jsx",
+    "test": "node ../scripts/tests-tax.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
