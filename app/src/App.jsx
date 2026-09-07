@@ -1766,13 +1766,13 @@ function Ledger({ onSignOut }) {
       <div className="flex-1 min-w-0">
       {/* The ledger is a reading surface, so it stops widening past the point
           where a row's date and its amount stop being one glance apart. */}
-      <div className="px-4 w-full mx-auto max-w-[1180px]" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
+      <div className="app-inner w-full mx-auto max-w-[1180px]">
         {/* ===== header ===== */}
         {/* The brand eyebrow above the ledger name was two pieces of branding
             stacked before anything useful, and on a phone it landed under the
             status bar. The ledger name is enough; the mark is on the dock. */}
-        <header className="pt-3 pb-4 lg:pt-4 lg:pb-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
+        <header className="pt-1 pb-4 lg:pt-4 lg:pb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0 basis-full sm:basis-auto">
             <div className="flex items-center gap-3 min-w-0 lg:hidden">
               <div className="relative min-w-0">
                 <button
