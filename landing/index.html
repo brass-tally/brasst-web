@@ -16,6 +16,10 @@
   /* Paint the stored theme before anything renders. The key is shared with the
      app at /app, so crossing the boundary never flips the lights. */
   (function () {
+    /* A marketing page has no state worth restoring. Coming back to it halfway
+       down, with the nav already scrolled past, reads as a broken page rather
+       than as a courtesy. */
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     /* The landing page always opens light.
        It used to read the theme the app had stored, which meant someone who
        had chosen night mode inside their ledger arrived at the marketing site
@@ -57,10 +61,14 @@ html[data-t="dark"]{
   --glass:rgba(16,14,12,.84);
 }
 *{box-sizing:border-box;margin:0}
-html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+html{scroll-behavior:smooth;scroll-padding-top:76px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 body{background:var(--bg);color:var(--text);font-family:'Inter',ui-sans-serif,system-ui,sans-serif;
  font-size:17px;line-height:1.7;letter-spacing:-.011em;font-feature-settings:'cv11','ss01';
- overflow-x:hidden;transition:background-color .35s,color .35s}
+ /* `clip`, not `hidden`. An ancestor with overflow:hidden makes every
+    descendant's position:sticky stop working, which is why the top bar scrolled
+    away and was missing after a refresh restored your place. `clip` prevents the
+    sideways scroll without creating a scroll container. */
+ overflow-x:clip;transition:background-color .35s,color .35s}
 a{color:inherit;text-decoration:none}
 button,input{font:inherit;color:inherit}
 button{background:none;border:none;cursor:pointer}
@@ -333,8 +341,7 @@ img, svg, table { max-width: 100%; }
       <span class="name">Brasstally</span>
     </a>
     <div class="navlinks">
-      <a href="#platform">Platform</a><a href="#tour">Product</a>
-      <a href="#connectors">Connectors</a><a href="#tax">Tax</a><a href="#manifesto">Manifesto</a>
+      <a href="#platform">Why</a><a href="#tour">How it works</a><a href="#tax">Tax</a><a href="#honest">Plainly</a>
     </div>
     <div class="spacer"></div>
     <button class="iconbtn" id="themetoggle" aria-label="Switch between day and night">
@@ -347,11 +354,11 @@ img, svg, table { max-width: 100%; }
 
 <header class="wrap hero" id="top">
   <div>
-    <div class="eyebrow rv">The calm ledger</div>
+    <div class="eyebrow rv">Bookkeeping that keeps up with you</div>
     <h1 class="rv d1">Books for people who run a company <em>and</em> a life.</h1>
-    <p class="sub rv d2">One ledger for the business, one for the person running it. Photograph a receipt and it
-      files itself, settles the bill it pays, and works out the tax on it. By March the pack your accountant needs
-      is already written.</p>
+    <p class="sub rv d2">Photograph a receipt at the counter and it files itself, settles the bill it was paying,
+      and works out the tax on it. One ledger for the company, one for the person running it. By March the pack
+      your accountant needs is already written.</p>
     <div class="rv d3">
       <div data-magic>
         <div class="magicrow">
@@ -419,44 +426,50 @@ img, svg, table { max-width: 100%; }
 
 <section class="block wrap" id="platform">
   <div class="sechead rv">
-    <div class="num-lab">01 · Platform</div>
-    <h2>Built for the founder who is also a person</h2>
+    <div class="num-lab">01 &middot; Why this exists</div>
+    <h2>Nobody starts a company to do bookkeeping</h2>
+    <p>You started it to build the thing. The books are what happened to you afterwards, and they have been
+      quietly getting worse ever since.</p>
   </div>
   <div class="grid">
     <div class="fcard rv">
-      <div class="fviz"><span class="mini" style="width:54px;background:var(--credit)"></span>
-        <span class="mini" style="width:34px;background:var(--debit)"></span></div>
-      <h3>Two ledgers, one brain</h3><p>Business and personal, one tap apart.</p></div>
+      <div class="fviz"><span>&#128188;</span><span>four of them, actually</span></div>
+      <h3>The receipt in your jacket</h3>
+      <p>You paid for it. You meant to file it. It is in a pocket with four others, and by March you will not
+        remember what half of them were for, so you will not claim them.</p>
+    </div>
     <div class="fcard rv d1">
-      <div class="fviz"><span>receipt</span><span>&rarr;</span><span style="color:var(--credit)">bill settled</span></div>
-      <h3>A receipt settles the bill</h3><p>Snap one for something you already owed and it pairs them, so it is never counted twice.</p></div>
+      <div class="fviz"><span>sent in June</span><span>&middot;</span><span style="color:var(--debit)">it is September</span></div>
+      <h3>The invoice nobody chased</h3>
+      <p>You know roughly what you are owed. Roughly is not a number you can put in an email, so the email does
+        not get sent, and the invoice ages another month.</p>
+    </div>
     <div class="fcard rv d2">
-      <div class="fviz"><span>Trip - Columbia</span><span style="color:var(--debit)">$3,000</span></div>
-      <h3>Payables group themselves</h3><p>One name, one card, one total.</p></div>
-    <div class="fcard rv">
-      <div class="fviz"><span style="color:var(--credit)">&#9679;</span><span>RBC connected</span></div>
-      <h3>Your bank, in the app</h3><p>Plaid inside. Every sync is a review.</p></div>
-    <div class="fcard rv d1">
-      <div class="fviz"><span>HST read</span><span>&middot;</span><span style="color:var(--accentText)">8523 &middot; 50%</span></div>
-      <h3>Tax worked out per receipt</h3><p>The GST or HST off the page, the CRA line, and what is actually claimable.</p></div>
-    <div class="fcard rv d2">
-      <div class="fviz"><span class="mini" style="width:72px;background:var(--line);position:relative;overflow:hidden">
-        <span class="mini" style="position:absolute;left:0;top:0;width:22%;height:100%;background:var(--accent)"></span></span>
-        <span>$4,690 left</span></div>
-      <h3>Credits and calendar</h3><p>Non-cash tracked, next 30 days visible.</p></div>
+      <div class="fviz"><span>one card</span><span>&middot;</span><span>two lives</span></div>
+      <h3>The card that pays for both</h3>
+      <p>Groceries and a cloud bill on the same statement. Separating them a year later is an evening you will
+        never get back, and the guesswork ends up on a tax return.</p>
+    </div>
   </div>
+  <p style="color:var(--muted);font-size:17px;margin-top:26px;max-width:44rem">
+    None of that is a discipline problem. It is what happens when the tool expects you to be a bookkeeper on top
+    of everything else you are already doing.
+  </p>
 </section>
 
 <section class="block wrap" id="tour">
   <div class="sechead rv">
-    <div class="num-lab">02 · The product</div>
-    <h2>Four moments, no busywork</h2>
-    <p>Not a chatbot bolted onto a spreadsheet. Tally sits inside the moments where bookkeeping actually happens.</p>
+    <div class="num-lab">02 &middot; An ordinary Tuesday</div>
+    <h2>What actually happens, in the moment it happens</h2>
+    <p>Not a workflow. Four small things that occur on a normal day, and what the ledger does about each one
+      without being asked twice.</p>
   </div>
   <div class="rv">
     <div class="tourpills" id="tourpills">
-      <button class="press on" data-t="capture">Capture</button><button class="press" data-t="payables">Payables</button>
-      <button class="press" data-t="bank">Bank feed</button><button class="press" data-t="tax">Tax pack</button>
+      <button class="press on" data-t="capture">You buy something</button>
+      <button class="press" data-t="payables">A bill comes due</button>
+      <button class="press" data-t="bank">The bank moves</button>
+      <button class="press" data-t="tax">March arrives</button>
     </div>
     <div class="stage" id="stage"></div>
   </div>
@@ -464,66 +477,99 @@ img, svg, table { max-width: 100%; }
 
 <section class="block wrap" id="connectors">
   <div class="sechead rv">
-    <div class="num-lab">03 · Connectors</div>
-    <h2>The outside world, honestly handled</h2>
-    <p>Banks connect through Plaid's secure layer, so your banking password never touches Brasstally. And because
-      no Canadian tax software exposes a filing API, the filing connector does the honest version: it prepares the
-      exact package your certified software or accountant needs, then keeps the return on rails.</p>
+    <div class="num-lab">03 &middot; The month closing</div>
+    <h2>A ledger should tell you what to do, not just what happened</h2>
+    <p>Every accounting tool can show you a number. The harder question, and the one that actually costs you
+      money when it goes unanswered, is which of them needs you today.</p>
   </div>
-  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+  <div class="grid">
     <div class="fcard rv">
-      <div class="fviz"><span style="color:var(--credit)">RBC Royal Bank</span><span>·</span><span>last synced today</span></div>
-      <h3>Plaid bank feed</h3>
-      <p>Sign in on your bank's own screen. Each ledger links its own accounts, and syncs arrive as a review rather
-        than a surprise.</p></div>
+      <div class="fviz"><span style="color:var(--debit)">&#9679;</span><span>4 things waiting</span></div>
+      <h3>What needs deciding</h3>
+      <p>Two invoices past due, a bank that disagrees with the books by $1,397, a category over budget with a
+        week to go. Ranked, in a sentence each, with a way in.</p>
+    </div>
     <div class="fcard rv d1">
-      <div class="fviz" style="display:block">
-        <div class="pipe" style="margin:0">
-          <div><div class="barr" style="background:var(--accent)"></div><span>Draft</span></div>
-          <div><div class="barr" style="background:var(--accent)"></div><span>Sent</span></div>
-          <div><div class="barr" style="background:var(--line2)"></div><span>Filed</span></div>
-          <div><div class="barr" style="background:var(--line2)"></div><span>Assessed</span></div>
-        </div></div>
-      <h3>Filing connector</h3>
-      <p>Pick your route, connect your software, and track the return from draft to assessed with the confirmation
-        number stored beside the books.</p></div>
+      <div class="fviz"><span style="color:var(--accentText)">60%</span><span>on track</span></div>
+      <h3>How close the month is to closed</h3>
+      <p>Five steps, and each one is ticked because the books say so, not because you remembered to tick it. A
+        checklist you mark by hand is just a second set of books that drifts from the first.</p>
+    </div>
+    <div class="fcard rv d2">
+      <div class="fviz"><span>&#9679;</span><span>RBC connected</span></div>
+      <h3>The bank, watching quietly</h3>
+      <p>Your bank feed arrives as a review, line by line, rather than a pile of entries you did not write. You
+        sign in on your bank's own screen; the password never comes near us.</p>
+    </div>
   </div>
 </section>
 
 <section class="block wrap" id="tax">
   <div class="sechead rv">
-    <div class="num-lab">04 · For your accountant</div>
-    <h2>The shoebox, already sorted</h2>
-    <p>Every receipt carries its own tax treatment from the moment it is filed, so the pack at year end is a page
-      you open rather than a weekend you lose.</p>
+    <div class="num-lab">04 &middot; The weekend you get back</div>
+    <h2>March, in an afternoon</h2>
+    <p>The work that turns a year of spending into something an accountant can file is mostly sorting and
+      arithmetic. It is done as you go, so the pack at the end is a page you open rather than a weekend you lose.</p>
   </div>
   <div class="grid">
     <div class="fcard rv">
-      <div class="fviz"><span>$113.00</span><span>→</span><span style="color:var(--credit)">$13.00 back</span></div>
-      <h3>The tax, off the page</h3>
-      <p>The GST or HST as printed, not calculated, because receipts round and a basket can mix rates. It knows the
-        provincial portion is not recoverable in BC or Saskatchewan.</p>
+      <div class="fviz"><span>$113.00</span><span>&rarr;</span><span style="color:var(--credit)">$13.00 back</span></div>
+      <h3>The tax, read off the page</h3>
+      <p>As printed, not calculated, because receipts round and a basket can mix rates. It knows the provincial
+        portion is not recoverable in BC or Saskatchewan, which is the sort of thing that quietly costs you.</p>
     </div>
     <div class="fcard rv d1">
-      <div class="fviz"><span style="color:var(--accentText)">8523</span><span>·</span><span>50%</span></div>
-      <h3>The rules, applied</h3>
-      <p>Meals halved on both the deduction and the credit, because CRA limits them together. A laptop over your
-        threshold goes to a capital class instead of quietly reducing this year's income.</p>
+      <div class="fviz"><span style="color:var(--accentText)">8523</span><span>&middot;</span><span>50%</span></div>
+      <h3>The rules, already applied</h3>
+      <p>Meals halved on the cost and the credit, because CRA limits them together. A laptop over your threshold
+        goes to a capital class instead of quietly inflating this year's deduction.</p>
     </div>
     <div class="fcard rv d2">
       <div class="fviz"><span style="color:var(--debit)">3 with no receipt</span></div>
-      <h3>The gaps, counted</h3>
-      <p>Expenses with nothing attached, and entries with no tax recorded. A deduction with no receipt is the first
-        thing an auditor asks about, and unclaimed tax is money left behind.</p>
+      <h3>The gaps, counted before they are asked about</h3>
+      <p>Expenses with nothing attached, and entries with no tax recorded. One is the first thing an auditor
+        asks about. The other is money you are entitled to and have not claimed.</p>
     </div>
   </div>
-  <p style="color:var(--faint);font-size:15px;margin-top:20px;max-width:44rem">
-    Preparation, not advice. Brasstally does the arithmetic and shows its working. Your accountant still signs it.
+  <p style="color:var(--muted);font-size:17px;margin-top:26px;max-width:44rem">
+    Your accountant still signs it. What changes is that they spend the hour on judgement instead of on sorting
+    your receipts into piles.
   </p>
 </section>
 
+<section class="block wrap" id="honest">
+  <div class="sechead rv">
+    <div class="num-lab">05 &middot; Plainly</div>
+    <h2>What it will not do</h2>
+    <p>Every tool in this category is enthusiastic about its strengths. Here are the limits, before you hand it
+      your bank feed rather than after.</p>
+  </div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+    <div class="fcard rv">
+      <h3>It is not an accountant</h3>
+      <p>It prepares and it shows its working. It does not give advice, and a draft return is a starting point
+        for a professional, not a substitute for one.</p>
+    </div>
+    <div class="fcard rv d1">
+      <h3>It cannot file for you</h3>
+      <p>No Canadian tax software exposes a filing API. Anyone claiming one-click filing is transmitting through
+        certified software you could have used directly. We prepare the package and track the return instead.</p>
+    </div>
+    <div class="fcard rv d2">
+      <h3>It never sees your bank password</h3>
+      <p>Connecting a bank opens Plaid, and you sign in on your bank's own screen. The token we receive can read
+        transactions. It cannot move money.</p>
+    </div>
+    <div class="fcard rv">
+      <h3>It does not sell anything about you</h3>
+      <p>No data sale, no advertising, and nobody here reads your ledger unless you ask us to look at something.
+        Your books export to CSV whenever you want them out.</p>
+    </div>
+  </div>
+</section>
+
 <section class="manifesto" id="manifesto">
-  <div class="num-lab" style="font-size:15px;font-weight:600;color:var(--accentText);margin-bottom:26px">05 · Manifesto</div>
+  <div class="num-lab" style="font-size:15px;font-weight:600;color:var(--accentText);margin-bottom:26px">06 · Manifesto</div>
   <div class="line">Bankers don't run my business.</div>
   <div class="line">Accountants don't run my life.</div>
   <div class="line">I run both.</div>
@@ -635,41 +681,42 @@ img, svg, table { max-width: 100%; }
   };
   const TOUR = {
     capture: {
-      h: "Snap it, and it lands where it belongs",
-      p: "A receipt photo, an invoice PDF, or seven plain words. Tally reads it, fills every field, and reads the tax off the page. If it pays a bill already on the books, it offers to settle that bill rather than adding a second entry.",
+      h: "You photograph it before you put your wallet away",
+      p: "Tally reads the vendor, the amount, the date and the tax off the page and fills the form. If it pays a bill you already had on the books, it says so and offers to settle that bill instead of adding a second entry, because one purchase should never appear twice.",
       n: "the file stays with the entry, and so does the tax",
-      mock: `<div class="mrow"><span class="l">"paid Vercel $70 today"<small>typed into Tally</small></span></div>
-        <div class="mrow"><span class="l">Vercel · hosting<small>Software and SaaS · recurring · paid</small></span><span class="num" style="color:var(--debit)">-$70.00</span></div>
-        <div class="mrow"><span class="l" style="color:var(--credit)">confirmed · filed<small>attachment linked</small></span></div>`,
+      mock: `<div class="mrow"><span class="l">a photograph of a receipt<small>taken at the counter</small></span></div>
+        <div class="mrow"><span class="l">Vercel &middot; hosting<small>Software and SaaS &middot; recurring</small></span><span class="num" style="color:var(--debit)">-$79.10</span></div>
+        <div class="mrow"><span class="l">HST read off the page<small>8614 &middot; data processing</small></span><span class="num" style="color:var(--credit)">$9.10</span></div>
+        <div class="mrow"><span class="l" style="color:var(--accentText)">this pays a bill you already had<small>settle it, do not add it twice</small></span></div>`,
     },
     payables: {
-      h: "Commitments that add themselves up",
-      p: "Four trip expenses under one name become one card with the committed total. Settling opens a confirm: actual amount, actual date, how it was paid, and a receipt, which is required.",
-      n: "estimated $1,000 becomes actual $1,072 · the books record the actual",
-      mock: `<div class="mrow"><span class="l">Trip - Columbia<small>4 items · next due 1 October</small></span><span class="num" style="color:var(--debit)" data-cnt="3000">$0.00</span></div>
-        <div class="mrow"><span class="l">Car rental<small>due 1 October</small></span><span class="num">$500.00</span></div>
-        <div class="mrow"><span class="l">Stay · Airbnb<small>due 1 October</small></span><span class="num">$1,000.00</span></div>
-        <div class="mrow"><span class="l" style="color:var(--faint)">Mortgage Payment · settled<small>locked · receipt filed</small></span><span class="num" style="color:var(--faint)">$1,200.00</span></div>`,
+      h: "Four trip expenses become one thing you owe",
+      p: "Put them under the same name and they gather into a single card with a running total. Settling one asks what you actually paid, on what date, and for the receipt, because a settled expense with nothing behind it is exactly what falls apart under review.",
+      n: "estimated $1,000 becomes actual $1,072, and the books record the actual",
+      mock: `<div class="mrow"><span class="l">Trip - Columbia<small>4 items &middot; next due 1 October</small></span><span class="num" style="color:var(--debit)" data-cnt="3000">$0.00</span></div>
+        <div class="mrow"><span class="l">Flights<small>due 1 October</small></span><span class="num">$1,000.00</span></div>
+        <div class="mrow"><span class="l">Stay &middot; Airbnb<small>due 1 October</small></span><span class="num">$1,000.00</span></div>
+        <div class="mrow"><span class="l" style="color:var(--faint)">Mortgage &middot; settled<small>locked &middot; receipt on file</small></span><span class="num" style="color:var(--faint)">$1,200.00</span></div>`,
     },
     bank: {
-      h: "Your bank, without leaving the page",
-      p: "Plaid opens inside the app. You sign in with your bank's own credentials, Brasstally never sees the password, and every sync arrives as a review you confirm line by line.",
-      n: "connections belong to each ledger · business and personal stay separate",
-      mock: `<div class="mrow"><span class="l">RBC Royal Bank<small>connected · last synced today</small></span><span class="num" style="color:var(--credit)">12 new</span></div>
-        <div class="mrow"><span class="l">Stripe payout<small>review · looks like Client revenue</small></span><span class="num" style="color:var(--credit)" data-cnt="4210.55">$0.00</span></div>
-        <div class="mrow"><span class="l">Rogers<small>review · duplicate detected</small></span><span class="num" style="color:var(--faint)">skipped</span></div>`,
+      h: "The bank moves, and you get a review rather than a surprise",
+      p: "You sign in on your bank's own screen through Plaid. What arrives is a list to confirm line by line, with duplicates caught before they land, so the feed never quietly writes entries you did not agree to.",
+      n: "each ledger keeps its own connections &middot; business and personal stay apart",
+      mock: `<div class="mrow"><span class="l">RBC Royal Bank<small>connected &middot; synced 11:00 PM</small></span><span class="num" style="color:var(--credit)">12 new</span></div>
+        <div class="mrow"><span class="l">Stripe payout<small>looks like Client revenue</small></span><span class="num" style="color:var(--credit)" data-cnt="4210.55">$0.00</span></div>
+        <div class="mrow"><span class="l">Rogers<small>you already entered this one</small></span><span class="num" style="color:var(--faint)">skipped</span></div>`,
     },
     tax: {
-      h: "One page you can hand over",
-      p: "The tax pack: the period's figures, every category on the CRA line it belongs to, and every receipt behind them in one list. Meals halved, capital kept off the income statement, credits totalled, and the entries with no receipt counted, because that is the first thing an auditor asks about.",
-      n: "preparation, not advice \u00b7 your accountant still signs it",
+      h: "The pack is already written",
+      p: "Every receipt carried its own treatment from the day it was filed, so the year end is a page you open: the figures, every category on the CRA line it belongs to, and every receipt behind them in one list.",
+      n: "preparation, not advice &middot; your accountant still signs it",
       mock: `<div class="mrow"><span class="l">Credits claimable<small>GST/HST paid on business inputs</small></span><span class="num" style="color:var(--credit)" data-cnt="4187.20">$0.00</span></div>
         <div class="mrow"><span class="l">8614 &middot; Data processing<small>12 entries</small></span><span class="num">$3,240.00</span></div>
         <div class="mrow"><span class="l">8523 &middot; Meals<small>halved, the cost and the tax</small></span><span class="num">$226.00</span></div>
-        <div class="mrow"><span class="l">Capitalised<small>class 50, off the income statement</small></span><span class="num">$2,400.00</span></div>
         <div class="mrow"><span class="l" style="color:var(--accentText)">Net tax owing<small>collected, less credits claimable</small></span><span class="num" data-cnt="998">$0.00</span></div>`,
     },
   };
+
   const stage = document.getElementById("stage");
   const pills = document.getElementById("tourpills");
   const showTour = (k) => {
