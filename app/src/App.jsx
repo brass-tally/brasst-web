@@ -1844,19 +1844,6 @@ function Ledger({ onSignOut }) {
             >
               <User size={15} />
             </Btn>
-            <button
-              onClick={() => setMenuOpen(true)}
-              aria-label="Menu"
-              title="Reports, connectors, profile, and settings"
-              style={{ background: P.surface, color: P.muted, boxShadow: elev(1), borderRadius: 13 }}
-              className="relative w-10 h-10 flex items-center justify-center shrink-0"
-            >
-              <MenuIcon size={18} />
-              {!setupHidden && setupProgress.done < setupProgress.total && (
-                <span aria-hidden style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, borderRadius: "50%", background: P.brass }} />
-              )}
-            </button>
-
             <Btn
               tone="ghost"
               size="sm"
@@ -1891,6 +1878,20 @@ function Ledger({ onSignOut }) {
                 <ChevronRight size={17} />
               </IconButton>
             </div>
+
+            {/* Last in the row, so it sits on the right edge of the header. */}
+            <button
+              onClick={() => setMenuOpen(true)}
+              aria-label="Menu"
+              title="Reports, connectors, profile, and settings"
+              style={{ background: P.surface, color: P.muted, boxShadow: elev(1), borderRadius: 13 }}
+              className="relative w-10 h-10 flex items-center justify-center shrink-0"
+            >
+              <MenuIcon size={18} />
+              {!setupHidden && setupProgress.done < setupProgress.total && (
+                <span aria-hidden style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, borderRadius: "50%", background: P.brass }} />
+              )}
+            </button>
           </div>
         </header>
 
