@@ -4,11 +4,11 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        // Two families, each with a job: Plus Jakarta Sans carries the
-        // interface, Fraunces carries the headings. Geist Mono carries every
-        // number. Same three the landing page uses.
-        sans: ['Plus Jakarta Sans', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
-        serif: ['Fraunces', 'Georgia', 'serif'],
+        // One family for the interface, one for every number. Fraunces and
+        // Plus Jakarta were still listed here after the tokens moved to Inter,
+        // so anything reaching for a Tailwind font class got the old pairing.
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
+        serif: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       // The single source of truth for the type scale — index.html no longer

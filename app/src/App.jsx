@@ -1905,7 +1905,7 @@ function Ledger({ onSignOut }) {
         {/* ===== the section, named once, above its own figures ===== */}
         <div className="mt-2 mb-5 fade-in-key" key={`head:${tab}`}>
           {tab !== "overview" && <div className="eyebrow mb-1.5">{monthLabel(month)}</div>}
-          <h2 style={{ fontFamily: SERIF }} className="text-3xl">
+          <h2 style={{ fontFamily: SERIF }} className="text-[28px] leading-tight">
             {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
           </h2>
         </div>
@@ -3579,8 +3579,8 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
           const c = cards[k];
           const Inner = (
             <>
-              <div className="flex items-center gap-1.5 mb-3">
-                <span style={{ color: P.text }} className="text-base">{c.label}</span>
+              <div className="flex items-center gap-1.5 mb-2.5">
+                <span style={{ color: P.text }} className="text-[15px]">{c.label}</span>
                 {c.warn && (
                   <button
                     type="button"
@@ -3595,14 +3595,14 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
               </div>
               <div
                 style={{ fontFamily: MONO, color: c.tone }}
-                className={`tabular-nums ${c.wide ? "text-4xl" : "text-3xl"} leading-none`}
+                className={`tabular-nums ${c.wide ? "text-[34px]" : "text-[26px]"} leading-none`}
               >
                 {c.value}
               </div>
               {c.delta && <Delta now={c.delta.now} prev={c.delta.prev} invert={c.delta.invert} />}
-              {c.lead && <div style={{ color: P.muted }} className="text-sm mt-3">{c.lead}</div>}
+              {c.lead && <div style={{ color: P.muted }} className="text-[14.5px] mt-2.5">{c.lead}</div>}
               {c.foot && (
-                <div style={{ color: P.faint }} className="text-sm mt-auto pt-4 leading-snug">{c.foot}</div>
+                <div style={{ color: P.faint }} className="text-[14px] mt-auto pt-3 leading-snug">{c.foot}</div>
               )}
             </>
           );
@@ -3611,7 +3611,7 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
               key={k}
               onClick={c.onClick}
               style={cardStyle()}
-              className={`p-6 flex flex-col ${c.wide ? "col-span-2" : ""} ${c.onClick ? "cursor-pointer" : ""}`}
+              className={`p-5 flex flex-col ${c.wide ? "col-span-2" : ""} ${c.onClick ? "cursor-pointer" : ""}`}
             >
               {Inner}
             </div>
@@ -3745,7 +3745,7 @@ function NeedsAttention({ data, insights, balance, consolidation, month, onGo, o
   return (
     <>
       <div className="flex items-baseline justify-between gap-3 mt-10 mb-4">
-        <h2 style={{ fontFamily: SERIF }} className="text-2xl">What wants you</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl">What wants you</h2>
         {decisions.length > 0 && (
           <button onClick={() => onAsk?.("What needs my attention this month?")} style={{ color: P.brassText }} className="text-base">
             See everything
@@ -4083,8 +4083,8 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
           const pct = r.planned > 0 ? Math.min((r.actual / r.planned) * 100, 100) : r.actual > 0 ? 100 : 0;
           const over = type === "expense" && r.actual > r.planned;
           return (
-            <div key={r.name}>
-              <div className="flex justify-between text-sm mb-1 gap-2">
+            <div key={r.name} className="budget-row">
+              <div className="flex justify-between text-sm mb-1 gap-3">
                 <span className="flex items-center gap-1 min-w-0">
                   {((r.subs || []).length > 0 || subBreakdown(r.name).length > 1) && r.actual > 0 && (
                     <button
@@ -4105,27 +4105,35 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
                     {r.name}
                   </button>
                 </span>
-                <span style={{ fontFamily: MONO }} className="tabular-nums flex items-center gap-1">
+                {/* Spent first, then the budget it is measured against, on one
+                    line and right aligned so the column of figures lines up
+                    instead of wrapping under itself. */}
+                <span style={{ fontFamily: MONO }} className="tabular-nums flex items-baseline gap-1.5 shrink-0 whitespace-nowrap">
+                  <span style={{ color: over ? P.debit : P.text }} className="text-sm">{fmt0(r.actual)}</span>
+                  <span style={{ color: P.faint }} className="text-sm">/</span>
                   {editing === r.name ? (
                     <input
                       autoFocus
                       defaultValue={r.planned}
                       onBlur={(e) => { setPlanned(type, r.name, parseFloat(e.target.value) || 0); setEditing(null); }}
                       onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
-                      style={{ background: P.bg, border: `1px solid ${P.brass}`, color: P.text, width: 70 }}
+                      style={{ background: P.bg, border: `1px solid ${P.brass}`, color: P.text, width: 66 }}
                       className="rounded px-1 text-right text-sm"
                     />
                   ) : (
-                    <button onClick={() => setEditing(r.name)} style={{ color: P.muted }} title="Edit planned amount">
+                    <button onClick={() => setEditing(r.name)} style={{ color: P.faint }} className="text-sm" title="Edit planned amount">
                       {fmt0(r.planned)}
                     </button>
                   )}
-                  <span style={{ color: P.faint }}>/</span>
-                  <span style={{ color: over ? P.debit : P.text }}>{fmt0(r.actual)}</span>
                 </span>
               </div>
-              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: P.bg }}>
-                <div style={{ width: `${pct}%`, background: over ? P.debit : tone, opacity: over ? 1 : 0.75 }} className="h-full" />
+              {/* A full track, so an empty category still reads as a category
+                  with nothing spent rather than as a missing row. */}
+              <div className="h-2 rounded-full overflow-hidden" style={{ background: P.surface2 }}>
+                <div
+                  style={{ width: `${Math.max(pct, r.actual > 0 ? 3 : 0)}%`, background: over ? P.debit : P.brass }}
+                  className="h-full rounded-full"
+                />
               </div>
               {expanded === r.name && (
                 <div className="mt-1.5 pl-4 space-y-1" style={{ borderLeft: `2px solid ${P.line}` }}>
@@ -4956,6 +4964,8 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
+  const [q, setQ] = useState("");
+  const [dir, setDir] = useState("all");   // all | in | out
   const [editingId, setEditingId] = useState(null);
   const blank = {
     date: `${month}-15`, amount: "", type: "expense",
@@ -4970,9 +4980,15 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   // offers a choice with no meaning behind it. The filter only appears on a
   // Business Ledger, where personal entries genuinely do sit alongside business ones.
   const showAccountFilter = data.ledger.kind !== "personal";
+  const needle = q.trim().toLowerCase();
   const list = monthTx
     .filter((t) => !showAccountFilter || filter === "all" || t.account === filter)
     .filter((t) => !recOnly || isRec(t))
+    .filter((t) => dir === "all" || (dir === "in" ? t.type === "income" : t.type === "expense"))
+    // One field across description, category, and subcategory: people search
+    // for "vercel" or "software", not for a column.
+    .filter((t) => !needle || [t.description, t.category, t.subcategory]
+      .some((v) => String(v || "").toLowerCase().includes(needle)))
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const recTotal = list.filter(isRec).reduce((s, t) => s + (t.type === "income" ? t.amount : -t.amount), 0);
 
@@ -4984,32 +5000,87 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
   };
 
   return (
-    <section style={cardStyle()} className="p-5">
-      <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg">{monthLabel(month)}, {list.length} entries</h2>
-        <div className="flex gap-2 items-center">
-          {showAccountFilter && ["all", "business", "personal"].map((f) => (
-            <button key={f} onClick={() => setFilter(f)}
-              style={{ fontFamily: MONO, color: filter === f ? P.brass : P.faint }} className="text-xs uppercase tracking-wider">
-              {f}
+    <>
+      {/* One toolbar: search, direction, then the two things you came to do.
+          The old row of tracked-out mono words read as a debug switchboard. */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <label
+          style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
+          className="flex items-center gap-2.5 px-4 flex-1 min-w-[240px]"
+        >
+          <Search size={17} style={{ color: P.faint }} className="shrink-0" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search entries, parties, categories"
+            aria-label="Search entries"
+            style={{ background: "transparent", color: P.text }}
+            className="py-3 w-full outline-none text-[15px]"
+          />
+          {q && (
+            <button onClick={() => setQ("")} aria-label="Clear search" style={{ color: P.faint }} className="shrink-0 p-1">
+              <X size={14} />
+            </button>
+          )}
+        </label>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          {[["all", "All"], ["in", "In"], ["out", "Out"]].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setDir(k)}
+              style={{
+                background: dir === k ? P.brass : P.surface,
+                color: dir === k ? P.onbrass : P.muted,
+                boxShadow: dir === k ? "none" : elev(1),
+                borderRadius: R.pill,
+              }}
+              className="px-4 py-2.5 text-[15px] font-medium"
+            >
+              {label}
             </button>
           ))}
-          <button onClick={() => setRecOnly(!recOnly)}
-            title="Show recurring entries only"
-            style={{ fontFamily: MONO, color: recOnly ? P.brass : P.faint, border: `1px solid ${recOnly ? P.brass : P.line}` }}
-            className="text-xs uppercase tracking-wider rounded px-2 py-0.5 inline-flex items-center gap-1">
-            <Repeat size={10} /> recurring
-          </button>
-          <Btn tone="ghost" onClick={openTransfer} title="Move money between your ledgers">
-            <ArrowLeftRight size={14} /> Transfer
-          </Btn>
-          <Btn tone="ghost" onClick={openImport} title="Import a bank statement, paste text or upload a file">
-            <FileText size={14} /> Import
-          </Btn>
-          <Btn onClick={() => setAdding(!adding)}><Plus size={14} /> Add</Btn>
         </div>
+
+        <button
+          onClick={openTransfer}
+          title="Move money between your ledgers"
+          style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+        >
+          <ArrowLeftRight size={16} /> Transfer
+        </button>
+        <button
+          onClick={() => setAdding(!adding)}
+          style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+        >
+          <Plus size={16} /> Add entry
+        </button>
       </div>
-      <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3">tap any entry to change its category, account, or anything else</p>
+
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        {showAccountFilter && ["all", "business", "personal"].map((f) => (
+          <button key={f} onClick={() => setFilter(f)}
+            style={{ color: filter === f ? P.brassText : P.faint }} className="text-[14px]">
+            {f === "all" ? "Both accounts" : f}
+          </button>
+        ))}
+        <button onClick={() => setRecOnly(!recOnly)}
+          title="Show recurring entries only"
+          style={{ color: recOnly ? P.brassText : P.faint }}
+          className="text-[14px] inline-flex items-center gap-1.5">
+          <Repeat size={13} /> Recurring only
+        </button>
+        <button onClick={openImport} style={{ color: P.faint }} className="text-[14px] inline-flex items-center gap-1.5">
+          <FileText size={13} /> Import a statement
+        </button>
+        <span style={{ color: P.faint }} className="text-[14px] ml-auto">
+          {list.length} {list.length === 1 ? "entry" : "entries"}{needle ? " matching" : ""}
+        </span>
+      </div>
+
+      <section style={cardStyle()} className="p-5">
       {recOnly && (
         <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mb-3">
           Recurring net this month: <span style={{ color: recTotal >= 0 ? P.credit : P.debit }}>{fmt(recTotal)}</span>
@@ -5136,7 +5207,8 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           )}
         </div>
       )}
-    </section>
+      </section>
+    </>
   );
 }
 

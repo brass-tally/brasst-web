@@ -406,3 +406,10 @@ h1, h2, h3 {
    controls the rest of the app now uses. */
 .auth-card input, .auth-card select { font-size: 16px; padding: 12px 14px; }
 .auth-card button { min-height: 44px; }
+
+/* ---- planned against actual ----
+   The figures sit in a fixed column so a long category name cannot push them
+   onto a second line, which is what made the amounts read as two stacked
+   numbers rather than one comparison. */
+.budget-row { padding: 6px 0; }
+.budget-row + .budget-row { border-top: 1px solid var(--line); }
