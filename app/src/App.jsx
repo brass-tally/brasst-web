@@ -6177,16 +6177,31 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
     setEditingId(null); setEdit(null);
   };
 
+  // Every entry logged against a pool, so the page can show what the credits
+  // actually paid for rather than only what is left of them.
+  const spent = data.transactions
+    .filter((t) => isCredits(t) && t.type === "expense")
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
   return (
-    <section style={cardStyle()} className="p-5">
-      <div className="flex justify-between items-center mb-1 gap-2">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg">Credits</h2>
-        <Btn tone="ghost" onClick={() => setAdding(!adding)}>{adding ? <X size={14} /> : <Plus size={14} />}</Btn>
+    <>
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl">Credit pools</h2>
+          <p style={{ color: P.muted }} className="text-[15px]">Non-cash coverage, tracked beside cash.</p>
+        </div>
+        {adding ? (
+          <button onClick={() => setAdding(false)} style={{ color: P.muted }} className="text-[15px] px-2 shrink-0">Cancel</button>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+            className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+          >
+            <Plus size={16} /> New pool
+          </button>
+        )}
       </div>
-      <p style={{ color: P.faint }} className="text-xs mb-3">
-        Non-cash pools, AWS credits, AI compute credits, MongoDB credits, SR&ED. Anything "paid via" a pool draws it
-        down instead of your bank balance; the total left shows next to Balance to date up top.
-      </p>
 
       {adding && (
         <div style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.control }} className="p-3 mb-3 grid sm:grid-cols-4 gap-2 items-end">
@@ -6226,10 +6241,10 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
             const tracked = trackedSpend(c.id);
             const usedPct = c.initial > 0 ? Math.min(Math.max(((c.initial - remaining) / c.initial) * 100, 0), 100) : 0;
             return (
-              <div key={c.id} style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.control }} className="p-3">
-                <div className="flex justify-between items-baseline gap-2">
-                  <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} className="text-sm truncate text-left underline decoration-dotted underline-offset-2" style={{ color: P.text, textDecorationColor: P.faint }} title="Edit this pool">
-                    {c.name}
+              <div key={c.id} style={cardStyle()} className="p-5">
+                <div className="flex justify-between items-start gap-2">
+                  <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} className="text-left min-w-0" style={{ color: P.text }} title="Edit this pool">
+                    <span style={{ fontFamily: SERIF }} className="text-xl block truncate">{c.name}</span>
                   </button>
                   <div className="flex gap-1 shrink-0">
                     <button onClick={() => { setEditingId(c.id); setEdit({ name: c.name, initial: String(c.initial), usedAdjustment: String(c.usedAdjustment || 0) }); }} style={{ color: P.faint, padding: 6, margin: -6 }} title="Edit"><Pencil size={12} /></button>
@@ -6249,23 +6264,78 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
                     </button>
                   </div>
                 </div>
-                <div style={{ fontFamily: MONO, color: remaining > 0 ? P.credit : P.debit }} className="text-lg tabular-nums">
-                  {fmt(remaining)} <span style={{ color: P.faint }} className="text-xs">/ {fmt0(c.initial)} left</span>
+                {/* What is left leads, and what it is left of trails it on the
+                    same line, so the pair reads as one fact. */}
+                <div className="flex items-baseline gap-2.5 mt-4 flex-wrap">
+                  <span style={{ fontFamily: MONO, color: remaining > 0 ? P.credit : P.debit }} className="text-[30px] tabular-nums leading-none">
+                    {fmt0(remaining)}
+                  </span>
+                  <span style={{ color: P.muted }} className="text-[15px]">left of {fmt0(c.initial)}</span>
                 </div>
-                <div className="h-1.5 rounded-full overflow-hidden mt-1" style={{ background: P.surface2 }}>
-                  <div style={{ width: `${100 - usedPct}%`, background: P.brass, opacity: 0.8 }} className="h-full" />
+
+                {/* The bar shows what has gone, not what remains: a pool you
+                    have barely touched should read as barely touched. */}
+                <div className="h-2 rounded-full overflow-hidden mt-4" style={{ background: P.surface2 }}>
+                  <div style={{ width: `${Math.max(usedPct, usedPct > 0 ? 3 : 0)}%`, background: P.brass }} className="h-full rounded-full" />
                 </div>
-                <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs mt-1">
-                  used: {fmt0((c.usedAdjustment || 0) + tracked)}
-                  {(c.usedAdjustment || 0) > 0 ? ` (${fmt0(c.usedAdjustment)} pre-app + ${fmt0(tracked)} tracked)` : ""}
-                  {committed > 0 ? ` · ${fmt0(committed)} committed in open payables` : ""}
+
+                <div className="flex items-baseline justify-between gap-3 mt-4 pt-4" style={{ borderTop: `1px solid ${P.line}` }}>
+                  <span style={{ color: P.text }} className="text-[15px]">Used so far</span>
+                  <span style={{ fontFamily: MONO, color: P.faint }} className="text-[15px] tabular-nums">
+                    {fmt0((c.usedAdjustment || 0) + tracked)}
+                  </span>
                 </div>
+                {((c.usedAdjustment || 0) > 0 || committed > 0) && (
+                  <div style={{ color: P.faint }} className="text-[13.5px] mt-1.5">
+                    {(c.usedAdjustment || 0) > 0 ? `${fmt0(c.usedAdjustment)} before the app, ${fmt0(tracked)} logged here` : ""}
+                    {(c.usedAdjustment || 0) > 0 && committed > 0 ? " · " : ""}
+                    {committed > 0 ? `${fmt0(committed)} committed in open payables` : ""}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       )}
-    </section>
+
+      {/* A pool's balance says how much is left. This says what it bought,
+          which is the half of the story the old page never showed. */}
+      {spent.length > 0 && (
+        <>
+          <div className="flex items-baseline justify-between gap-3 mt-10 mb-4">
+            <h2 style={{ fontFamily: SERIF }} className="text-xl">Paid with credits</h2>
+            <span style={{ color: P.faint }} className="text-[14px]">
+              {fmt0(spent.reduce((a, b) => a + b.amount, 0))} across {spent.length} {spent.length === 1 ? "entry" : "entries"}
+            </span>
+          </div>
+          <div style={cardStyle()} className="px-5 py-2">
+            {spent.slice(0, 12).map((t, i) => (
+              <div
+                key={t.id}
+                className="flex items-center gap-4 py-3"
+                style={i === 0 ? {} : { borderTop: `1px solid ${P.line}` }}
+              >
+                <span style={{ fontFamily: MONO, color: P.faint }} className="text-[13.5px] w-14 shrink-0">
+                  {t.date?.slice(5)}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span style={{ color: P.text }} className="text-[15px] block truncate">{t.description || t.category}</span>
+                  <span style={{ color: P.faint }} className="text-[13.5px]">
+                    {creditName(data, t.creditId)} · non-cash
+                  </span>
+                </span>
+                <span style={{ fontFamily: MONO, color: P.muted }} className="text-[15px] tabular-nums shrink-0">
+                  {fmt(t.amount)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p style={{ color: P.faint }} className="text-[14px] mt-3">
+            None of these moved cash, so they stay out of the balance and out of money out.
+          </p>
+        </>
+      )}
+    </>
   );
 }
 
@@ -6313,17 +6383,39 @@ function CashCalendar({ data }) {
     const cashIn = upcoming.filter((o) => o.kind === "receivables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
     const cashOut = upcoming.filter((o) => o.kind === "payables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
     const creditsOut = upcoming.filter((o) => o.kind === "payables" && isCredits(o)).reduce((s, o) => s + o.amount, 0);
+    const inCount = upcoming.filter((o) => o.kind === "receivables").length;
+    const outCount = upcoming.filter((o) => o.kind === "payables").length;
     const byDate = upcoming.reduce((m, o) => { (m[o.due] = m[o.due] || []).push(o); return m; }, {});
     const dates = Object.keys(byDate).sort();
     const prettyDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" });
 
     return (
       <div className="space-y-6 stagger">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div style={cardStyle()} className="p-5">
+            <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected in, next {span} days</div>
+            <div style={{ fontFamily: MONO, color: P.credit }} className="text-[30px] tabular-nums leading-none">{fmt0(cashIn)}</div>
+            <div style={{ color: P.faint }} className="text-[14px] mt-4">
+              {inCount} {inCount === 1 ? "receivable" : "receivables"}
+            </div>
+          </div>
+          <div style={cardStyle()} className="p-5">
+            <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected out, next {span} days</div>
+            <div style={{ fontFamily: MONO, color: P.debit }} className="text-[30px] tabular-nums leading-none">{fmt0(cashOut)}</div>
+            <div style={{ color: P.faint }} className="text-[14px] mt-4">
+              {outCount} {outCount === 1 ? "payable and recurring cost" : "payables and recurring costs"}
+            </div>
+          </div>
+        </div>
+
         <div style={cardStyle()} className="p-5">
-          <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
-            <Stat label={`Expected in · ${span}d`} value={fmt(cashIn)} color={P.credit} />
-            <Stat label={`Expected out · ${span}d`} value={fmt(cashOut)} color={P.debit} />
-            <Stat label="Net cash impact" value={fmt(cashIn - cashOut)} color={cashIn - cashOut >= 0 ? P.credit : P.debit} />
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-3">
+            <div style={{ color: P.muted }} className="text-[15px]">
+              Net over {span} days
+              <span style={{ fontFamily: MONO, color: cashIn - cashOut >= 0 ? P.credit : P.debit }} className="ml-2 tabular-nums">
+                {fmt(cashIn - cashOut)}
+              </span>
+            </div>
             <div className="flex flex-col items-end gap-2">
               <ViewToggle />
               <div className="flex gap-1">
@@ -6399,23 +6491,30 @@ function CashCalendar({ data }) {
         <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
           <div className="flex items-center gap-2">
             <Btn tone="ghost" onClick={() => { setGridMonth(shiftMonth(gridMonth, -1)); setSelectedDay(null); }}>‹</Btn>
-            <div style={{ fontFamily: MONO }} className="text-sm w-36 text-center">{monthLabel(gridMonth)}</div>
+            <div className="text-[15px] w-40 text-center">{monthLabel(gridMonth)}</div>
             <Btn tone="ghost" onClick={() => { setGridMonth(shiftMonth(gridMonth, 1)); setSelectedDay(null); }}>›</Btn>
           </div>
-          <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
-            <span style={{ color: P.credit }}>+{fmt0(monthIn)}</span> / <span style={{ color: P.debit }}>−{fmt0(monthOut)}</span> expected
+          <div style={{ color: P.faint }} className="text-[14px] flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden style={{ background: P.credit, width: 7, height: 7, borderRadius: "50%" }} />
+              <span style={{ fontFamily: MONO, color: P.credit }} className="tabular-nums">{fmt0(monthIn)}</span> in
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden style={{ background: P.debit, width: 7, height: 7, borderRadius: "50%" }} />
+              <span style={{ fontFamily: MONO, color: P.debit }} className="tabular-nums">{fmt0(monthOut)}</span> out
+            </span>
           </div>
           <ViewToggle />
         </div>
 
-        <div className="grid grid-cols-7 gap-1 mb-1">
+        <div className="grid grid-cols-7 gap-2 mb-2">
           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-            <div key={d} style={{ fontFamily: MONO, color: P.faint }} className="text-xs text-center uppercase tracking-wider">{d}</div>
+            <div key={d} style={{ color: P.faint }} className="text-[14px] text-center">{d}</div>
           ))}
         </div>
-        <div className="grid grid-cols-7 gap-1">
+        <div className="grid grid-cols-7 gap-2">
           {cells.map((date, i) => {
-            if (!date) return <div key={i} className="rounded" style={{ background: "transparent", minHeight: 64 }} />;
+            if (!date) return <div key={i} style={{ background: "transparent", minHeight: 108 }} />;
             const items = byDay[date] || [];
             const dayIn = items.filter((o) => o.kind === "receivables").reduce((s, o) => s + o.amount, 0);
             const dayOut = items.filter((o) => o.kind === "payables").reduce((s, o) => s + o.amount, 0);
@@ -6426,20 +6525,37 @@ function CashCalendar({ data }) {
               <button
                 key={i}
                 onClick={() => setSelectedDay(isSel ? null : date)}
+                // A day with something on it lifts onto the card surface; an
+                // empty day stays part of the ground. That inversion is what
+                // makes the month scannable without reading a single figure.
                 style={{
-                  background: isSel ? P.surface2 : P.bg,
-                  border: `1px solid ${isSel ? P.brass : isToday ? P.brass : P.line}`,
-                  opacity: isPast && !items.length ? 0.45 : 1,
-                  minHeight: 64,
+                  background: items.length || isSel ? P.surface : P.surface2,
+                  border: `1px solid ${isSel || isToday ? P.brass : "transparent"}`,
+                  boxShadow: items.length && !isSel ? elev(1) : "none",
+                  borderRadius: 14,
+                  minHeight: 108,
                 }}
-                className="rounded p-1 text-left flex flex-col"
+                className="p-3 text-left flex flex-col"
+                title={items.length ? `${items.length} ${items.length === 1 ? "item" : "items"} on ${date}` : date}
               >
-                <div style={{ fontFamily: MONO, color: isToday ? P.brass : P.faint }} className="text-xs">{Number(date.slice(8))}</div>
-                <div className="flex-1 flex flex-col justify-end gap-0.5">
-                  {dayIn > 0 && <div style={{ fontFamily: MONO, color: P.credit, background: P.surface }} className="text-xs rounded px-1 truncate tabular-nums">+{fmt0(dayIn)}</div>}
-                  {dayOut > 0 && <div style={{ fontFamily: MONO, color: P.debit, background: P.surface }} className="text-xs rounded px-1 truncate tabular-nums">−{fmt0(dayOut)}</div>}
-                  {items.some(isCredits) && <div style={{ background: P.brass }} className="h-0.5 rounded-full w-1/2" title="includes credits" />}
+                <div className="flex items-center gap-1.5">
+                  <span style={{ color: isToday ? P.brassText : items.length ? P.text : P.faint }} className="text-[15px]">
+                    {Number(date.slice(8))}
+                  </span>
                 </div>
+                {/* One dot per direction. The amounts are a tap away in the day
+                    panel; on the grid they turned every cell into a receipt. */}
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  {dayIn > 0 && <span aria-hidden style={{ background: P.credit, width: 7, height: 7, borderRadius: "50%" }} />}
+                  {dayOut > 0 && <span aria-hidden style={{ background: P.debit, width: 7, height: 7, borderRadius: "50%" }} />}
+                  {items.some(isCredits) && <span aria-hidden style={{ background: P.brass, width: 7, height: 7, borderRadius: "50%" }} title="includes credits" />}
+                </div>
+                <div className="flex-1" />
+                {isSel && (
+                  <div style={{ color: P.faint }} className="text-[13px]">
+                    {items.length} {items.length === 1 ? "item" : "items"}
+                  </div>
+                )}
               </button>
             );
           })}
