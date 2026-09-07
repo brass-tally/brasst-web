@@ -216,7 +216,7 @@ function ConfirmHost() {
           <AlertTriangle size={17} />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 id="confirm-title" style={{ fontFamily: SERIF, color: P.text }} className="text-lg mb-1 text-balance">
+          <h2 id="confirm-title" style={{ fontFamily: SERIF, color: P.text }} className="text-xl mb-1 text-balance">
             {req.title}
           </h2>
           {req.body && (
@@ -1768,9 +1768,11 @@ function Ledger({ onSignOut }) {
           where a row's date and its amount stop being one glance apart. */}
       <div className="px-4 w-full mx-auto max-w-[1180px]" style={{ paddingBottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }}>
         {/* ===== header ===== */}
-        <header className="pt-6 pb-5 lg:pt-4 lg:pb-3 flex flex-wrap items-end lg:items-center justify-between gap-3">
-          <div>
-            <div className="eyebrow lg:hidden">Brasstally</div>
+        {/* The brand eyebrow above the ledger name was two pieces of branding
+            stacked before anything useful, and on a phone it landed under the
+            status bar. The ledger name is enough; the mark is on the dock. */}
+        <header className="pt-3 pb-4 lg:pt-4 lg:pb-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <div className="flex items-center gap-3 min-w-0 lg:hidden">
               <div className="relative min-w-0">
                 <button
@@ -1779,7 +1781,7 @@ function Ledger({ onSignOut }) {
                   disabled={typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches}
                   className="flex items-center gap-1.5 text-left min-w-0 max-w-[70vw] sm:max-w-xs lg:pointer-events-none"
                 >
-                  <h1 style={{ fontFamily: SERIF }} className="text-3xl lg:text-xl leading-tight truncate">{data.ledger.name}</h1>
+                  <h1 style={{ fontFamily: SERIF }} className="text-[22px] lg:text-xl leading-tight truncate">{data.ledger.name}</h1>
                   <ChevronDown size={20} style={{ color: P.brassText, transform: ledgerMenuOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} className="shrink-0 lg:hidden" />
                 </button>
                 {ledgerMenuOpen && (
@@ -1815,7 +1817,12 @@ function Ledger({ onSignOut }) {
                   </>
                 )}
               </div>
-              <Pill tone="brass" mono>{kindLabel(data.ledger.kind)}</Pill>
+              <span
+                style={{ background: P.brass + "1f", color: P.brassText, borderRadius: R.pill }}
+                className="text-[13px] px-2.5 py-1 shrink-0 whitespace-nowrap hidden sm:inline"
+              >
+                {kindLabel(data.ledger.kind).split(" ")[0]}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1889,17 +1896,23 @@ function Ledger({ onSignOut }) {
             {/* The month stepper reads as one control, not three: the label
                 sits between its arrows inside a single bordered well. */}
             <div
-              className="flex items-center"
-              style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.pill }}
+              className="flex items-center shrink-0"
+              style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
             >
-              <IconButton label="Previous month" onClick={() => setMonth(shiftMonth(month, -1))} style={{ margin: 0, padding: "7px 10px", color: P.muted }}>
-                <ChevronLeft size={16} />
+              <IconButton label="Previous month" onClick={() => setMonth(shiftMonth(month, -1))} style={{ margin: 0, padding: "9px 11px", color: P.muted }}>
+                <ChevronLeft size={17} />
               </IconButton>
-              <div style={{ fontFamily: MONO, color: P.text }} className="text-xs w-36 text-center tabular-nums">
-                {monthLabel(month)}
+              {/* The year is only worth the width when it is not this year. */}
+              <div style={{ color: P.text }} className="text-[14px] text-center px-1 whitespace-nowrap">
+                <span className="hidden sm:inline">{monthLabel(month)}</span>
+                <span className="sm:hidden">
+                  {month.slice(0, 4) === String(new Date().getFullYear())
+                    ? monthLabel(month).split(" ")[0]
+                    : `${monthLabel(month).split(" ")[0].slice(0, 3)} ${month.slice(2, 4)}`}
+                </span>
               </div>
-              <IconButton label="Next month" onClick={() => setMonth(shiftMonth(month, 1))} style={{ margin: 0, padding: "7px 10px", color: P.muted }}>
-                <ChevronRight size={16} />
+              <IconButton label="Next month" onClick={() => setMonth(shiftMonth(month, 1))} style={{ margin: 0, padding: "9px 11px", color: P.muted }}>
+                <ChevronRight size={17} />
               </IconButton>
             </div>
           </div>
@@ -2269,7 +2282,7 @@ function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate,
     <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
       <div role="dialog" aria-modal="true" style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3), borderRadius: R.panel }} className="modal-panel w-full max-w-md p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-1">
-          <h3 style={{ fontFamily: SERIF }} className="text-lg">Correct the balance</h3>
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Correct the balance</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
         <p style={{ color: P.muted }} className="text-sm mb-4">
@@ -2668,7 +2681,7 @@ function MatchView({
         title={`Did you pay ${item.description || item.keep.category} once or ${item.extras.length + 1} times?`}
         detail={`${item.extras.length + 1} entries, ${item.reason}. A copy counts twice in the profit and loss, the budget, and the difference against the bank.`}>
         <Btn onClick={() => doRemoveDup(item)}><Trash2 size={13} /> Once, remove the {item.extras.length === 1 ? "other" : `other ${item.extras.length}`}</Btn>
-        <button onClick={() => setOpenDup(openDup === item.id ? null : item.id)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+        <button onClick={() => setOpenDup(openDup === item.id ? null : item.id)} style={{ color: P.brassText }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
           {openDup === item.id ? "hide" : "show me"} the copies
         </button>
         {openDup === item.id && (
@@ -2762,7 +2775,7 @@ function MatchView({
         {/* ---- the plan, written out before it runs ---- */}
         {plan.fix.count > 0 && !fixedSummary && (
           <div style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-4 mb-4">
-            <div style={{ color: P.brassText, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-2">
+            <div style={{ color: P.brassText }} className="text-[14px] font-medium mb-2">
               What I would do
             </div>
             <div className="space-y-1.5">
@@ -2772,7 +2785,7 @@ function MatchView({
               <Btn onClick={runPlan} loading={fixing}>
                 {!fixing && <Check size={13} />} Go ahead
               </Btn>
-              <button onClick={() => setShowManual(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+              <button onClick={() => setShowManual(true)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
                 let me look at each one first
               </button>
             </div>
@@ -2843,16 +2856,16 @@ function MatchView({
                 {renderAsk(current)}
                 <div className="flex items-center gap-3 mt-2 flex-wrap">
                   {undoable && (
-                    <button onClick={undoLast} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                    <button onClick={undoLast} style={{ color: P.brassText }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
                       <ChevronLeft size={11} className="inline mb-0.5" /> undo the last {undoable.verb}
                     </button>
                   )}
                   {asks.length > 1 && (
-                    <button onClick={skipCurrent} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+                    <button onClick={skipCurrent} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
                       {onLastLap ? "still not sure, next one" : "skip for now"}
                     </button>
                   )}
-                  <button onClick={() => setShowAllAsks(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 ml-auto">
+                  <button onClick={() => setShowAllAsks(true)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2 ml-auto">
                     show all {asks.length} at once
                   </button>
                 </div>
@@ -2860,7 +2873,7 @@ function MatchView({
             ) : null}
 
             {showAllAsks && (
-              <button onClick={() => setShowAllAsks(false)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 mt-3">
+              <button onClick={() => setShowAllAsks(false)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2 mt-3">
                 back to one at a time
               </button>
             )}
@@ -2890,7 +2903,7 @@ function MatchView({
         )}
 
         {/* ---- the old two-column screen, for when you do want to drive ---- */}
-        <button onClick={() => setShowManual(!showManual)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+        <button onClick={() => setShowManual(!showManual)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
           {showManual ? "hide" : "show"} everything line by line
         </button>
 
@@ -2936,7 +2949,7 @@ function MatchView({
 
             {(matched.length > 0 || ignored.length > 0) && (
               <div className="mb-4">
-                <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
+                <button onClick={() => setShowMatched(!showMatched)} style={{ color: P.brassText }} className="text-[13.5px] underline decoration-dotted underline-offset-2 underline-offset-2">
                   {showMatched ? "hide" : "show"} {matched.length} already paired, {ignored.length} set aside
                 </button>
                 {showMatched && (
@@ -2962,7 +2975,7 @@ function MatchView({
               </div>
             )}
 
-            <button onClick={onAnchorInstead} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
+            <button onClick={onAnchorInstead} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2 underline-offset-2">
               or force the books to the bank balance, which sets the difference to zero without explaining it
             </button>
           </div>
@@ -2971,7 +2984,7 @@ function MatchView({
         {/* ---- what past consolidations did, in sentences ---- */}
         {consolidation?.history?.length > 0 && (
           <div className="mt-4">
-            <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 underline-offset-2">
+            <button onClick={() => setShowHistory(!showHistory)} style={{ color: P.brassText }} className="text-[13.5px] underline decoration-dotted underline-offset-2 underline-offset-2">
               <History size={11} className="inline mb-0.5" /> {showHistory ? "hide" : "show"} what past consolidations did
             </button>
             {showHistory && (
@@ -3120,7 +3133,7 @@ function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCa
     <div style={{ background: P.bg, border: `1px solid ${P.line}`, borderRadius: R.control }} className="p-2 mb-2">
       {already && (
         <div style={{ border: `1px solid ${P.brass}` }} className="rounded p-2 mb-2">
-          <div style={{ color: P.brassText, fontFamily: MONO }} className="text-xs uppercase tracking-wider mb-1">
+          <div style={{ color: P.brassText }} className="text-[14px] font-medium mb-1">
             <AlertTriangle size={11} className="inline mb-0.5" /> possibly already recorded
           </div>
           <div className="text-xs" style={{ color: P.muted }}>
@@ -3299,7 +3312,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
-          <h3 style={{ fontFamily: SERIF }} className="text-lg">Import a statement</h3>
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Import a statement</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
 
@@ -3658,7 +3671,7 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
               </div>
               <div
                 style={{ fontFamily: MONO, color: c.tone }}
-                className={`tabular-nums ${c.wide ? "text-[34px]" : "text-[26px]"} leading-none`}
+                className={`tabular-nums ${c.wide ? "text-[34px] k-fig-wide" : "text-[26px] k-fig"} leading-none`}
               >
                 {c.value}
               </div>
@@ -4001,7 +4014,9 @@ function NeedsAttention({ data, insights, balance, consolidation, month, onGo, o
               <span aria-hidden style={{ background: toneFor(i.severity), width: 7, height: 7, borderRadius: "50%", marginTop: 6 }} className="shrink-0" />
               <span className="flex-1 min-w-0">
                 <span style={{ color: P.text }} className="text-sm block">{i.title}</span>
-                {i.detail && <span style={{ color: P.faint }} className="text-xs block truncate">{i.detail}</span>}
+                {i.detail && (
+                  <span style={{ color: P.faint }} className="text-[13.5px] block leading-snug">{i.detail}</span>
+                )}
               </span>
             </button>
           ))}
@@ -4105,7 +4120,7 @@ function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk
       />
 
       <div className="flex items-baseline justify-between gap-3 mt-8 mb-3">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg">Planned against actual</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl">Planned against actual</h2>
       </div>
       <div className="grid md:grid-cols-2 gap-6 stagger">
         <BudgetTable title="Expenses" rows={expRows} extra={zeroExp} type="expense" monthTx={monthTx} setPlanned={setPlanned} onDrill={(cat) => setDrill({ type: "expense", category: cat })} />
@@ -4231,7 +4246,7 @@ function CategoryDrill({ drill, monthTx, month, onClose }) {
       >
         <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${P.line}` }}>
           <div className="flex-1 min-w-0">
-            <h3 style={{ fontFamily: SERIF }} className="text-lg truncate">{drill.category}</h3>
+            <h3 style={{ fontFamily: SERIF }} className="text-xl truncate">{drill.category}</h3>
             <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">
               {monthLabel(month)} · {list.length} {list.length === 1 ? "entry" : "entries"} ·{" "}
               <span style={{ color: tone }}>{fmt(total)}</span>
@@ -4304,7 +4319,7 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
   return (
     <section style={cardStyle()} className="p-5">
       <div className="flex justify-between items-baseline mb-3">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg">{title}</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl">{title}</h2>
         <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">planned / actual</div>
       </div>
       <div className="space-y-3">
@@ -4696,7 +4711,7 @@ function Capture({
             {GUIDES[guideId].avatar}
           </span>
           <span style={{ fontFamily: MONO, color: P.muted }} className="text-xs flex-1 truncate">{GUIDES[guideId].title}</span>
-          <button onClick={() => setGuideId(null)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+          <button onClick={() => setGuideId(null)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
             leave the guide
           </button>
         </div>
@@ -4791,7 +4806,7 @@ function Capture({
         )}
         <div ref={endRef} />
       </div>
-      <div className="p-3 flex items-center gap-2" style={{ borderTop: `1px solid ${P.line}` }}>
+      <div className="p-3 flex items-center gap-2 tally-composer" style={{ borderTop: `1px solid ${P.line}` }}>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ""; }} />
         <button
           onClick={() => fileRef.current.click()}
@@ -4899,7 +4914,7 @@ function NudgeCard({ nudge, data, apply, onDone }) {
             );
           })}
           {outstanding.length > 0 && (
-            <button onClick={() => setDismissed(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+            <button onClick={() => setDismissed(true)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
               later
             </button>
           )}
@@ -5045,7 +5060,7 @@ function ProposalCard({ proposal, data, apply }) {
 
   return (
     <div style={{ background: P.bg, border: `1px solid ${P.brass}55` }} className="rounded-lg p-3 mt-2 space-y-2 w-72 max-w-full">
-      <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-widest flex items-center gap-1.5">
+      <div style={{ color: P.brassText }} className="text-[14px] font-medium flex items-center gap-1.5">
         <Sparkles size={11} /> {spec.title}
       </div>
       {(input.reason || spec.note) && (
@@ -5593,7 +5608,7 @@ function ProfitLoss({ data, month }) {
       </div>
 
       <section style={cardStyle()} className="p-5">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">{monthLabel(month)} statement</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl mb-3">{monthLabel(month)} statement</h2>
         <div className="space-y-2" style={{ fontFamily: MONO }}>
           <PLRow label="Revenue" value={revenue} color={P.credit} change={revenueChange} />
           <PLRow label="Costs & expenses" value={-costs} color={P.debit} change={costsChange} invertChange />
@@ -5627,7 +5642,7 @@ function ProfitLoss({ data, month }) {
 
       {/* at-a-glance stats: burn rate, top category concentration, txn count — the numbers behind the statement above */}
       <section style={cardStyle()} className="p-5">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">At a glance</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl mb-3">At a glance</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatTile label="Avg. daily spend" value={fmt(avgDailyCost)} hint={`over ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"}`} />
           <StatTile label="Avg. daily revenue" value={fmt(avgDailyRevenue)} hint={`over ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"}`} />
@@ -5641,7 +5656,7 @@ function ProfitLoss({ data, month }) {
       </section>
 
       <section style={cardStyle()} className="p-5">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">Where the money went</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl mb-3">Where the money went</h2>
         {catRows.length === 0 ? (
           <p style={{ color: P.faint }} className="text-sm">No expenses in this view for {monthLabel(month)}.</p>
         ) : (
@@ -5655,7 +5670,7 @@ function ProfitLoss({ data, month }) {
 
       <section style={cardStyle()} className="p-5">
         <div className="flex items-baseline justify-between mb-3">
-          <h2 style={{ fontFamily: SERIF }} className="text-lg">Six-month trend</h2>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl">Six-month trend</h2>
           <div className="flex items-center gap-3 text-xs" style={{ color: P.faint, fontFamily: MONO }}>
             <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.credit, display: "inline-block" }} /> income</span>
             <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.debit, display: "inline-block" }} /> expense</span>
@@ -6070,7 +6085,16 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
       );
     }
     return (
-      <div key={i.id} style={{ background: inGroup ? P.surface : P.bg, border: `1px solid ${overdue ? P.debit : P.line}`, opacity: future ? 0.7 : 1 }} className="rounded-lg p-3 flex items-center gap-2">
+      <div
+        key={i.id}
+        style={{
+          background: inGroup ? P.surface : P.surface2,
+          border: overdue ? `1px solid ${P.debit}` : "none",
+          borderRadius: 14,
+          opacity: future ? 0.7 : 1,
+        }}
+        className="p-3.5 flex items-center gap-2 min-w-0"
+      >
         <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} className="flex-1 min-w-0 text-left" title="Edit">
           {/* Who and what for, on one line; when and how underneath. The old
               shape put the party alone on the first line and everything else
@@ -6097,14 +6121,26 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
     <Paperclip size={13} />
           </button>
         )}
-        <button onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }} style={{ color: P.faint, padding: 6, margin: -6 }} title="Edit">
-          <Pencil size={13} />
+        <button
+          onClick={() => { setEditingId(i.id); setEditForm({ ...i, amount: String(i.amount), frequency: i.frequency || "monthly", category: i.category || defaultCat }); }}
+          style={{ color: P.faint, padding: 6, margin: -6 }}
+          title="Edit"
+          className="hidden sm:block shrink-0"
+        >
+          <Pencil size={14} />
         </button>
-        <Btn tone="ghost" onClick={() => setSettleFor(i)} title={`${action}: confirm the actual amount, date, payment, and file the receipt`}>
-          <Check size={13} />
-        </Btn>
+        <button
+          onClick={() => setSettleFor(i)}
+          title={`${action}: confirm the actual amount, date, payment, and file the receipt`}
+          aria-label={action}
+          style={{ background: P.surface, color: P.text, borderRadius: R.pill, boxShadow: elev(1) }}
+          className="shrink-0 w-9 h-9 flex items-center justify-center"
+        >
+          <Check size={16} />
+        </button>
         <IconButton
           label="Delete"
+          className="hidden sm:inline-flex shrink-0"
           onClick={async () => {
             const ok = await askConfirm({
               title: `Delete this ${kind === "receivables" ? "receivable" : "payable"}?`,
@@ -6322,7 +6358,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
     <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
       <div role="dialog" aria-modal="true" style={{ background: P.surface, border: `1px solid ${P.line}`, boxShadow: elev(3), borderRadius: R.panel }} className="modal-panel w-full max-w-sm p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-1">
-          <h3 style={{ fontFamily: SERIF }} className="text-lg">{action}</h3>
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">{action}</h3>
           <button onClick={onClose} style={{ color: P.muted }} className="p-1"><X size={16} /></button>
         </div>
         <p style={{ color: P.muted }} className="text-sm mb-3 truncate">{item.party}{item.description ? ` · ${item.description}` : ""}</p>
@@ -6588,7 +6624,9 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
 
 /* ================= cash calendar: list + month-grid views ================= */
 function CashCalendar({ data }) {
-  const [view, setView] = useState("list"); // list | grid
+  const [view, setView] = useState("grid"); // grid | list. A calendar opens on
+  // the calendar: the shape of the month is the thing you came for, and the
+  // list is the same data read one line at a time.
   const [span, setSpan] = useState(30);
   const [gridMonth, setGridMonth] = useState(thisMonth());
   const [selectedDay, setSelectedDay] = useState(null);
@@ -6617,8 +6655,39 @@ function CashCalendar({ data }) {
       size="sm"
       value={view}
       onChange={setView}
-      options={[{ value: "list", label: "List" }, { value: "grid", label: "Calendar" }]}
+      options={[{ value: "grid", label: "Calendar" }, { value: "list", label: "List" }]}
     />
+  );
+
+  /* ---------- what is coming, in both views ----------
+     The two figures belong to the page, not to whichever way you are reading
+     it. They used to live inside the list branch, so switching to the month
+     grid dropped them. */
+  const horizonEnd = (() => { const d = new Date(); d.setDate(d.getDate() + span); return d.toISOString().slice(0, 10); })();
+  const horizonOcc = occurrencesBetween(data, today, horizonEnd, today);
+  const ahead = horizonOcc.filter((o) => !o.overdue);
+  const aheadIn = ahead.filter((o) => o.kind === "receivables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+  const aheadOut = ahead.filter((o) => o.kind === "payables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
+  const aheadInCount = ahead.filter((o) => o.kind === "receivables").length;
+  const aheadOutCount = ahead.filter((o) => o.kind === "payables").length;
+
+  const HorizonCards = () => (
+    <div className="grid sm:grid-cols-2 gap-3">
+      <div style={cardStyle()} className="p-5">
+        <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected in, next {span} days</div>
+        <div style={{ fontFamily: MONO, color: P.credit }} className="text-[30px] tabular-nums leading-none">{fmt0(aheadIn)}</div>
+        <div style={{ color: P.faint }} className="text-[14px] mt-4">
+          {aheadInCount} {aheadInCount === 1 ? "receivable" : "receivables"}
+        </div>
+      </div>
+      <div style={cardStyle()} className="p-5">
+        <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected out, next {span} days</div>
+        <div style={{ fontFamily: MONO, color: P.debit }} className="text-[30px] tabular-nums leading-none">{fmt0(aheadOut)}</div>
+        <div style={{ color: P.faint }} className="text-[14px] mt-4">
+          {aheadOutCount} {aheadOutCount === 1 ? "payable and recurring cost" : "payables and recurring costs"}
+        </div>
+      </div>
+    </div>
   );
 
   /* ---------- LIST VIEW ---------- */
@@ -6638,22 +6707,7 @@ function CashCalendar({ data }) {
 
     return (
       <div className="space-y-6 stagger">
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div style={cardStyle()} className="p-5">
-            <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected in, next {span} days</div>
-            <div style={{ fontFamily: MONO, color: P.credit }} className="text-[30px] tabular-nums leading-none">{fmt0(cashIn)}</div>
-            <div style={{ color: P.faint }} className="text-[14px] mt-4">
-              {inCount} {inCount === 1 ? "receivable" : "receivables"}
-            </div>
-          </div>
-          <div style={cardStyle()} className="p-5">
-            <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected out, next {span} days</div>
-            <div style={{ fontFamily: MONO, color: P.debit }} className="text-[30px] tabular-nums leading-none">{fmt0(cashOut)}</div>
-            <div style={{ color: P.faint }} className="text-[14px] mt-4">
-              {outCount} {outCount === 1 ? "payable and recurring cost" : "payables and recurring costs"}
-            </div>
-          </div>
-        </div>
+        <HorizonCards />
 
         <div style={cardStyle()} className="p-5">
           <div className="flex flex-wrap justify-between items-center gap-4 mb-3">
@@ -6685,7 +6739,7 @@ function CashCalendar({ data }) {
 
         {overdue.length > 0 && (
           <section style={cardStyle({ tone: "debit" })} className="p-5">
-            <h2 style={{ fontFamily: SERIF, color: P.debit }} className="text-lg mb-1">Overdue</h2>
+            <h2 style={{ fontFamily: SERIF, color: P.debit }} className="text-xl mb-1">Overdue</h2>
             <div className="divide-y" style={{ borderColor: P.line }}>
               {overdue.map((o, i) => <div key={i} style={{ borderColor: P.line }}><Row o={o} /></div>)}
             </div>
@@ -6693,14 +6747,14 @@ function CashCalendar({ data }) {
         )}
 
         <section style={cardStyle()} className="p-5">
-          <h2 style={{ fontFamily: SERIF }} className="text-lg mb-2">Next {span} days</h2>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl mb-2">Next {span} days</h2>
           {dates.length === 0 ? (
             <EmptyState compact icon={CalendarDays} title="Nothing due in this window">Recurring receivables and payables project here automatically once you add them.</EmptyState>
           ) : (
             <div className="space-y-3">
               {dates.map((d) => (
                 <div key={d}>
-                  <div style={{ fontFamily: MONO, color: d === today ? P.brass : P.faint, borderBottom: `1px solid ${P.line}` }} className="text-xs uppercase tracking-widest pb-1 mb-1">
+                  <div style={{ fontFamily: MONO, color: d === today ? P.brass : P.faint, borderBottom: `1px solid ${P.line}` }} className="text-[14px] pb-1 mb-1">
                     {prettyDate(d)}{d === today ? " · today" : ""}
                   </div>
                   {byDate[d].map((o, i) => <Row key={i} o={o} />)}
@@ -6734,6 +6788,8 @@ function CashCalendar({ data }) {
 
   return (
     <div className="space-y-6 stagger">
+      <HorizonCards />
+
       <div style={cardStyle()} className="p-5">
         <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
           <div className="flex items-center gap-2">
@@ -6811,7 +6867,7 @@ function CashCalendar({ data }) {
 
       {selectedDay && (
         <section style={cardStyle()} className="p-5">
-          <h2 style={{ fontFamily: SERIF }} className="text-lg mb-1">
+          <h2 style={{ fontFamily: SERIF }} className="text-xl mb-1">
             {new Date(selectedDay + "T00:00:00").toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}
           </h2>
           {dayItems.length === 0 ? (
@@ -7118,7 +7174,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
       </section>
 
       <section style={cardStyle()} className="p-5">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">The period in six numbers</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl mb-3">The period in six numbers</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <StatTile label="Revenue" value={fmt(r.revenue)} hint={`${r.incomeCats.length} ${r.incomeCats.length === 1 ? "source" : "sources"}`} />
           <StatTile label="Costs" value={fmt(r.costs)} hint={r.onCredits > 0 ? `${fmt(r.onCredits)} on credits` : `${r.cats.length} ${r.cats.length === 1 ? "category" : "categories"}`} />
@@ -7136,7 +7192,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
 
       <section style={cardStyle()} className="p-5">
         <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
-          <h2 style={{ fontFamily: SERIF }} className="text-lg">Month by month</h2>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl">Month by month</h2>
           <div className="flex items-center gap-3 text-xs" style={{ color: P.faint, fontFamily: MONO }}>
             <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.credit, display: "inline-block" }} /> income</span>
             <span className="inline-flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: P.debit, display: "inline-block" }} /> expense</span>
@@ -7158,7 +7214,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
       </section>
 
       <section style={cardStyle()} className="p-5">
-        <h2 style={{ fontFamily: SERIF }} className="text-lg mb-3">Where the money went</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl mb-3">Where the money went</h2>
         {r.cats.length === 0 ? (
           <p style={{ color: P.faint }} className="text-sm">No expenses in this period.</p>
         ) : (
@@ -7173,7 +7229,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
       <section style={cardStyle()} className="p-5">
         <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
           <div>
-            <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Export</h2>
+            <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Export</h2>
             <p style={{ color: P.muted }} className="text-sm">
               Built on your device from what is already on screen. CSV opens anywhere; PDF is the one you send.
             </p>
@@ -7200,7 +7256,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
 
       {onAsk && (
         <section style={cardStyle()} className="p-5">
-          <h2 style={{ fontFamily: SERIF }} className="text-lg mb-1">Ask about the period</h2>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl mb-1">Ask about the period</h2>
           <p style={{ color: P.muted }} className="text-sm mb-3">Tally reads the same entries these figures came from.</p>
           <div className="flex flex-wrap gap-1.5">
             {[
@@ -7275,7 +7331,7 @@ function TourCard({ tab, onDismiss, asPanel }) {
       className={asPanel ? "flex items-start gap-3" : "rounded-lg p-4 mb-5 flex items-start gap-3"}
     >
       <div className="flex-1">
-        <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-widest mb-1">First time here</div>
+        <div style={{ color: P.brassText }} className="text-[14px] font-medium mb-1">First time here</div>
         <div style={{ fontFamily: SERIF }} className="text-base mb-1">{copy[0]}</div>
         <p style={{ color: P.muted }} className="text-sm">{copy[1]}</p>
       </div>
@@ -7407,12 +7463,12 @@ function SetupChecklist({ data, bankConns, onGo, openGuide, onDismiss, asPanel }
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Getting set up</h2>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Getting set up</h2>
           <p style={{ color: P.muted }} className="text-sm">
             {doneCount} of {steps.length} done.{asPanel ? "" : " This card goes away by itself."}
           </p>
         </div>
-        <button onClick={onDismiss} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 shrink-0">
+        <button onClick={onDismiss} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2 shrink-0">
           hide it
         </button>
       </div>
@@ -7617,8 +7673,8 @@ function DeadlineStrip({ rows, title = "Deadlines" }) {
     <div style={{ background: P.bg, border: `1px solid ${P[TONE[c.tone]] || P.line}` }} className="rounded-lg p-4 mt-3">
       <div className="flex items-baseline justify-between gap-3 flex-wrap">
         <div>
-          <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs uppercase tracking-wider">Next up</div>
-          <div style={{ fontFamily: SERIF }} className="text-lg leading-tight">{next.title}</div>
+          <div style={{ color: P.faint }} className="text-[14px]">Next up</div>
+          <div style={{ fontFamily: SERIF }} className="text-xl leading-tight">{next.title}</div>
           <div style={{ fontFamily: MONO, color: P.brassText }} className="text-sm">{longDate(next.date)}</div>
         </div>
         <div style={{ color: P[TONE[c.tone]] || P.text, border: `1px solid ${P[TONE[c.tone]] || P.line}`, fontFamily: MONO }}
@@ -7630,7 +7686,7 @@ function DeadlineStrip({ rows, title = "Deadlines" }) {
 
       {rows.length > 1 && (
         <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-2 space-y-1">
-          <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs uppercase tracking-wider mb-1">{title}</div>
+          <div style={{ color: P.faint }} className="text-[14px] mb-1">{title}</div>
           {rows.map((r) => {
             const rc = countdown(r.days);
             return (
@@ -7728,7 +7784,7 @@ function FilingPackage({ taxYear, province, done, setDone }) {
 
       {changed > 0 && (
         <div className="mt-3">
-          <button onClick={() => setShowDiff(!showDiff)} style={{ color: P.brassText, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">
+          <button onClick={() => setShowDiff(!showDiff)} style={{ color: P.brassText }} className="text-[13.5px] underline decoration-dotted underline-offset-2">
             {showDiff ? "hide" : "show"} what changed from {taxYear - 1} to {taxYear} ({changed})
           </button>
           {showDiff && (
@@ -7766,7 +7822,7 @@ function FilingPackage({ taxYear, province, done, setDone }) {
             <button onClick={() => setOpenGroup((g) => ({ ...g, [k]: !g[k] }))} className="w-full text-left">
               <div className="flex items-center gap-2">
                 <ChevronRight size={13} style={{ color: P.faint, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
-                <span style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-wider">{title}</span>
+                <span style={{ color: P.brassText }} className="text-[14px] font-medium">{title}</span>
                 <span style={{ fontFamily: MONO, color: P.faint }} className="text-xs">({list.length})</span>
               </div>
               <div style={{ color: P.faint }} className="text-xs ml-5">{sub}</div>
@@ -8618,7 +8674,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
       })()}
 
       {!connected && (
-        <button onClick={() => setShowSetup(!showSetup)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2 mt-4">
+        <button onClick={() => setShowSetup(!showSetup)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2 mt-4">
           {showSetup ? "hide" : "show"} one-time server setup
         </button>
       )}
@@ -8739,7 +8795,7 @@ function PersonalTaxCard({ data, openGuide }) {
     <section style={cardStyle()} className="p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 style={{ fontFamily: SERIF }} className="text-lg leading-tight">Personal tax (T1)</h2>
+          <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Personal tax (T1)</h2>
           <p style={{ color: P.muted }} className="text-sm">Everything CRA cannot see, ready for your software or your accountant</p>
         </div>
         <GuideAnchor id="filing-t1" onOpen={openGuide} label="Walk me through it" />
@@ -8803,8 +8859,11 @@ function PersonalTaxCard({ data, openGuide }) {
               <div className="divide-y" style={{ borderColor: P.line }}>
                 {lines.map(([label, v, strong], idx) => (
                   <div key={idx} className="flex items-center gap-3 py-1.5" style={{ borderColor: P.line }}>
-                    <span className={"flex-1 text-sm truncate " + (v === null ? "uppercase tracking-widest text-xs" : strong ? "font-medium" : "")}
-                      style={{ color: v === null ? P.faint : strong ? P.text : P.muted, fontFamily: v === null ? MONO : undefined }}>
+                    {/* A GIFI section heading is a heading, not a stamp. Weight
+                        separates it from its lines; capitals and tracking made
+                        the statement read like a receipt printer. */}
+                    <span className={"flex-1 truncate " + (v === null ? "text-[14px] font-medium" : strong ? "text-sm font-medium" : "text-sm")}
+                      style={{ color: v === null ? P.text : strong ? P.text : P.muted }}>
                       {label.trim()}
                     </span>
                     {v !== null && (
@@ -8987,7 +9046,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
                 <div className="text-sm truncate">{sw.name}</div>
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs">{sw.platform || "certified software"}{sw.gifiImport ? " · spreadsheet import" : " · manual GIFI entry"}</div>
               </div>
-              <button onClick={() => setPicking(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">change</button>
+              <button onClick={() => setPicking(true)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">change</button>
             </div>
           )}
           {route === "accountant" && (
@@ -8996,7 +9055,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
                 <div className="text-sm">Filed by your accountant</div>
                 <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs truncate">{accountantEmail || "add their email below"}</div>
               </div>
-              <button onClick={() => save({ route: null, software: null })} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">change</button>
+              <button onClick={() => save({ route: null, software: null })} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">change</button>
             </div>
           )}
 
@@ -9014,7 +9073,7 @@ function FilingConnector({ data, form, taxYear, accountantEmail }) {
                   <div style={{ fontFamily: MONO, color: P.credit }} className="text-xs">filed {rec.filed_on || ""}</div>
                   <div style={{ fontFamily: MONO, color: P.text }} className="text-sm">confirmation {rec.confirmation_number}</div>
                 </div>
-                <button onClick={() => setRecording(true)} style={{ color: P.faint, fontFamily: MONO }} className="text-xs underline decoration-dotted underline-offset-2">edit</button>
+                <button onClick={() => setRecording(true)} style={{ color: P.faint }} className="text-[13.5px] underline decoration-dotted underline-offset-2">edit</button>
               </div>
             ) : recording ? (
               <div className="grid sm:grid-cols-3 gap-2 items-end">
@@ -9071,7 +9130,7 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
 
   const Section = ({ title, children }) => (
     <div style={{ borderTop: `1px solid ${P.line}` }} className="pt-4 mt-4">
-      <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs uppercase tracking-widest mb-2">{title}</div>
+      <div style={{ color: P.brassText }} className="text-[14px] font-medium mb-2">{title}</div>
       {children}
     </div>
   );

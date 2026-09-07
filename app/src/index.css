@@ -417,3 +417,96 @@ h1, h2, h3 {
    numbers rather than one comparison. */
 .budget-row { padding: 6px 0; }
 .budget-row + .budget-row { border-top: 1px solid var(--line); }
+
+/* ================= phones =================
+   Everything below 1024px, where there is no rail and no room for the desktop
+   proportions. Written as one block rather than scattered through the file, so
+   the mobile layout can be read in one sitting.
+
+   The faults this fixes, all visible on a real device and none on a narrowed
+   desktop window: the header sat under the status bar, the pinned figure bar
+   floated over the content it had condensed, long insight text pushed the page
+   sideways, the card figures were desktop-sized, and the dock covered the last
+   card on every page. */
+
+/* 1. Nothing renders under the notch or the status bar. */
+@media (max-width: 1023px) {
+  .inner {
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    /* 2. The dock is 44px of control plus its own inset, and the last card has
+       to clear it completely, not sit half under it. */
+    padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* 3. The condensing bar belongs to the desktop, where the rail gives it a
+     left edge to start from. On a phone it covered the heading it was meant to
+     replace, and the dock already tells you where you are. */
+  .mini-line { display: none; }
+
+  /* 4. Card figures at phone scale. 34px was chosen against a 1140px column. */
+  .k-fig-wide { font-size: 27px !important; }
+  .k-fig { font-size: 22px !important; }
+
+  /* 5. Nothing is allowed to push the page sideways. A single long insight
+     sentence was doing exactly that, and horizontal scroll on a ledger means
+     the amounts leave the screen. */
+  body { overflow-x: hidden; }
+  .inner, .inner * { max-width: 100%; }
+  .arap-panel, .budget-row { overflow: hidden; }
+}
+
+/* 6. Small phones: the two-up card grid stops being two-up for the wide cards,
+   and the section heading row stops competing with the month stepper. */
+@media (max-width: 400px) {
+  .inner { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  .k-fig-wide { font-size: 25px !important; }
+  .k-fig { font-size: 20px !important; }
+}
+
+/* ================= Tally on a phone =================
+   A floating popover 84px off the bottom is a desktop shape. On a phone it
+   left the transcript cramped in a small card, sat on the same z-layer as the
+   dock so the two competed for the bottom of the screen, and ignored the home
+   indicator entirely.
+
+   It is a bottom sheet here: full width, anchored to the bottom edge, rounded
+   only at the top, and tall enough to hold a conversation. Because it spans to
+   bottom: 0 above the dock's layer, it covers the dock while open, so there is
+   one set of controls on screen instead of two. */
+@media (max-width: 1023px) {
+  .tally-frame {
+    left: 0; right: 0; bottom: 0; top: auto;
+    width: auto; padding: 0;
+    z-index: 50;
+  }
+  .tally-frame .capture-pop { width: 100%; }
+
+  /* Rises from the edge it is attached to, rather than fading in place. */
+  .capture-pop { transform: translateY(100%); opacity: 1; }
+  .capture-pop.open { transform: none; }
+
+  .tally-panel {
+    height: 88dvh;
+    width: 100%;
+    border-radius: 22px 22px 0 0;
+    border: none;
+  }
+
+  /* The composer is the last thing above the home indicator, so it carries the
+     inset itself. Without this the send button sits under the gesture bar. */
+  .tally-composer { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+  /* The peek clears the dock and spans the width, since a 330px card on a
+     390px screen is neither one thing nor the other. */
+  .tally-peek {
+    left: 16px; right: 16px; width: auto;
+    bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 1023px) and (prefers-reduced-motion: reduce) {
+  .capture-pop { transform: none; opacity: 0; }
+  .capture-pop.open { opacity: 1; }
+}
