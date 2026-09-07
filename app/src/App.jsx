@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -951,7 +951,8 @@ function Ledger({ onSignOut }) {
   const [transferOpen, setTransferOpen] = useState(false);
   const [seenTours, setSeenTours] = useState({}); // session mirror of localStorage tour flags
   const [setupHidden, setSetupHidden] = useState(() => Boolean(window.localStorage.getItem("setup:hidden")));
-  const [headerPanel, setHeaderPanel] = useState(null);   // "setup" | "tour" | null
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [legal, setLegal] = useState(null);               // "data" | "privacy" | "terms" | null
   // The same arithmetic the checklist does, so the dot on the icon and the
   // panel underneath it can never disagree.
   const setupProgress = useMemo(() => {
@@ -1734,6 +1735,9 @@ function Ledger({ onSignOut }) {
   };
   const closePreview = () => setPreview(null); // signed URLs expire on their own
 
+  // Six sections on the rail and the dock. Connectors and Reports are places
+  // you visit occasionally, not places you live, so they moved into the menu
+  // and the dock got two fewer targets to divide 390px between.
   const tabs = [
     ["overview", "Snapshot", LayoutGrid],
     ["transactions", "Transactions", Receipt],
@@ -1741,9 +1745,12 @@ function Ledger({ onSignOut }) {
     ["arap", "AR / AP", FileClock],
     ["credits", "Credits", Coins],
     ["calendar", "Calendar", CalendarDays],
-    ["integrations", "Connectors", Plug],
-    ["reports", "Reports", BarChart3],
   ];
+  const TAB_TITLES = {
+    overview: "Snapshot", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
+    credits: "Credits", calendar: "Calendar", integrations: "Connectors",
+    reports: "Reports", settings: "Settings",
+  };
 
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS, "--ring": P.brass }}
@@ -1771,8 +1778,8 @@ function Ledger({ onSignOut }) {
         {/* The brand eyebrow above the ledger name was two pieces of branding
             stacked before anything useful, and on a phone it landed under the
             status bar. The ledger name is enough; the mark is on the dock. */}
-        <header className="pt-1 pb-4 lg:pt-4 lg:pb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <div className="min-w-0 basis-full sm:basis-auto">
+        <header className="pt-1 pb-4 lg:pt-4 lg:pb-3 flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3 min-w-0 lg:hidden">
               <div className="relative min-w-0">
                 <button
@@ -1837,49 +1844,18 @@ function Ledger({ onSignOut }) {
             >
               <User size={15} />
             </Btn>
-            {/* One control, not four. Account, theme, and the setup checklist
-                all live on the Settings page, so the header does not need a
-                button for each of them; the dot says whether Settings has
-                anything waiting. The tour moved to a text link beside the page
-                name, where the thing it explains actually is. */}
             <button
-              onClick={() => { setTab("settings"); setChatOpen(false); }}
-              aria-label="Settings"
-              title="Ledgers, appearance, and your account"
-              style={{
-                background: tab === "settings" ? P.brass : P.surface,
-                color: tab === "settings" ? P.onbrass : P.muted,
-                boxShadow: tab === "settings" ? "none" : elev(1),
-                borderRadius: 13,
-              }}
+              onClick={() => setMenuOpen(true)}
+              aria-label="Menu"
+              title="Reports, connectors, profile, and settings"
+              style={{ background: P.surface, color: P.muted, boxShadow: elev(1), borderRadius: 13 }}
               className="relative w-10 h-10 flex items-center justify-center shrink-0"
             >
-              <SettingsIcon size={17} />
-              {!setupHidden && setupProgress.done < setupProgress.total && tab !== "settings" && (
+              <MenuIcon size={18} />
+              {!setupHidden && setupProgress.done < setupProgress.total && (
                 <span aria-hidden style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, borderRadius: "50%", background: P.brass }} />
               )}
             </button>
-
-            {headerPanel === "tour" && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  position: "absolute", top: "100%", right: 0, zIndex: 45, marginTop: 8,
-                  width: "min(420px, calc(100vw - 32px))",
-                  background: P.surface, borderRadius: R.panel, boxShadow: elev(3),
-                }}
-              >
-                <TourCard
-                  asPanel
-                  tab={tab}
-                  onDismiss={() => {
-                    window.localStorage.setItem(`tour:${tab}`, "1");
-                    setSeenTours((st) => ({ ...st, [tab]: true }));
-                    setHeaderPanel(null);
-                  }}
-                />
-              </div>
-            )}
 
             <Btn
               tone="ghost"
@@ -1894,6 +1870,7 @@ function Ledger({ onSignOut }) {
             </Btn>
             {/* The month stepper reads as one control, not three: the label
                 sits between its arrows inside a single bordered well. */}
+            {/* The month, then the menu, in line with the ledger name. */}
             <div
               className="flex items-center shrink-0"
               style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
@@ -1925,19 +1902,10 @@ function Ledger({ onSignOut }) {
         {/* The stepper above already names the month, and it is the thing that
             changes it. Saying "September 2026" again underneath was the same
             fact twice in two different type sizes. */}
-        <div className="mb-4 flex items-baseline gap-3 fade-in-key" key={`head:${tab}`}>
+        <div className="mb-4 fade-in-key" key={`head:${tab}`}>
           <span style={{ color: P.text }} className="text-[15px] font-semibold">
-            {tab === "settings" ? "Settings" : tabs.find(([k]) => k === tab)?.[1]}
+            {TAB_TITLES[tab] || ""}
           </span>
-          {!seenTours[tab] && !window.localStorage.getItem(`tour:${tab}`) && (
-            <button
-              onClick={() => setHeaderPanel(headerPanel === "tour" ? null : "tour")}
-              style={{ color: P.brassText }}
-              className="text-[14px]"
-            >
-              What is this screen for?
-            </button>
-          )}
         </div>
 
         {/* ===== signature ledger line ===== */}
@@ -2163,6 +2131,18 @@ function Ledger({ onSignOut }) {
       <ConfirmHost />
 
       <PreviewModal preview={preview} onClose={closePreview} />
+      {menuOpen && (
+        <MenuSheet
+          tab={tab}
+          setupPending={!setupHidden && setupProgress.done < setupProgress.total}
+          onClose={() => setMenuOpen(false)}
+          onGo={(where) => { setMenuOpen(false); setTab(where); setChatOpen(false); window.scrollTo({ top: 0 }); }}
+          onProfile={() => { setMenuOpen(false); setAccountOpen(true); }}
+          onLegal={(which) => { setMenuOpen(false); setLegal(which); }}
+        />
+      )}
+      {legal && <LegalSheet which={legal} onClose={() => setLegal(null)} />}
+
       {accountOpen && (
         <AccountModal theme={theme} setTheme={setTheme} onSignOut={onSignOut} onResetLedger={resetAll}
           ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />
@@ -3778,6 +3758,170 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ================= the menu =================
+   Everything you reach occasionally rather than live in: the two sections that
+   came off the dock, your account, and the three documents anyone handing a
+   bookkeeping app their bank feed is entitled to read before they do.
+
+   A sheet rather than a dropdown, because on a phone a dropdown anchored to a
+   corner either runs off the screen or shrinks its own targets. */
+function MenuSheet({ onClose, onGo, onProfile, onLegal, tab, setupPending }) {
+  useEffect(() => {
+    const esc = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  const Item = ({ icon: Icon, label, hint, onClick, active, dot }) => (
+    <button
+      onClick={onClick}
+      style={{ background: active ? P.surface2 : "transparent", borderRadius: 14 }}
+      className="w-full flex items-center gap-3.5 px-3 py-3.5 text-left"
+    >
+      <span
+        style={{ background: active ? P.brass : P.surface2, color: active ? P.onbrass : P.muted, borderRadius: 11 }}
+        className="w-9 h-9 flex items-center justify-center shrink-0 relative"
+      >
+        <Icon size={17} />
+        {dot && (
+          <span aria-hidden style={{ position: "absolute", top: 4, right: 4, width: 7, height: 7, borderRadius: "50%", background: P.brass }} />
+        )}
+      </span>
+      <span className="flex-1 min-w-0">
+        <span style={{ color: P.text }} className="text-[16px] block">{label}</span>
+        {hint && <span style={{ color: P.faint }} className="text-[13.5px] block truncate">{hint}</span>}
+      </span>
+      <ChevronRight size={16} style={{ color: P.faint }} className="shrink-0" />
+    </button>
+  );
+
+  return (
+    <div
+      className="modal-overlay fixed inset-0 z-50 flex items-start justify-end p-3 sm:p-4"
+      style={{ background: P.overlay }}
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Menu"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: P.surface, boxShadow: elev(3), borderRadius: R.panel,
+          marginTop: "max(8px, env(safe-area-inset-top))",
+          maxHeight: "calc(100dvh - max(24px, env(safe-area-inset-top)) - 24px)",
+        }}
+        className="modal-panel w-full max-w-sm overflow-y-auto"
+      >
+        <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-2">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Menu</h3>
+          <button onClick={onClose} aria-label="Close" style={{ color: P.muted }} className="p-1.5"><X size={18} /></button>
+        </div>
+
+        <div className="px-2 pb-2">
+          <Item icon={BarChart3} label="Reports" hint="Statements and exports for any period"
+            active={tab === "reports"} onClick={() => onGo("reports")} />
+          <Item icon={Plug} label="Connectors" hint="Bank feed and tax filing"
+            active={tab === "integrations"} onClick={() => onGo("integrations")} />
+        </div>
+
+        <div className="px-5 pt-3 pb-1" style={{ borderTop: `1px solid ${P.line}` }}>
+          <div style={{ color: P.faint }} className="text-[13.5px]">You</div>
+        </div>
+        <div className="px-2 pb-2">
+          <Item icon={User} label="Profile" hint="Email, name, and password" onClick={onProfile} />
+          <Item icon={SettingsIcon} label="Settings" hint="Ledgers, appearance, and setup"
+            active={tab === "settings"} onClick={() => onGo("settings")} dot={setupPending} />
+        </div>
+
+        <div className="px-5 pt-3 pb-1" style={{ borderTop: `1px solid ${P.line}` }}>
+          <div style={{ color: P.faint }} className="text-[13.5px]">Your data</div>
+        </div>
+        <div className="px-2 pb-4">
+          <Item icon={Shield} label="How your financial data is handled" hint="Bank access, storage, and who can see it"
+            onClick={() => onLegal("data")} />
+          <Item icon={FileText} label="Privacy policy" onClick={() => onLegal("privacy")} />
+          <Item icon={FileText} label="Terms of use" onClick={() => onLegal("terms")} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* The one document that cannot be a link to a page nobody has written yet.
+   Someone about to connect their bank deserves an answer in the app, in plain
+   words, about what happens to it. Everything stated here is true of this
+   build: Plaid holds the bank credentials, Supabase holds the rows, row level
+   security scopes them to the signed-in user, and receipts sit in a private
+   bucket keyed by user id. */
+function LegalSheet({ which, onClose }) {
+  const APP_SITE = "https://brasstally.com";
+  const copy = {
+    data: {
+      title: "How your financial data is handled",
+      body: [
+        ["Your bank sign-in never reaches us.", "Connecting a bank opens Plaid, and you sign in on your bank's own screen. Brasstally receives a token that can read transactions and balances. It cannot move money, and we never see your banking password."],
+        ["Your books live in your own rows.", "Everything is stored in Postgres with row level security, which means the database itself refuses to return another account's rows, not just the app. Receipts and invoices sit in a private bucket under your user id."],
+        ["Receipts are read by a model, then filed.", "When you drop in a receipt it is sent to Anthropic's API to be read, and the text comes back to fill the form. The file is stored with the entry so it is there at tax time."],
+        ["You can take it or delete it.", "Every section exports to CSV, and resetting a ledger erases its entries. Deleting your account removes the rows and the files with it."],
+        ["What we do not do.", "We do not sell data, we do not show advertising, and nobody at Brasstally reads your ledger unless you ask us to look at something."],
+      ],
+      link: `${APP_SITE}/privacy`,
+      linkLabel: "The full privacy policy",
+    },
+    privacy: {
+      title: "Privacy policy",
+      body: [["The full policy lives on the site.", "It covers what is collected, how long it is kept, who processes it, and how to ask for it back or ask for it gone. Canadian financial data also brings PIPEDA obligations, which the policy sets out."]],
+      link: `${APP_SITE}/privacy`,
+      linkLabel: "Read the privacy policy",
+    },
+    terms: {
+      title: "Terms of use",
+      body: [
+        ["The full terms live on the site.", "What the service does, what it does not promise, and what happens to your data if you stop using it."],
+        ["One thing worth saying here.", "Brasstally prepares books and drafts returns. It is not an accountant and it does not file on your behalf. A draft is a starting point for you or your accountant, not advice."],
+      ],
+      link: `${APP_SITE}/terms`,
+      linkLabel: "Read the terms",
+    },
+  }[which];
+
+  return (
+    <div className="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: P.overlay }} onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={copy.title}
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: P.surface, boxShadow: elev(3), borderRadius: R.panel, maxHeight: "86dvh" }}
+        className="modal-panel w-full max-w-lg overflow-y-auto"
+      >
+        <div className="flex items-start justify-between gap-3 px-6 pt-6 pb-2">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">{copy.title}</h3>
+          <button onClick={onClose} aria-label="Close" style={{ color: P.muted }} className="p-1.5 shrink-0"><X size={18} /></button>
+        </div>
+        <div className="px-6 pb-6">
+          {copy.body.map(([h, b]) => (
+            <div key={h} className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
+              <div style={{ color: P.text }} className="text-[16px] mb-1">{h}</div>
+              <p style={{ color: P.muted }} className="text-[15px] leading-relaxed">{b}</p>
+            </div>
+          ))}
+          <a
+            href={copy.link}
+            target="_blank"
+            rel="noreferrer"
+            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+            className="mt-3 w-full px-4 py-3 text-[15px] font-medium inline-flex items-center justify-center gap-2"
+          >
+            {copy.linkLabel} <ExternalLink size={15} />
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
