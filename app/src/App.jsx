@@ -1862,7 +1862,7 @@ function Ledger({ onSignOut }) {
               className="flex items-center shrink-0"
               style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
             >
-              <IconButton label="Previous month" onClick={() => setMonth(shiftMonth(month, -1))} style={{ margin: 0, padding: "9px 11px", color: P.muted }}>
+              <IconButton label="Previous month" onClick={() => setMonth(shiftMonth(month, -1))} style={{ margin: 0, padding: "12px 14px", color: P.text }} className="press">
                 <ChevronLeft size={17} />
               </IconButton>
               {/* The year is only worth the width when it is not this year. */}
@@ -1874,7 +1874,7 @@ function Ledger({ onSignOut }) {
                     : `${monthLabel(month).split(" ")[0].slice(0, 3)} ${month.slice(2, 4)}`}
                 </span>
               </div>
-              <IconButton label="Next month" onClick={() => setMonth(shiftMonth(month, 1))} style={{ margin: 0, padding: "9px 11px", color: P.muted }}>
+              <IconButton label="Next month" onClick={() => setMonth(shiftMonth(month, 1))} style={{ margin: 0, padding: "12px 14px", color: P.text }} className="press">
                 <ChevronRight size={17} />
               </IconButton>
             </div>
@@ -1884,10 +1884,10 @@ function Ledger({ onSignOut }) {
               onClick={() => setMenuOpen(true)}
               aria-label="Menu"
               title="Reports, connectors, profile, and settings"
-              style={{ background: P.surface, color: P.muted, boxShadow: elev(1), borderRadius: 13 }}
-              className="relative w-10 h-10 flex items-center justify-center shrink-0"
+              style={{ background: P.surface, color: P.text, boxShadow: elev(1), borderRadius: 14 }}
+              className="relative w-11 h-11 flex items-center justify-center shrink-0 press"
             >
-              <MenuIcon size={18} />
+              <MenuIcon size={21} />
               {!setupHidden && setupProgress.done < setupProgress.total && (
                 <span aria-hidden style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, borderRadius: "50%", background: P.brass }} />
               )}
@@ -3562,9 +3562,9 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
           aria-label="Choose which cards show"
           title="Choose cards"
           style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.control, color: picking ? P.brassText : P.muted }}
-          className="w-9 h-9 inline-flex items-center justify-center shrink-0"
+          className="w-11 h-11 inline-flex items-center justify-center shrink-0 press"
         >
-          <Sliders size={17} />
+          <Sliders size={18} />
         </button>
       </div>
 
@@ -4980,10 +4980,10 @@ function Capture({
           onClick={() => fileRef.current.click()}
           title="Attach a receipt screenshot or invoice PDF"
           aria-label="Attach a receipt or invoice"
-          style={{ background: P.surface2, color: P.muted, width: 40, height: 40, borderRadius: 13 }}
-          className="flex items-center justify-center shrink-0"
+          style={{ background: P.surface2, color: P.muted, width: 44, height: 44, borderRadius: 14 }}
+          className="flex items-center justify-center shrink-0 press"
         >
-          <Camera size={18} />
+          <Camera size={19} />
         </button>
         <input
           placeholder="Ask Tally, or type an entry"
@@ -4999,13 +4999,13 @@ function Capture({
           disabled={busy || !input.trim()}
           aria-label="Send"
           style={{
-            background: P.brass, color: P.onbrass, width: 40, height: 40, borderRadius: 13,
+            background: P.brass, color: P.onbrass, width: 44, height: 44, borderRadius: 14,
             opacity: busy || !input.trim() ? 0.4 : 1,
             cursor: busy || !input.trim() ? "not-allowed" : "pointer",
           }}
-          className="flex items-center justify-center shrink-0"
+          className="flex items-center justify-center shrink-0 press"
         >
-          <Send size={17} />
+          <Send size={18} />
         </button>
       </div>
     </div>
@@ -5469,7 +5469,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
                 boxShadow: dir === k ? "none" : elev(1),
                 borderRadius: R.pill,
               }}
-              className="px-4 py-2.5 text-[15px] font-medium"
+              className="px-4 py-2.5 text-[15px] font-medium press"
             >
               {label}
             </button>
@@ -5480,14 +5480,14 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           onClick={openTransfer}
           title="Move money between your ledgers"
           style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
         >
           <ArrowLeftRight size={16} /> Transfer
         </button>
         <button
           onClick={() => setAdding(!adding)}
           style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
         >
           <Plus size={16} /> Add entry
         </button>
@@ -6312,9 +6312,9 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
           title={`${action}: confirm the actual amount, date, payment, and file the receipt`}
           aria-label={action}
           style={{ background: P.surface, color: P.text, borderRadius: R.pill, boxShadow: elev(1) }}
-          className="shrink-0 w-9 h-9 flex items-center justify-center"
+          className="shrink-0 w-11 h-11 flex items-center justify-center press"
         >
-          <Check size={16} />
+          <Check size={17} />
         </button>
         <IconButton
           label="Delete"
@@ -6347,7 +6347,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
           : <button
               onClick={() => setAdding(true)}
               style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-              className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+              className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
             >
               <Plus size={16} /> Add
             </button>}
@@ -6657,7 +6657,7 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
           <button
             onClick={() => setAdding(true)}
             style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-            className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+            className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
           >
             <Plus size={16} /> New pool
           </button>
@@ -8769,7 +8769,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
                     onClick={() => sync(c.id)}
                     disabled={syncing === c.id}
                     style={{ background: P.surface, color: P.text, borderRadius: R.pill, boxShadow: elev(1) }}
-                    className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0"
+                    className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
                   >
                     {syncing === c.id ? <Loader2 size={15} className="animate-spin" /> : null} Sync now
                   </button>}
@@ -8795,7 +8795,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
               onClick={connect}
               disabled={busy}
               style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill, opacity: busy ? 0.6 : 1 }}
-              className="px-5 py-3 text-[15px] font-medium inline-flex items-center gap-2"
+              className="px-5 py-3 text-[15px] font-medium inline-flex items-center gap-2 press"
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Connect a bank
             </button>

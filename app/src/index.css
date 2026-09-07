@@ -132,8 +132,8 @@ h1, h2, h3 {
    card a single pixel, and the hairline warms toward --linehover. Transform,
    not margin, so it stays on the compositor. */
 .card-interactive {
-  transition: transform 180ms var(--ease),
-              box-shadow 180ms var(--ease),
+  transition: transform 140ms var(--ease),
+              box-shadow 140ms var(--ease),
               border-color 180ms ease;
   will-change: transform;
 }
@@ -144,7 +144,7 @@ h1, h2, h3 {
    do not shimmer as the pointer crosses them. The colour comes from the
    palette via a variable, so the row follows a theme swap without re-rendering
    every line in the list. */
-.row-interactive { transition: background-color 140ms ease; }
+.row-interactive { transition: background-color 100ms ease; }
 .row-interactive:hover { background-color: var(--row-hover, transparent); }
 
 /* ---- reveals ----
@@ -165,14 +165,14 @@ h1, h2, h3 {
 
 /* ---- tab + key transitions ---- */
 @keyframes tabEnter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.tab-enter { animation: tabEnter .34s var(--ease); }
+.tab-enter { animation: tabEnter .26s var(--ease); }
 
 /* A tab's sections arrive in sequence rather than as one block. The children
    are already on screen when a tab opens, so this is a mount stagger rather
    than a scroll reveal — no observer, and nothing to reset when you switch
    back. Six steps is enough: past that the wait outweighs the effect, so
    everything from the seventh section on lands with the sixth. */
-.stagger > * { animation: riseIn .44s var(--ease) backwards; }
+.stagger > * { animation: riseIn .34s var(--ease) backwards; }
 .stagger > *:nth-child(1) { animation-delay: .02s; }
 .stagger > *:nth-child(2) { animation-delay: .08s; }
 .stagger > *:nth-child(3) { animation-delay: .14s; }
@@ -199,7 +199,7 @@ h1, h2, h3 {
   -webkit-backdrop-filter: blur(6px) saturate(120%);
 }
 .modal-panel {
-  animation: panel-in 220ms var(--ease);
+  animation: panel-in 180ms var(--ease);
   /* The hairline along the top edge is what sells the glass: a lit rim where
      the panel catches the light, then a soft inner falloff below it. */
   position: relative;
@@ -267,7 +267,7 @@ h1, h2, h3 {
   opacity: 0;
   transform: translateY(12px) scale(.98);
   pointer-events: none;
-  transition: opacity .28s ease, transform .28s var(--ease);
+  transition: opacity .22s ease, transform .26s var(--ease);
 }
 .capture-pop.open { opacity: 1; transform: none; pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { .capture-pop { transition: none; } }
@@ -520,4 +520,53 @@ h1, h2, h3 {
 @media (max-width: 1023px) and (prefers-reduced-motion: reduce) {
   .capture-pop { transform: none; opacity: 0; }
   .capture-pop.open { opacity: 1; }
+}
+
+/* ================= touch and feedback =================
+   Two problems, one cause. Nothing in the app acknowledged a tap, and several
+   controls were smaller than a fingertip, so a missed press and an ignored
+   press felt identical: you tapped, nothing happened, and you could not tell
+   which had gone wrong.
+
+   The house curve for a press is faster than the one for a transition. A
+   response has to arrive before you finish the gesture, or it reads as lag
+   rather than feedback. */
+
+/* Anything that responds to a tap says so. 60ms in, 160ms back: quick enough
+   to feel like contact, slow enough on release to feel like a spring. */
+.press { transition: transform 160ms var(--ease), filter 160ms ease, background-color 160ms ease; }
+.press:active { transform: scale(0.94); }
+button:active:not(:disabled) { transition-duration: 60ms; }
+
+/* Every button gets the courtesy, not just the ones I remembered to class. */
+button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+/* On a touch screen a 36px control is a coin toss. This widens the hit area
+   without changing what anything looks like: the padding is invisible and the
+   box keeps its size. */
+@media (pointer: coarse) {
+  button, [role="switch"], [role="menuitem"], a[href] {
+    position: relative;
+  }
+  button::after, [role="switch"]::after {
+    content: "";
+    position: absolute;
+    top: 50%; left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+  /* Except where a pseudo-element would swallow taps meant for a child. */
+  .dock button::after, .rail button::after, .press::after { content: none; }
+  .dock button, .rail button, .press { min-width: 44px; min-height: 44px; }
+}
+
+/* Hover belongs to a mouse. On a phone :hover sticks after a tap, so a card
+   stays lifted until you touch something else, which looks like a bug. */
+@media (hover: none) {
+  .card-interactive:hover, .row-interactive:hover, .press:hover { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .press, .press:active { transition: none; transform: none; }
 }
