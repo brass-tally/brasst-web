@@ -6106,10 +6106,15 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
     <>
       {/* One toolbar: search, direction, then the two things you came to do.
           The old row of tracked-out mono words read as a debug switchboard. */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Search takes its own line, then everything else sits on one line that
+          cannot wrap. Nowrap is the point: if a future label makes the row too
+          wide it will scroll sideways rather than silently dropping a button
+          onto a line of its own, which is how Add entry came to look like a
+          separate section of the page. */}
+      <div className="mb-4 space-y-2">
         <label
           style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
-          className="flex items-center gap-2.5 px-4 flex-1 min-w-[240px]"
+          className="flex items-center gap-2.5 px-4 w-full"
         >
           <Search size={17} style={{ color: P.faint }} className="shrink-0" />
           <input
@@ -6127,44 +6132,56 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           )}
         </label>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap overflow-x-auto no-bar">
+        {/* One segmented control rather than three separate pills. Three pills
+            with gaps and two labelled buttons beside them needed 442px on a
+            358px row, so everything after them wrapped. Sharing one track saves
+            the gaps and the two outer shadows. */}
+        <div
+          className="flex items-center shrink-0 h-11 p-1"
+          style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
+        >
           {[["all", "All"], ["in", "In"], ["out", "Out"]].map(([k, label]) => (
             <button
               key={k}
               onClick={() => setDir(k)}
+              aria-pressed={dir === k}
               style={{
-                background: dir === k ? P.brass : P.surface,
+                background: dir === k ? P.brass : "transparent",
                 color: dir === k ? P.onbrass : P.muted,
-                boxShadow: dir === k ? "none" : elev(1),
                 borderRadius: R.pill,
               }}
-              className="px-4 py-2.5 text-[15px] font-medium press"
+              className="h-9 px-3.5 text-[15px] font-medium press"
             >
               {label}
             </button>
           ))}
         </div>
 
-        {/* The two actions travel together. As loose siblings in a wrapping
-            row, Add entry fell to a line of its own on a phone and read as a
-            third, separate thing. Together they need about 240px, so they wrap
-            as a pair onto one line under the filters. */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={openTransfer}
-            title="Move money between your ledgers"
-            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-            className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
-          >
-            <ArrowLeftRight size={16} /> Transfer
-          </button>
-          <button
-            onClick={() => setAdding(!adding)}
-            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-            className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
-          >
-            <Plus size={16} /> Add entry
-          </button>
+        <div className="flex-1" />
+
+        {/* Transfer keeps its icon and loses its word below 640px, because the
+            word is the part that does not fit. Add entry keeps a word at every
+            width, because it is the primary action and an unlabelled plus is a
+            guess. */}
+        <button
+          onClick={openTransfer}
+          title="Move money between your ledgers"
+          aria-label="Transfer between ledgers"
+          style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+          className="shrink-0 press inline-flex items-center justify-center gap-2 h-11 w-11 sm:w-auto sm:px-4 text-[15px] font-medium"
+        >
+          <ArrowLeftRight size={17} />
+          <span className="hidden sm:inline">Transfer</span>
+        </button>
+        <button
+          onClick={() => setAdding(!adding)}
+          style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+          className="shrink-0 press inline-flex items-center justify-center gap-1.5 sm:gap-2 h-11 px-3.5 sm:px-4 text-[15px] font-medium"
+        >
+          <Plus size={17} />
+          Add<span className="hidden sm:inline">&nbsp;entry</span>
+        </button>
         </div>
       </div>
 

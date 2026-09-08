@@ -2,7 +2,9 @@
 // installable from any page (Chrome wants a worker with a fetch handler) and to
 // stay out of the way: /app/ has its own worker, and auth callbacks must never
 // be served from a cache.
-const CACHE = "brasstally-site-v1";
+// Bumped so a 404 cached for /privacy, /terms or /data before those pages
+// existed is discarded rather than served to someone who already visited.
+const CACHE = "brasstally-site-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => {

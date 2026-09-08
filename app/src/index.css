@@ -586,3 +586,7 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
     border-radius: 24px;
   }
 }
+
+/* A row that would rather scroll than wrap keeps its scrollbar to itself. */
+.no-bar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-bar::-webkit-scrollbar { display: none; }

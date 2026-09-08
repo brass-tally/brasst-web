@@ -30,7 +30,6 @@
           ]
         }
       ],
-      "cleanUrls": true,
       "trailingSlash": false
     },
     "app": {
@@ -132,6 +131,24 @@
       }
     },
     {
+      "source": "/privacy",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/terms",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/data",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "landing"
@@ -142,6 +159,23 @@
     {
       "path": "/api/send-beta-approvals",
       "schedule": "*/5 * * * *"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/privacy.html",
+      "destination": "/privacy",
+      "permanent": true
+    },
+    {
+      "source": "/terms.html",
+      "destination": "/terms",
+      "permanent": true
+    },
+    {
+      "source": "/data.html",
+      "destination": "/data",
+      "permanent": true
     }
   ]
 }
