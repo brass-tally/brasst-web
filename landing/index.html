@@ -326,6 +326,12 @@ footer{border-top:1px solid var(--line);padding:clamp(28px,3.4vw,40px) 0 clamp(4
 /* Belt and braces: nothing in the page may be wider than the page. */
 img, svg, table { max-width: 100%; }
 .wrap, .wrap * { min-width: 0; }
+
+/* The three documents anyone handing over a bank feed is entitled to read,
+   where people look for them. */
+.footin .legal{display:flex;flex-wrap:wrap;gap:16px}
+.footin .legal a{color:var(--muted);min-height:44px;display:inline-flex;align-items:center}
+.footin .legal a:hover{color:var(--text)}
 </style>
 </head>
 <body>
@@ -596,8 +602,12 @@ img, svg, table { max-width: 100%; }
 
 <footer>
   <div class="wrap footin">
-    <span>Brasstally · the calm ledger</span>
-    <span>Made in Toronto · your data lives in your own account</span>
+    <span>Brasstally &middot; Made in Toronto</span>
+    <span class="legal">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/data">Your financial data</a>
+    </span>
     <a href="/app" id="openapp2" style="color:var(--accentText);font-weight:500">open the app &rarr;</a>
   </div>
 </footer>

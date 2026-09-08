@@ -40,7 +40,7 @@ export function Pill({
   );
 }
 
-/* One segmented control, replacing five independent copies — the recurring
+/* One segmented control, replacing five independent copies, the recurring
    toggle, the auth tabs, the category sort, the calendar view switch, the
    ledger kind picker, and the filing route. Each had drifted to its own
    padding and its own idea of what "selected" looks like.

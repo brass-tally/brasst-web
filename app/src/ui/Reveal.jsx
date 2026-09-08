@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 /* ================= reveals =================
    Sections fade up as they come into view, the way the landing page's do, so a
    long tab assembles itself instead of dumping all at once. The observer
-   disconnects after the first crossing — this is an entrance, not a scroll
+   disconnects after the first crossing. This is an entrance, not a scroll
    effect, and re-animating on the way back up is the thing that makes a page
    feel restless.
 

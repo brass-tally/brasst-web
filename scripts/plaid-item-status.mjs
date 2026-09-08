@@ -7,7 +7,7 @@
  * so a broken Item leaves no trace except a frozen `last_synced`. This asks
  * Plaid directly via /item/get and prints `item.error`.
  *
- * Calls /item/get and /institutions/get_by_id only. Both are reads — this
+ * Calls /item/get and /institutions/get_by_id only. Both are reads. This
  * cannot modify an Item, and it never touches the database.
  *
  * ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ async function institutionName(id) {
   return ok ? body?.institution?.name ?? null : null;
 }
 
-console.log(`\nPlaid Item status — env: ${env}\n${"=".repeat(60)}`);
+console.log(`\nPlaid Item status (env: ${env})\n${"=".repeat(60)}`);
 
 for (const token of tokens) {
   console.log(`\ntoken        ${mask(token)}`);
@@ -112,7 +112,7 @@ for (const token of tokens) {
   console.log(`  last_webhook  ${body.status?.transactions?.last_successful_update ?? "n/a"}`);
 
   if (!err) {
-    console.log(`  STATUS        healthy — no error on this Item`);
+    console.log(`  STATUS        healthy, no error on this Item`);
     continue;
   }
 

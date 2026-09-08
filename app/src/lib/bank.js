@@ -119,7 +119,7 @@ export async function unmatchBankTxn(id) {
   if (error) throw error;
 }
 
-/** "ignored" is for lines that will never have a ledger entry — internal
+/** "ignored" is for lines that will never have a ledger entry, internal
  *  transfers between two connected accounts, or a reversal pair that nets out. */
 export async function setBankTxnStatus(id, status) {
   const patch = { status, updated_at: new Date().toISOString() };

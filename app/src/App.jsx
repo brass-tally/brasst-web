@@ -168,7 +168,7 @@ function downloadCSV(filename, rows) {
 let confirmHandler = null;
 const askConfirm = (opts) =>
   new Promise((resolve) => {
-    // No host mounted (an early-boot path, say) — fall back rather than hang.
+    // No host mounted (an early-boot path, say), fall back rather than hang.
     if (!confirmHandler) return resolve(window.confirm(opts.body || opts.title));
     confirmHandler({ ...opts, resolve });
   });
@@ -570,7 +570,7 @@ class Boundary extends React.Component {
           <div className="eyebrow mb-2">Unhandled error</div>
           <h1 style={{ fontFamily: SERIF }} className="text-xl mb-2">Something broke</h1>
           <p style={{ color: P.muted }} className="text-sm mb-4">
-            The app hit an error instead of rendering. Reloading usually clears it — if it keeps happening, send this to whoever maintains the app:
+            The app hit an error instead of rendering. Reloading usually clears it. If it keeps happening, send this to whoever maintains the app:
           </p>
           <Panel
             as="pre"
@@ -714,7 +714,7 @@ function AuthScreen({ linkError = "" }) {
   const goTo = (s) => { setStep(s); setErr(""); setNotice(""); setCode(""); setPw(""); setPw2(""); };
 
   // One request sends both halves: a tappable link for whoever is reading mail
-  // on the same browser, and a six-digit code for everyone else — the installed
+  // on the same browser, and a six-digit code for everyone else, the installed
   // app, a desktop inbox, a phone that opens links in a different browser.
   const sendCode = async (resend = false) => {
     const em = email.trim();
@@ -741,7 +741,7 @@ function AuthScreen({ linkError = "" }) {
       if (error) {
         setErr(/expired/i.test(error.message)
           ? "That code has expired. Send a new one and try again."
-          : "That code doesn't match. Check the last email — codes expire after an hour.");
+          : "That code doesn't match. Check the last email. Codes expire after an hour.");
       }
       // On success the auth listener in App() swaps this screen out.
     } finally { setBusy(false); }
@@ -775,7 +775,7 @@ function AuthScreen({ linkError = "" }) {
     } finally { setBusy(false); }
   };
 
-  // Utility links read as text, not as terminal output — the mono face made
+  // Utility links read as text, not as terminal output, the mono face made
   // them look like a config file.
   const linkStyle = { color: P.muted };
   const emailValid = /\S+@\S+\.\S+/.test(email.trim());
@@ -798,7 +798,7 @@ function AuthScreen({ linkError = "" }) {
         </p>
         <p style={{ color: P.muted }} className="text-xs mt-1">
           {installed
-            ? "Typing the code signs you in right here in the app — tapping the link in your email would open a browser instead, and that signs in the browser, not the app."
+            ? "Typing the code signs you in right here in the app. Tapping the link in your email would open a browser instead, and that signs in the browser, not the app."
             : "The same email also has a one-tap link, if you'd rather use that."}
         </p>
 
@@ -1105,7 +1105,7 @@ function Ledger({ onSignOut }) {
       }
       try { setBankConns(await bank.listConnections(currentLedger.id)); }
       catch { setBankConns([]); }
-      // Missing table (migration not run yet) must not break the ledger — the
+      // Missing table (migration not run yet) must not break the ledger, the
       // app simply falls back to anchor-only reconciliation.
       try { setBankTxns(await bank.listBankTransactions(currentLedger.id)); }
       catch (e) { console.error("bank transactions:", e); setBankTxns([]); }
@@ -1239,7 +1239,7 @@ function Ledger({ onSignOut }) {
       ap: data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0),
     };
   }, [data]);
-  // What the agent would tell you if you asked — worked out locally, for free,
+  // What the agent would tell you if you asked: worked out locally, for free,
   // before you ask. Tapping one hands the question to the agent, which then
   // goes and gets the entries behind it.
   // The delta broken into named lines. This is what makes "bank and books
@@ -1656,7 +1656,7 @@ function Ledger({ onSignOut }) {
     // consolidation record that follows it, silently, because the rows had
     // already been written by then.
     // An import folds outside lines into the books, so it belongs in the same
-    // history as a reconciliation — it's the other way the books change without
+    // history as a reconciliation. It's the other way the books change without
     // anyone typing an entry.
     if (recs.length) {
       recordConsolidation({
@@ -1755,7 +1755,7 @@ function Ledger({ onSignOut }) {
     return gone;
   };
 
-  // The bank's own copies are never deleted — the rows are the record of what
+  // The bank's own copies are never deleted: the rows are the record of what
   // it sent, and the next sync would only bring them back. Ignoring takes them
   // out of the gap and leaves the audit trail intact.
   const ignoreDuplicateBankLines = (group) => {
@@ -1790,7 +1790,7 @@ function Ledger({ onSignOut }) {
     const msg = msgs.length ? `Reconciliation: ${msgs.join(", ")}` : "Reconciliation complete";
     addNotification(notify.success(msg));
     // A failed write here is worth naming precisely: the run still shows as
-    // done on screen, but nothing will remember it after a reload — which is
+    // done on screen, but nothing will remember it after a reload, which is
     // the exact complaint this whole record exists to fix.
     db.logConsolidation(data.ledger.id, row).catch((e) => {
       console.error("consolidation log failed:", e);
@@ -1812,8 +1812,8 @@ function Ledger({ onSignOut }) {
   const setTheme = (t) => {
     setPalette(currentPalette(), t);
     // Mirror onto the document root so stylesheet rules follow the swap, and
-    // into storage so the next load — and the landing page, which reads the
-    // same key — paints the right theme before any JS runs.
+    // into storage so the next load, and the landing page, which reads the
+    // same key, paints the right theme before any JS runs.
     applyThemeVars(P);
     try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
     setThemeState(t);
@@ -2578,7 +2578,7 @@ function ReconcileModal({ currentValue, initialAmount, anchorAmount, anchorDate,
         <p style={{ color: P.muted }} className="text-sm mb-4">
           {initialAmount != null
             ? "Prefilled from your bank feed. Anchoring aligns the ledger books to that number on this date. It does not invent missing transactions."
-            : "Check your real accounts and enter the combined total. The ledger anchors to that number on that date , months you never tracked before it stop affecting the balance, and only entries you log after it count."}
+            : "Check your real accounts and enter the combined total. The ledger anchors to that number on that date, months you never tracked before it stop affecting the balance, and only entries you log after it count."}
         </p>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
@@ -2672,7 +2672,7 @@ const BookLine = ({ t, selected, onSelect }) => (
 /**
  * The consolidation workbench, in the order the work actually has to happen:
  * throw out the copies, pair what's left, add what was never recorded, then
- * record the run. Nothing here rewrites the balance — re-anchoring is still
+ * record the run. Nothing here rewrites the balance, re-anchoring is still
  * available behind a link, but it's the escape hatch, not the front door:
  * anchoring sets the gap to zero without explaining a cent of it.
  *
@@ -2756,7 +2756,7 @@ function MatchView({
   /* ---- the questions, as a queue rather than a wall ----
      Answering one changes the books, which recomputes the plan, which drops the
      answered item out of this list. So "what to ask next" is always the head of
-     what is still open — there is no cursor to keep in sync, and nothing can be
+     what is still open, there is no cursor to keep in sync, and nothing can be
      asked twice. Skipped items go to the back instead of disappearing, so
      finishing the easy ones never loses the hard ones. */
   const asks = useMemo(() => [
@@ -3412,7 +3412,7 @@ function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCa
   const [subcategory, setSubcategory] = useState("");
   const subs = cats.find((c) => c.name === category)?.subs || [];
   // The matcher only looks a few days out, so an entry dated a fortnight from
-  // the bank line never surfaces as a suggestion — and adding this line anyway
+  // the bank line never surfaces as a suggestion, and adding this line anyway
   // is exactly how the books end up with two of everything.
   const already = useMemo(
     () => likelyAlreadyInBooks(bankTxn, data.transactions, bankTxns),
@@ -3467,7 +3467,7 @@ function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCa
 
 /* ================= statement import & reconciliation ================= */
 // Pasted / uploaded statements only. Bank-feed lines no longer come through
-// here — they are stored as bank_transactions and reconciled in MatchView.
+// here. They are stored as bank_transactions and reconciled in MatchView.
 function ImportModal({ data, addSub, onImport, onClose }) {
   const [step, setStep] = useState("input"); // input | review
   const [pasted, setPasted] = useState("");
@@ -3570,7 +3570,7 @@ function ImportModal({ data, addSub, onImport, onClose }) {
 
   const doImport = () => {
     // Without this, a double-click (or a slow network retry) fires onImport
-    // twice, and every checked row goes in a second time as brand-new rows —
+    // twice, and every checked row goes in a second time as brand-new rows 
     // the app has no server-side dedupe, so that's a silent, exact-copy
     // duplicate import worth however much the statement was.
     if (imported) return;
@@ -4196,23 +4196,30 @@ function LegalPage({ which }) {
         ["You can take it or delete it.", "Every section exports to CSV, and resetting a ledger erases its entries. Deleting your account removes the rows and the files with it."],
         ["What we do not do.", "We do not sell data, we do not show advertising, and nobody at Brasstally reads your ledger unless you ask us to look at something."],
       ],
-      link: `${APP_SITE}/privacy`,
-      linkLabel: "The full privacy policy",
+      link: `${APP_SITE}/data`,
+      linkLabel: "The full page on financial data",
     },
     privacy: {
       title: "Privacy policy",
-      body: [["The full policy lives on the site.", "It covers what is collected, how long it is kept, who processes it, and how to ask for it back or ask for it gone. Canadian financial data also brings PIPEDA obligations, which the policy sets out."]],
+      body: [
+        ["What we collect, and nothing more.", "Your email, your entries, your receipts, and bank transactions if you connect an account. Not your name, address, phone number or business number, because the bookkeeping does not need them."],
+        ["Who else touches it.", "Supabase stores it, Plaid handles bank sign-in, Anthropic reads receipts and answers questions, Vercel hosts, Resend sends email. Each gets only what its job needs, and none of them get it for advertising."],
+        ["No sale, and no advertising.", "There is no advertising in Brasstally and no advertiser can pay to appear in it. We do not use your ledger to train models."],
+        ["Your rights, without asking us.", "See everything, export everything to CSV, correct any entry, reset a ledger, delete the account, or disconnect a bank. All of it is a button rather than a request."],
+      ],
       link: `${APP_SITE}/privacy`,
-      linkLabel: "Read the privacy policy",
+      linkLabel: "Read the full privacy policy",
     },
     terms: {
       title: "Terms of use",
       body: [
-        ["The full terms live on the site.", "What the service does, what it does not promise, and what happens to your data if you stop using it."],
-        ["One thing worth saying here.", "Brasstally prepares books and drafts returns. It is not an accountant and it does not file on your behalf. A draft is a starting point for you or your accountant, not advice."],
+        ["It is not an accountant.", "Brasstally prepares books and drafts returns, and shows its working so a professional can check it. Nothing in the app is accounting, tax or legal advice, and the figures you file remain yours."],
+        ["It cannot file.", "No Canadian tax software exposes a filing interface to third parties. Brasstally prepares the package and tracks the return through draft, sent, filed and assessed. You or your accountant file it."],
+        ["It never moves money.", "A bank connection is read only. Brasstally is not a bank or a payment service."],
+        ["Your books are yours.", "We claim no ownership of your entries or documents, and you can export or delete them at any time."],
       ],
       link: `${APP_SITE}/terms`,
-      linkLabel: "Read the terms",
+      linkLabel: "Read the full terms",
     },
   }[which];
 
@@ -5203,7 +5210,7 @@ function BudgetTable({ title, rows, extra, type, monthTx, setPlanned, onDrill })
    One transcript, no modes. What you send decides what happens: a file or a
    line with money in it is read into a draft entry, anything else goes to the
    agent in lib/agent.js, which works the ledger with tools and can propose
-   changes — never make them. Tally also speaks first, see `brief` and `nudge`. */
+   changes, never make them. Tally also speaks first, see `brief` and `nudge`. */
 
 // What each tool is doing, in words, for the activity line under a question.
 const TOOL_LABEL = {
@@ -5238,7 +5245,7 @@ function Capture({
   insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, brief, onBriefUsed, apply, onGo,
   onSettleFromReceipt, taxPolicy = TAX_POLICY,
 }) {
-  // A gap that's already been consolidated isn't news — opening the panel on a
+  // A gap that's already been consolidated isn't news, opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
   const drift = balance?.source === "bank" && balance.delta != null
     && Math.abs(balance.delta) >= 0.01 && !consolidation?.settled;
@@ -5257,7 +5264,7 @@ function Capture({
   const endRef = useRef(null);
   const greetedDrift = useRef(false);
   // The agent's own message history, in Anthropic shape. Separate from `msgs`,
-  // which is what the panel draws — tool traffic belongs in one and not the other.
+  // which is what the panel draws, tool traffic belongs in one and not the other.
   const convo = useRef([]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
 
@@ -5448,7 +5455,7 @@ function Capture({
     setInput("");
     push({ role: "user", text });
     // Parsed on-device first. It costs nothing, it decides where the message is
-    // going, and it's the draft we fall back to when the reader is unreachable —
+    // going, and it's the draft we fall back to when the reader is unreachable 
     // a typed line with an amount in it should never come back empty-handed.
     const local = parseEntryText(text, { categories: data.categories, ledgerKind: data.ledger.kind });
     if (looksLikeQuestion(text) || !(Number(local?.amount) > 0)) {
@@ -5465,7 +5472,7 @@ function Capture({
       push({ role: "assistant", text: draft.note || "Got it, confirm or adjust:", draft });
     } catch (e) {
       // The local parse already found the amount, so the entry survives the
-      // reader being unreachable — only the category is a guess worth checking.
+      // reader being unreachable, only the category is a guess worth checking.
       push({ role: "assistant", text: `${friendlyError(e)}, so I filled this in from your message. Check the category before saving.`, draft: local });
     }
     setBusy("");
@@ -5812,7 +5819,7 @@ function DraftCard({ draft, att, data, addSub, onSave }) {
 
 /* ================= agent proposals =================
    The agent can't write. It draws one of these instead, and nothing reaches the
-   ledger until it's tapped. The money fields stay editable — the agent read
+   ledger until it's tapped. The money fields stay editable, because the agent read
    your books to build this, but it didn't live them. */
 function ProposalCard({ proposal, data, apply }) {
   const { kind, input } = proposal;
@@ -6138,21 +6145,27 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           ))}
         </div>
 
-        <button
-          onClick={openTransfer}
-          title="Move money between your ledgers"
-          style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
-        >
-          <ArrowLeftRight size={16} /> Transfer
-        </button>
-        <button
-          onClick={() => setAdding(!adding)}
-          style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
-        >
-          <Plus size={16} /> Add entry
-        </button>
+        {/* The two actions travel together. As loose siblings in a wrapping
+            row, Add entry fell to a line of its own on a phone and read as a
+            third, separate thing. Together they need about 240px, so they wrap
+            as a pair onto one line under the filters. */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={openTransfer}
+            title="Move money between your ledgers"
+            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+            className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
+          >
+            <ArrowLeftRight size={16} /> Transfer
+          </button>
+          <button
+            onClick={() => setAdding(!adding)}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+            className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
+          >
+            <Plus size={16} /> Add entry
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-3">
@@ -6480,7 +6493,7 @@ function ProfitLoss({ data, month }) {
         )}
       </section>
 
-      {/* at-a-glance stats: burn rate, top category concentration, txn count — the numbers behind the statement above */}
+      {/* at-a-glance stats: burn rate, top category concentration, txn count, the numbers behind the statement above */}
       <section style={cardStyle()} className="p-5">
         <h2 style={{ fontFamily: SERIF }} className="text-xl mb-3">At a glance</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -6488,7 +6501,7 @@ function ProfitLoss({ data, month }) {
           <StatTile label="Avg. daily revenue" value={fmt(avgDailyRevenue)} hint={`over ${daysElapsed} ${daysElapsed === 1 ? "day" : "days"}`} />
           <StatTile
             label="Top category share"
-            value={topCatShare !== null ? `${topCatShare.toFixed(0)}%` : "—"}
+            value={topCatShare !== null ? `${topCatShare.toFixed(0)}%` : "·"}
             hint={catRows.length ? catRows[0][0] : "no expenses"}
           />
           <StatTile label="Transactions" value={String(monthTx.length)} hint={`${monthTx.filter((t) => t.type === "expense").length} out · ${monthTx.filter((t) => t.type === "income").length} in`} />
@@ -6530,7 +6543,7 @@ function ProfitLoss({ data, month }) {
   );
 }
 
-// invertChange: for cost rows, a rise is bad (red) and a fall is good (green) — the opposite of revenue/net
+// invertChange: for cost rows, a rise is bad (red) and a fall is good (green), the opposite of revenue/net
 const PLChange = ({ value, invert = false }) => {
   if (value === null || !Number.isFinite(value)) return null;
   const good = invert ? value <= 0 : value >= 0;
@@ -7753,9 +7766,9 @@ function CashCalendar({ data }) {
 
 /* ================= Reports & analytics =================
    Every other tab answers "how am I doing right now". This one answers "give me
-   the period, as a file" — the question you get from an accountant, a lender,
-   or a co-founder, and the one the app used to make you assemble by hand out of
-   a month-by-month P&L. Pick a window, read the figures on screen, hand any
+   the period, as a file", which is the question you get from an accountant, a
+   lender, or a co-founder, and the one the app used to make you assemble by hand
+   out of a month-by-month P&L. Pick a window, read the figures on screen, hand any
    block over as a CSV or a PDF.
 
    Nothing here is a second source of truth: every number is recomputed from
@@ -8389,7 +8402,7 @@ const gifiFor = (category, subcategory) => {
 
 /* Form-styled PDF: line codes, right-ruled amounts, parenthesized negatives.
    Built for CRA schedules, which is why the banner and footer say "draft" by
-   default — the Reports tab prints its own statements through here and passes
+   default, the Reports tab prints its own statements through here and passes
    its own, and sets codeWidth to 0 for a sheet with no line-code column. */
 const pdfMoney = (n) => (n < 0 ? "(" : "") + Math.abs(n).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (n < 0 ? ")" : "");
 
@@ -9192,7 +9205,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
   };
 
   const finishConnect = async (public_token, metadata, ledgerId) => {
-    // No institution name in update mode — send null rather than "Bank" so the
+    // No institution name in update mode: send null rather than "Bank" so the
     // server keeps the name already stored instead of overwriting it.
     const res = await bank.plaid("exchange", {
       public_token,
@@ -9299,7 +9312,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
   };
 
   // Update mode: re-authenticate the Item the ledger already holds. Distinct
-  // from connect() on purpose — linking the bank again would create a second
+  // from connect() on purpose, linking the bank again would create a second
   // connection, which double-counts the balance and re-imports every line.
   const reconnect = async (id) => {
     setErr(""); setNotice(""); setBusy(true);
@@ -9357,7 +9370,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
       const res = await bank.plaid("sync", { connection_id: id });
       await refreshConns();
       // The old function returned { transactions } and stored nothing. If it's
-      // still deployed, its cursor has already moved past these lines — say so
+      // still deployed, its cursor has already moved past these lines, say so
       // loudly rather than reporting "up to date" over lost transactions.
       if (typeof res.added !== "number") {
         setErr("This bank feed is running an older sync function that doesn't store lines. Redeploy the `plaid` Edge Function (and run migration-bank-transactions.sql) before syncing again.");

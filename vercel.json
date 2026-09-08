@@ -29,7 +29,9 @@
             }
           ]
         }
-      ]
+      ],
+      "cleanUrls": true,
+      "trailingSlash": false
     },
     "app": {
       "root": "app",

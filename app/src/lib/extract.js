@@ -67,7 +67,7 @@ export function parseModelJson(text) {
 
 /**
  * @param content  Anthropic content blocks (text / image / document).
- * @param options  { maxTokens, schema } — schema turns on structured outputs,
+ * @param options  { maxTokens, schema }, schema turns on structured outputs,
  *                 which makes the response shape guaranteed rather than hoped
  *                 for. A bare number is still accepted for older call sites.
  */
@@ -81,7 +81,7 @@ export async function askClaude(content, options = {}) {
 
 /**
  * One turn of a tool-using conversation. Returns the assistant's raw content
- * blocks so the caller can run tools and come back — the loop itself lives in
+ * blocks so the caller can run tools and come back, the loop itself lives in
  * lib/agent.js, next to the ledger it reads.
  */
 export async function askClaudeAgent({ system, messages, tools, maxTokens = 2048 }) {

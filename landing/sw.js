@@ -19,7 +19,7 @@ self.addEventListener("fetch", (e) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  // The app registers its own worker at /app/sw.js — leave that scope alone.
+  // The app registers its own worker at /app/sw.js, leave that scope alone.
   if (url.pathname.startsWith("/app")) return;
   // A sign-in return carries its token in the URL; never answer one from cache.
   if (url.search.includes("code=") || url.search.includes("token_hash=")) return;

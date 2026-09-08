@@ -9,7 +9,7 @@ import { IconButton } from "./Btn";
    along its top edge so it reads as lit from above, like the cards.
 
    This existed before as Overlay, but nine of the ten dialogs hand-rolled
-   their own copy of the markup — each with its own Escape listener and none
+   their own copy of the markup, each with its own Escape listener and none
    with role="dialog". Routing them all through here is what makes Escape,
    backdrop dismissal, focus return, and screen-reader semantics consistent. */
 
@@ -134,8 +134,8 @@ export function Modal({
 }
 
 /* The body of a dialog, padded to match the header and footer. Separate from
-   Modal so a dialog that needs an unpadded body — an image preview, a scroll
-   region with its own rows — can simply not use it. */
+   Modal so a dialog that needs an unpadded body, an image preview, a scroll
+   region with its own rows, can simply not use it. */
 export function ModalBody({ children, className = "", style = {} }) {
   return (
     <div className={"px-5 py-4 " + className} style={style}>

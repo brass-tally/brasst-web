@@ -1,11 +1,11 @@
 // Offline parsing for the capture box.
 //
 // Two jobs:
-//   parseEntryText — turns "just paid for a yearly Claude Subscription for
+//   parseEntryText, turns "just paid for a yearly Claude Subscription for
 //     $316.26" into a draft without touching the network. It is the floor the
 //     capture box always has: if the extract function is down, misconfigured,
 //     or answers with something unusable, the user still gets a filled-in card.
-//   normalizeDraft — coerces whatever came back from the model into the exact
+//   normalizeDraft, coerces whatever came back from the model into the exact
 //     shape DraftCard expects: a real number, a real date, a category that
 //     actually exists in this ledger.
 
@@ -37,7 +37,7 @@ const ymd = (y, m, d) => {
 };
 
 // A bare month/day with no year means the most recent one that has already
-// happened — "on March 10" in July is this year, in February it's last year.
+// happened, "on March 10" in July is this year, in February it's last year.
 const nearestPast = (month, day) => {
   const now = new Date();
   const thisYear = ymd(now.getFullYear(), month, day);
@@ -192,19 +192,24 @@ export function guessCategory(text, list) {
 /* ================= description ================= */
 
 const LEAD_RULES = [
-  /^[\s,.\-–—]+/,
+  /^[\s,.\-–]+/,
   /^(?:just|already|i|we|i've|ive|we've|weve|so|ok|okay|hey)\b[\s,]*/i,
   /^(?:paid(?:\s+for)?|pay|bought|buy|purchase[ds]?|spent(?:\s+on)?|spend|got(?:\s+paid)?|received|renewed|subscribed(?:\s+to)?|charged(?:\s+for)?|billed(?:\s+for)?|invoiced|expensed|added|log(?:ged)?)\b[\s,]*/i,
   /^(?:for|on|to|from|by|of|at|with|a|an|the|my|our|this|that|another)\b[\s,]*/i,
   /^(?:yearly|annual|monthly|weekly|quarterly|new|recurring)\b[\s,]*/i,
 ];
-const TRAIL_RE = /[\s,.!;:\-–—]*\b(?:for|on|at|to|of|from|by|in|with|the|a|an|and|plus|about)\b[\s,.!;:]*$/i;
+const TRAIL_RE = /[\s,.!;:\-–]*\b(?:for|on|at|to|of|from|by|in|with|the|a|an|and|plus|about)\b[\s,.!;:]*$/i;
 
 function cleanDescription(text) {
   let s = text.replace(/\s+/g, " ").trim();
   for (let pass = 0; pass < 8; pass++) {
     const before = s;
     for (const re of LEAD_RULES) s = s.replace(re, "");
+    // The long dashes in the character classes here and in LEAD_RULES above are
+    // the only ones left in the project, and they are correct: they are not
+    // punctuation being written, they are punctuation being stripped from what
+    // someone typed. A line ending in a dash should not carry it into the
+    // description. Taking them out of these classes would break the parser.
     s = s.replace(TRAIL_RE, "").replace(/[\s,.!;:\-–—]+$/, "");
     if (s === before) break;
   }
@@ -218,7 +223,7 @@ function cleanDescription(text) {
 
 /**
  * Reads a typed capture line into a draft. Returns null only when there is no
- * amount to be found — without one there is nothing worth pre-filling.
+ * amount to be found, without one there is nothing worth pre-filling.
  */
 export function parseEntryText(text, { categories = { expense: [], income: [] }, ledgerKind = "business" } = {}) {
   const raw = String(text || "").trim();

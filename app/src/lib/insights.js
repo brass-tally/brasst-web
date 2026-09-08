@@ -1,6 +1,6 @@
 // Proactive findings for the Overview tab.
 //
-// Everything here is computed locally from the ledger already in memory — no
+// Everything here is computed locally from the ledger already in memory, no
 // model call, no cost, no waiting. The model's job starts when you tap one:
 // each finding carries an `ask`, the question it hands to the agent, which then
 // digs with real tools rather than re-deriving the finding from a prompt.
@@ -32,8 +32,8 @@ export function computeInsights(data, { balance, month, bankConns = [], recon = 
   const m = month || monthOf(today);
   const add = (f) => out.push(f);
   // A gap that's already been consolidated is a decision, not a finding. It
-  // comes back the moment the bank or the books move — see the signature in
-  // lib/reconcile.js — so silence here is never silence about something new.
+  // comes back the moment the bank or the books move, see the signature in
+  // lib/reconcile.js, so silence here is never silence about something new.
   const settled = Boolean(consolidation?.settled);
   // Categories already spoken for. One card per category, or the strip turns
   // into three ways of saying the same overspend.
@@ -47,7 +47,7 @@ export function computeInsights(data, { balance, month, bankConns = [], recon = 
       severity: Math.abs(delta) >= 250 ? "alert" : "warn",
       weight: Math.abs(delta) + 500, // drift outranks a same-sized budget miss
       title: `Bank and books disagree by ${money(Math.abs(delta))}`,
-      // Once reconciliation has named the lines, say which lines — a generic
+      // Once reconciliation has named the lines, say which lines, a generic
       // "likely income that was never entered" is noise next to a real list.
       detail: recon && (recon.bankOnly.count || recon.bookOnly.count)
         ? `${plural(recon.bankOnly.count, "bank line", "bank lines")} aren't in the books and ${plural(recon.bookOnly.count, "entry hasn't", "entries haven't")} cleared the bank. ${

@@ -5,7 +5,7 @@ import { P, R, SERIF } from "./tokens";
    There were ten of these in the app and every one was a single grey <p>.
    An empty ledger is the first thing a new user sees on most tabs, so it is
    worth more than a sentence: a quiet glyph to occupy the space, a line that
-   says what would be here, and — where there is an obvious next move — the
+   says what would be here, and, where there is an obvious next move, the
    button that makes it happen. */
 
 export function EmptyState({ icon: Icon, title, children, action, compact = false, className = "" }) {

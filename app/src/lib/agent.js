@@ -1,6 +1,6 @@
 // The finance agent: tool definitions, their executors, and the loop.
 //
-// The loop runs in the browser. That's deliberate — the whole ledger is already
+// The loop runs in the browser. That's deliberate, the whole ledger is already
 // in memory here, so a tool call is a synchronous function over an array
 // instead of a database round trip, and only the slice a tool actually returns
 // is ever sent upstream.
@@ -439,7 +439,7 @@ export function runTool(name, input = {}, ctx) {
 const MAX_TURNS = 6;
 
 // Tool results go upstream as JSON. A runaway result would eat the window, so
-// cap it — the tools already limit their own row counts, this is a backstop.
+// cap it, the tools already limit their own row counts, this is a backstop.
 const MAX_RESULT_CHARS = 24000;
 
 const serialize = (value) => {
@@ -480,7 +480,7 @@ export async function runAgent({ history, ctx, onEvent = () => {}, call = askCla
       return { text, messages, stopped: stop_reason };
     }
 
-    // Anything said before reaching for a tool is narration — show it now so
+    // Anything said before reaching for a tool is narration, show it now so
     // the panel isn't silent while the tools run.
     if (text) onEvent({ type: "text", text });
 
@@ -510,7 +510,7 @@ export async function runAgent({ history, ctx, onEvent = () => {}, call = askCla
  *
  * A window can't be cut anywhere: the history has to open on a plain user turn.
  * Starting on an assistant turn, or on a tool_result whose tool_use was just
- * trimmed away, is a 400 from the API — so we cut back to the most recent real
+ * trimmed away, is a 400 from the API, so we cut back to the most recent real
  * question instead of to an exact message count.
  */
 export function trimHistory(messages, keepTurns = 20) {

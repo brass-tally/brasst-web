@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Brasstally · books for people who run a company and a life</title>
     <meta name="description" content="Capture receipts in a chat, anchor to your real bank balance, keep separate business and personal ledgers, and turn the year into a CRA-ready T2 draft." />
-    <meta name="theme-color" content="#101613" />
+    <!-- The browser chrome tint. It was #101613, a green from the palette before
+         Ember, so the status bar on a phone did not match the app underneath it.
+         Two entries so the tint follows the theme rather than picking one. -->
+    <meta name="theme-color" content="#FAF9F7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#100E0C" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Brasstally" />
@@ -33,8 +37,106 @@
         document.documentElement.setAttribute("data-theme", saved === "dark" ? "dark" : "light");
       })();
     </script>
+    <style>
+      /* ---- launch ----
+         This lives in the document rather than in React, because a splash that
+         waits for a JavaScript bundle to download is not a splash: it is a
+         white screen followed by a logo. Here it paints on the first frame, and
+         React dismisses it once it has something real to show.
+
+         The mark is three strokes: two ledger lines and the tally through
+         them. Drawing them in that order is the product in one gesture, money
+         in, money out, and the mark that reconciles them. */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg, #FAF9F7);
+        transition: opacity 280ms ease;
+      }
+      html[data-theme="dark"] #splash { background: #100E0C; }
+      #splash.gone { opacity: 0; pointer-events: none; }
+
+      #splash .tile {
+        width: 74px; height: 74px;
+        border-radius: 22px;
+        background: #FFFFFF;
+        box-shadow: 0 1px 2px rgba(28, 25, 23, .06), 0 18px 40px -20px rgba(28, 25, 23, .22);
+        display: flex; align-items: center; justify-content: center;
+        animation: splash-tile 620ms cubic-bezier(.2, .8, .2, 1) both;
+      }
+      html[data-theme="dark"] #splash .tile {
+        background: #1A1714;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, .4), 0 24px 56px -24px rgba(0, 0, 0, .7);
+      }
+      @keyframes splash-tile {
+        from { opacity: 0; transform: scale(.86); }
+        to   { opacity: 1; transform: none; }
+      }
+
+      /* Each stroke draws itself, in the order the eye should read them. */
+      #splash path {
+        stroke-dasharray: 26;
+        stroke-dashoffset: 26;
+        animation: splash-draw 460ms cubic-bezier(.3, .9, .3, 1) forwards;
+      }
+      #splash path.in   { animation-delay: 170ms; }
+      #splash path.out  { animation-delay: 280ms; stroke-dasharray: 20; stroke-dashoffset: 20; }
+      #splash path.mark { animation-delay: 390ms; stroke-dasharray: 22; stroke-dashoffset: 22; }
+      @keyframes splash-draw { to { stroke-dashoffset: 0; } }
+
+      /* A launch animation is the last place to insist on motion. */
+      @media (prefers-reduced-motion: reduce) {
+        #splash .tile { animation: none; }
+        #splash path { animation: none; stroke-dashoffset: 0; }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash" role="status" aria-label="Opening Brasstally">
+      <span class="tile">
+        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path class="in"   d="M4 9.5h11"        stroke="#08805A" stroke-width="2.6" stroke-linecap="round"/>
+          <path class="out"  d="M4 15h8"          stroke="#C4442F" stroke-width="2.6" stroke-linecap="round"/>
+          <path class="mark" d="M18.5 6.5l-1.4 11" stroke="#F59E0B" stroke-width="2.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+    </div>
+    <script>
+      /* Dismissal is owned by the page, not by a timer, so a slow first load
+         holds the mark instead of flashing an empty screen. React calls this
+         when it has something to show.
+
+         The floor matters as much as the ceiling. Under about half a second the
+         animation reads as a glitch rather than an intention, so a fast load
+         still gets the full gesture. The ceiling is a safety net: if the bundle
+         never calls back, the splash leaves anyway rather than trapping
+         someone behind a logo. */
+      (function () {
+        var START = Date.now();
+        var FLOOR = 620;
+        var CEILING = 6000;
+        var done = false;
+
+        function dismiss() {
+          if (done) return;
+          done = true;
+          var el = document.getElementById("splash");
+          if (!el) return;
+          var wait = Math.max(0, FLOOR - (Date.now() - START));
+          setTimeout(function () {
+            el.classList.add("gone");
+            setTimeout(function () { el.remove(); }, 320);
+          }, wait);
+        }
+
+        window.__btLaunched = dismiss;
+        setTimeout(dismiss, CEILING);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     <script>

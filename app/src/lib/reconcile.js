@@ -1,4 +1,4 @@
-// Reconciliation — matching bank lines to ledger entries, and explaining the
+// Reconciliation: matching bank lines to ledger entries, and explaining the
 // gap that's left over. Pure functions, same contract as lib/analysis.js:
 // no network, no React, so the agent and the UI quote identical numbers.
 //
@@ -26,7 +26,7 @@ const CENT = 0.005;
 
 /**
  * Score a bank line against a ledger entry, or null if they can't be the same
- * event. Amount and direction must agree exactly — those are facts, not
+ * event. Amount and direction must agree exactly, those are facts, not
  * signals. Date proximity and merchant text are what actually vary.
  */
 export function scoreMatch(bankTxn, tx) {
@@ -42,7 +42,7 @@ export function scoreMatch(bankTxn, tx) {
   // Three ways to be sure, because the two signals trade off against each
   // other. Bank descriptions ("SQ *FIGMA #4412") often share no words with what
   // someone typed ("design tool"), so text must never veto a same-day exact
-  // amount — and equally, a card that posts three days after the swipe is
+  // amount, and equally, a card that posts three days after the swipe is
   // routine, so a near-perfect merchant match shouldn't be demoted for lag.
   const confidence =
     (gap === 0 && text >= 0.2) || (gap <= 1 && text >= 0.5) || (gap <= 3 && text >= 0.8) ? "high"
@@ -199,7 +199,7 @@ export function consolidationPlan({ bankTxns = [], txs = [], duplicates = [], du
  *
  * A bank line nobody recorded moves the bank but not the books; an entry that
  * never cleared moves the books but not the bank. Sum those two effects and
- * whatever is left over is genuinely unexplained — a wrong anchor, a
+ * whatever is left over is genuinely unexplained, a wrong anchor, a
  * transaction outside the matching window, or an account the ledger can't see.
  *
  * Only activity after the anchor date counts: everything on or before it is
@@ -207,7 +207,7 @@ export function consolidationPlan({ bankTxns = [], txs = [], duplicates = [], du
  *
  * Note that pending suggestions don't skew the totals. A proposed pair leaves
  * both sides out of the lists, but had it been left in, the bank line and the
- * ledger entry would contribute equal and opposite effects — so `explained` and
+ * ledger entry would contribute equal and opposite effects, so `explained` and
  * `unexplained` come out the same either way. Only the item lists get shorter.
  */
 export function explainDelta(bankTxns, txs, { balance } = {}) {
@@ -272,7 +272,7 @@ export function explainDelta(bankTxns, txs, { balance } = {}) {
     // app would start asking all over again.
     openSignature: signatureOf([
       // Every bank line still open, including the ones a proposed pair has
-      // spoken for — a pending suggestion is work that hasn't been done yet.
+      // spoken for, a pending suggestion is work that hasn't been done yet.
       [...unmatchedBank, ...auto.map((p) => p.bank), ...suggested.map((p) => p.bank)]
         .map((b) => `${b.id}:${round2(b.amount).toFixed(2)}:${b.date}:${b.pending ? "p" : ""}`).sort().join(","),
       [...unmatchedBook, ...auto.map((p) => p.tx), ...suggested.map((p) => p.tx)]
@@ -331,7 +331,7 @@ const DUP_TEXT = 0.8;
  *
  * Two rules keep this from eating real data:
  *   · An entry a bank line has matched is proof the money moved, so it's always
- *     the keeper — and if two members are both bank-matched the bank saw two
+ *     the keeper, and if two members are both bank-matched the bank saw two
  *     separate events, so the group isn't a duplicate at all and is dropped.
  *   · Transfers are two linked halves by design and are never candidates.
  *
@@ -377,7 +377,7 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
       const extras = members.filter((m) => m.id !== keep.id);
       // "Identical" has to mean the same characters, not a high similarity
       // score. The scorer drops tokens of two letters or less, so "Contractor A"
-      // and "Contractor B" both reduce to {contractor} and score a perfect 1 —
+      // and "Contractor B" both reduce to {contractor} and score a perfect 1 
       // two real payments to two real people, one of which would be deleted as
       // a copy. Anything that is not literally the same text is a judgement
       // call and has to stay one.
@@ -406,7 +406,7 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
 }
 
 /**
- * The same bank line delivered twice — an account linked through two
+ * The same bank line delivered twice: an account linked through two
  * connections, or a re-sync that landed under a fresh Plaid id. Extras get
  * ignored rather than deleted: the rows are the durable record of what the bank
  * sent, and deleting one just invites the next sync to re-create it.

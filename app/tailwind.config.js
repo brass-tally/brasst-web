@@ -11,7 +11,7 @@ export default {
         serif: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
-      // The single source of truth for the type scale — index.html no longer
+      // The single source of truth for the type scale: index.html no longer
       // patches these sizes, so there is one place to tune them. Sizes track
       // the landing page's 16.5px body, and the tracking is looser than it was:
       // Plus Jakarta Sans is a wider face than Geist and does not want to be

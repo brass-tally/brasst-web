@@ -1,4 +1,4 @@
-// Ledger analytics — pure functions over the in-memory snapshot that App.jsx
+// Ledger analytics: pure functions over the in-memory snapshot that App.jsx
 // already renders from. Nothing here touches the network or React.
 //
 // Both the agent's tools (lib/agent.js) and the proactive insight pass
@@ -379,7 +379,7 @@ export function findDuplicates(data, { windowDays = 6, minAmount = 5, threshold 
           confidence: score >= 0.85 ? "high" : score >= 0.65 ? "medium" : "low",
           a: txOut(sorted[i]),
           b: txOut(sorted[j]),
-          // A settlement writes "Paid: <party>" — a manual entry for the same
+          // A settlement writes "Paid: <party>", a manual entry for the same
           // bill is the single most common way this ledger doubles up.
           likelyCause: /^(paid|received):/i.test(sorted[j].description) || /^(paid|received):/i.test(sorted[i].description)
             ? "one side looks like an AR/AP settlement, the other like a manual or imported entry"
@@ -553,7 +553,7 @@ export function cashForecast(data, { days = 60, balance } = {}) {
   const inflow = sum(occ.filter((o) => o.kind === "receivables"));
   const outflow = sum(occ.filter((o) => o.kind === "payables"));
 
-  // Everything not on a due date — payroll, subscriptions, day-to-day — is
+  // Everything not on a due date: payroll, subscriptions, day-to-day, is
   // estimated from what actually happened, not from the recurring flag.
   const trend = monthlyTotals(data, { months: 4 });
   const burn = trend.averages_excluding_current_month.net;
@@ -567,7 +567,7 @@ export function cashForecast(data, { days = 60, balance } = {}) {
     .map((o) => ({
       dueDate: o.due,
       // An overdue item's due date is in the past but its cash is still ahead
-      // of us — say so, or it reads as money that already moved.
+      // of us, say so, or it reads as money that already moved.
       expected: o.overdue ? `overdue since ${o.due}, still outstanding` : o.due,
       direction: o.kind === "receivables" ? "in" : "out",
       party: o.party,

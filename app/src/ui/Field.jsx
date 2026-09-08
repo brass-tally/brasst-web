@@ -4,8 +4,8 @@ import { P, R, MONO, inkOn } from "./tokens";
 
 /* ================= form controls =================
    Every control shares one shape and one focus treatment. The app previously
-   had four different focus styles — a global outline, this box-shadow ring, an
-   unused focusRing() helper, and a Tailwind ring on the feedback modal — so a
+   had four different focus styles, a global outline, this box-shadow ring, an
+   unused focusRing() helper, and a Tailwind ring on the feedback modal, so a
    field looked focused differently depending on which screen it was on. */
 
 export const CONTROL =
@@ -83,7 +83,7 @@ export function Select({ children, className = "", style = {}, ...props }) {
 
 /* A checkbox drawn rather than a native one, because the native control cannot
    be given the brass fill and the app was reimplementing this three separate
-   ways — twice as a bare <input type="checkbox"> with no styling at all.
+   ways, twice as a bare <input type="checkbox"> with no styling at all.
    Still a real button with aria-checked, so it stays keyboard-reachable. */
 export function Checkbox({ checked, onChange, label, sub, disabled, round = false, className = "" }) {
   return (

@@ -1,9 +1,9 @@
-// Data layer — everything the app knows about Supabase lives here.
+// Data layer: everything the app knows about Supabase lives here.
 // Multi-ledger: every row belongs to a ledger; setLedgerId() scopes all reads/writes.
 
 import { supabase } from "./supabase";
 
-let LID = null; // current ledger id — set before any data call
+let LID = null; // current ledger id, set before any data call
 export const setLedgerId = (id) => { LID = id; };
 
 /* ---------------- ledgers ---------------- */
@@ -162,7 +162,7 @@ export async function loadAll(ledger) {
     }));
   } catch { /* optional */ }
 
-  // Missing table (migration not run) must not break the ledger — without it
+  // Missing table (migration not run) must not break the ledger, without it
   // the app simply falls back to asking about the gap every time.
   const consolidations = await listConsolidations(ledger.id);
 
@@ -223,7 +223,7 @@ export async function listConsolidations(ledgerId, limit = 30) {
   }
 }
 
-/** Write one finished run. Throws if the table isn't there — the caller says so,
+/** Write one finished run. Throws if the table isn't there, the caller says so,
  *  because a run nobody filed is a run the app will ask for again. */
 export async function logConsolidation(ledgerId, run) {
   const { data, error } = await supabase.from("consolidations").insert({

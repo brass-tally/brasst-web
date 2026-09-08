@@ -3,13 +3,13 @@ import { P, elev, R, SERIF, MONO } from "./tokens";
 
 /* ================= surfaces =================
    Two kinds of ground, and the difference matters. A Card is a raised surface
-   on the page — it casts a shadow and holds a section. A Panel is an inset
-   surface inside a card — it recedes to the page colour and holds a detail.
+   on the page. It casts a shadow and holds a section. A Panel is an inset
+   surface inside a card. It recedes to the page colour and holds a detail.
    Before this, both were typed out by hand at ~60 call sites, which is why
    some cards had elevation and others silently didn't. */
 
 /* The card's style object on its own, for the places that already have their
-   own element and only want the surface — a <div> wrapping a grid, a <section>
+   own element and only want the surface, a <div> wrapping a grid, a <section>
    with its own semantics. Same values Card uses, so the two cannot drift. */
 export const cardStyle = ({ tone = "line", level = 1 } = {}) => ({
   background: P.surface,
@@ -47,7 +47,7 @@ export function Card({
   );
 }
 
-/* An inset well inside a card — stat tiles, read-only fields, nested lists.
+/* An inset well inside a card, stat tiles, read-only fields, nested lists.
    Sits at the page colour so it reads as cut into the card rather than
    stacked on top of it, and carries no shadow for the same reason. */
 export function Panel({ children, className = "", style = {}, as: Tag = "div", ...rest }) {
@@ -69,7 +69,7 @@ export function Panel({ children, className = "", style = {}, as: Tag = "div", .
 
 /* The heading block that opens a section: an optional mono eyebrow in brass,
    the Fraunces title, and an optional right-hand slot for controls. The
-   eyebrow is the landing page's device — it labels the section before the
+   eyebrow is the landing page's device. It labels the section before the
    title names it, and it is what makes a stack of cards read as a document. */
 export function SectionHeading({ eyebrow, children, right, sub, className = "", id }) {
   return (
