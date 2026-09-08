@@ -13,6 +13,7 @@ import { jsPDF } from "jspdf";
 import { askClaude, friendlyError } from "./lib/extract";
 import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
 import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross } from "./lib/tax";
+import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
   proposeMatches, explainDelta, clearedIndex, consolidationPlan,
@@ -4178,73 +4179,115 @@ function MenuSheet({ onClose, onGo, tab, setupPending }) {
   );
 }
 
-/* The one document that cannot be a link to a page nobody has written yet.
-   Someone about to connect their bank deserves an answer in the app, in plain
-   words, about what happens to it. Everything stated here is true of this
-   build: Plaid holds the bank credentials, Supabase holds the rows, row level
-   security scopes them to the signed-in user, and receipts sit in a private
-   bucket keyed by user id. */
-function LegalPage({ which }) {
-  const APP_SITE = "https://brasstally.com";
-  const copy = {
-    data: {
-      title: "How your financial data is handled",
-      body: [
-        ["Your bank sign-in never reaches us.", "Connecting a bank opens Plaid, and you sign in on your bank's own screen. Brasstally receives a token that can read transactions and balances. It cannot move money, and we never see your banking password."],
-        ["Your books live in your own rows.", "Everything is stored in Postgres with row level security, which means the database itself refuses to return another account's rows, not just the app. Receipts and invoices sit in a private bucket under your user id."],
-        ["Receipts are read by a model, then filed.", "When you drop in a receipt it is sent to Anthropic's API to be read, and the text comes back to fill the form. The file is stored with the entry so it is there at tax time."],
-        ["You can take it or delete it.", "Every section exports to CSV, and resetting a ledger erases its entries. Deleting your account removes the rows and the files with it."],
-        ["What we do not do.", "We do not sell data, we do not show advertising, and nobody at Brasstally reads your ledger unless you ask us to look at something."],
-      ],
-      link: `${APP_SITE}/data`,
-      linkLabel: "The full page on financial data",
-    },
-    privacy: {
-      title: "Privacy policy",
-      body: [
-        ["What we collect, and nothing more.", "Your email, your entries, your receipts, and bank transactions if you connect an account. Not your name, address, phone number or business number, because the bookkeeping does not need them."],
-        ["Who else touches it.", "Supabase stores it, Plaid handles bank sign-in, Anthropic reads receipts and answers questions, Vercel hosts, Resend sends email. Each gets only what its job needs, and none of them get it for advertising."],
-        ["No sale, and no advertising.", "There is no advertising in Brasstally and no advertiser can pay to appear in it. We do not use your ledger to train models."],
-        ["Your rights, without asking us.", "See everything, export everything to CSV, correct any entry, reset a ledger, delete the account, or disconnect a bank. All of it is a button rather than a request."],
-      ],
-      link: `${APP_SITE}/privacy`,
-      linkLabel: "Read the full privacy policy",
-    },
-    terms: {
-      title: "Terms of use",
-      body: [
-        ["It is not an accountant.", "Brasstally prepares books and drafts returns, and shows its working so a professional can check it. Nothing in the app is accounting, tax or legal advice, and the figures you file remain yours."],
-        ["It cannot file.", "No Canadian tax software exposes a filing interface to third parties. Brasstally prepares the package and tracks the return through draft, sent, filed and assessed. You or your accountant file it."],
-        ["It never moves money.", "A bank connection is read only. Brasstally is not a bank or a payment service."],
-        ["Your books are yours.", "We claim no ownership of your entries or documents, and you can export or delete them at any time."],
-      ],
-      link: `${APP_SITE}/terms`,
-      linkLabel: "Read the full terms",
-    },
-  }[which];
+/* The documents, in full, in the app.
+   They used to be three summaries with a button to the website. Following that
+   button left the app entirely, and in a home-screen install there was no way
+   back: no browser chrome, and the site's own header sat under the status bar.
+   Somebody reading a privacy policy should not end up stranded.
 
-  return (
-    <div className="space-y-6 stagger">
-      <section style={cardStyle()} className="p-5 max-w-2xl">
-        <h3 style={{ fontFamily: SERIF }} className="text-2xl mb-2">{copy.title}</h3>
-        <div>
-          {copy.body.map(([h, b]) => (
-            <div key={h} className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
-              <div style={{ color: P.text }} className="text-[16px] mb-1">{h}</div>
-              <p style={{ color: P.muted }} className="text-[15px] leading-relaxed">{b}</p>
+   The text comes from lib/legal.js, the same object the website is built from,
+   so a correction cannot land in one place and not the other. */
+function Prose({ html }) {
+  // The source allows <strong>, <em> and <a href> and nothing else. It is our
+  // own text, not user input, but it is still worth saying which tags are in
+  // play so nobody later pipes something else through here.
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function LegalBlock({ block }) {
+  if (block.p) {
+    return <p style={{ color: P.muted }} className="text-[16px] leading-relaxed mb-3"><Prose html={block.p} /></p>;
+  }
+  if (block.ul) {
+    return (
+      <ul className="mb-3">
+        {block.ul.map((li, i) => (
+          <li key={i} className="flex gap-3 mb-2">
+            <span aria-hidden style={{ background: P.brass, width: 6, height: 6, borderRadius: "50%", marginTop: 9 }} className="shrink-0" />
+            <span style={{ color: P.muted }} className="text-[16px] leading-relaxed"><Prose html={li} /></span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (block.note) {
+    return (
+      <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-4">
+        <div style={{ color: P.text }} className="text-[16px] mb-1">{block.note.h}</div>
+        <p style={{ color: P.muted }} className="text-[15.5px] leading-relaxed"><Prose html={block.note.p} /></p>
+      </div>
+    );
+  }
+  if (block.table) {
+    /* A three-column table does not fit a phone, so on a narrow screen each row
+       becomes a small stack of labelled lines. Same content, no sideways
+       scrolling through a document someone is trying to read. */
+    const { head, rows } = block.table;
+    return (
+      <div className="mb-4">
+        <div className="hidden sm:block overflow-x-auto">
+          <table className="w-full" style={{ borderCollapse: "collapse" }}>
+            <thead>
+              <tr>{head.map((h) => (
+                <th key={h} style={{ color: P.faint, borderBottom: `1px solid ${P.line}` }}
+                    className="text-left font-normal text-[14px] pb-2 pr-4">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>{r.map((c, j) => (
+                  <td key={j} style={{ color: P.muted, borderTop: `1px solid ${P.line}` }}
+                      className="align-top text-[15px] py-3 pr-4 leading-relaxed"><Prose html={c} /></td>
+                ))}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="sm:hidden">
+          {rows.map((r, i) => (
+            <div key={i} style={{ background: P.surface2, borderRadius: 14 }} className="p-4 mb-2">
+              {r.map((c, j) => (
+                <div key={j} className={j ? "mt-2.5" : ""}>
+                  <div style={{ color: P.faint }} className="text-[13px] mb-0.5">{head[j]}</div>
+                  <div style={{ color: P.muted }} className="text-[15px] leading-relaxed"><Prose html={c} /></div>
+                </div>
+              ))}
             </div>
           ))}
-          <a
-            href={copy.link}
-            target="_blank"
-            rel="noreferrer"
-            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-            className="mt-3 w-full px-4 py-3 text-[15px] font-medium inline-flex items-center justify-center gap-2"
-          >
-            {copy.linkLabel} <ExternalLink size={15} />
-          </a>
         </div>
-      </section>
+      </div>
+    );
+  }
+  return null;
+}
+
+function LegalPage({ which }) {
+  const doc = LEGAL[which];
+  if (!doc) return null;
+  return (
+    <div className="space-y-6 stagger">
+      <div className="max-w-2xl">
+        <div className="eyebrow mb-1.5">{doc.kicker}</div>
+        <h2 style={{ fontFamily: SERIF }} className="text-2xl leading-tight">{doc.title}</h2>
+        <div style={{ color: P.faint }} className="text-[14px] mt-1">Last updated {LEGAL_UPDATED}</div>
+        <p style={{ color: P.muted }} className="text-[16.5px] leading-relaxed mt-3">{doc.lede}</p>
+      </div>
+
+      {doc.sections.map((sec, i) => (
+        <section key={sec.id} style={cardStyle()} className="p-5 max-w-2xl">
+          {/* The first section of each document is its summary, so it does not
+              repeat its own heading above the note it contains. */}
+          {!(i === 0 && sec.blocks.length === 1 && sec.blocks[0].note) && (
+            <h3 style={{ fontFamily: SERIF }} className="text-xl mb-2">{sec.h}</h3>
+          )}
+          {sec.blocks.map((b, j) => <LegalBlock key={j} block={b} />)}
+        </section>
+      ))}
+
+      <p style={{ color: P.faint }} className="text-[14px] max-w-2xl leading-relaxed">
+        Brasstally is developed by GENIE AI, Inc. in Ontario, Canada. This is the same text published at
+        brasstally.com, so you can send someone the link instead of a screenshot.
+      </p>
     </div>
   );
 }

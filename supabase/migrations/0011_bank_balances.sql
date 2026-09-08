@@ -1,5 +1,5 @@
 -- ============================================================
--- Bank balances on Plaid connections — run once in SQL Editor
+-- Bank balances on Plaid connections: run once in SQL Editor
 -- ============================================================
 
 alter table public.bank_connections

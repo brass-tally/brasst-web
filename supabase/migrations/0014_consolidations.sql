@@ -1,5 +1,5 @@
 -- ============================================================
--- Consolidations — the durable record of every reconciliation run:
+-- Consolidations: the durable record of every reconciliation run:
 -- when it happened, what it matched, what it created, and what
 -- duplicates it removed.
 -- Run once in: Supabase Dashboard → SQL Editor → New query
@@ -8,7 +8,7 @@
 -- gap but doesn't close it, so "bank and books disagree" stayed true forever
 -- and the app asked for the same reconciliation on every ledger switch. A run
 -- now stores the fingerprint of what was open when it finished (`signature`),
--- and the app only asks again when that fingerprint changes — i.e. when the
+-- and the app only asks again when that fingerprint changes, i.e. when the
 -- bank or the books actually moved.
 -- ============================================================
 

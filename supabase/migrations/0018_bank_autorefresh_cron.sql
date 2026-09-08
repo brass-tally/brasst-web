@@ -1,7 +1,7 @@
 -- ============================================================
--- Nightly bank autorefresh — run once in: Supabase Dashboard → SQL Editor
+-- Nightly bank autorefresh: run once in: Supabase Dashboard → SQL Editor
 --
--- Before this, "Sync now" was the ONLY way a bank connection ever synced —
+-- Before this, "Sync now" was the ONLY way a bank connection ever synced 
 -- there was no cron, no scheduled function, nothing. A bank could sit
 -- unsynced indefinitely with no one noticing until they opened the app and
 -- clicked the button themselves. This wires up pg_cron + pg_net to call the
@@ -36,7 +36,7 @@ create table if not exists private.cron_config (
 --     -- The Edge Gateway rejects any request with no Authorization header
 --     -- before it ever reaches our code, regardless of x-cron-secret. The
 --     -- anon/publishable key already ships in the frontend bundle, so it
---     -- carries no new exposure here — x-cron-secret is still what actually
+--     -- carries no new exposure here, x-cron-secret is still what actually
 --     -- gates the cron_sync_all action inside the function.
 --     ('anon_key', '<the project''s anon/publishable key, from src/lib/supabase.js>')
 --   on conflict (key) do update set value = excluded.value;

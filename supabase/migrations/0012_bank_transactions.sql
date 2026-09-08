@@ -1,11 +1,11 @@
 -- ============================================================
--- Bank transactions — the durable record of every line Plaid sends us,
+-- Bank transactions: the durable record of every line Plaid sends us,
 -- and the link from a bank line to the ledger entry that accounts for it.
 -- Run once in: Supabase Dashboard → SQL Editor → New query
 --
 -- Why this table exists: /transactions/sync is cursor-based and one-shot.
 -- Before this, sync advanced the cursor and handed the rows straight to a
--- review modal — closing that modal lost them permanently. Now every line is
+-- review modal, closing that modal lost them permanently. Now every line is
 -- stored first and the cursor moves last, so nothing is ever only in memory.
 -- ============================================================
 

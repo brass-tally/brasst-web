@@ -1,12 +1,12 @@
 -- ============================================================
--- Brasstally — bank connection diagnostic (READ ONLY)
+-- Brasstally: bank connection diagnostic (READ ONLY)
 -- Run in: Supabase Dashboard -> SQL Editor -> New query
 --
 -- This is ONE statement on purpose. The SQL Editor only returns the last
 -- statement's result, so the earlier multi-block version silently dropped
 -- everything above it. Just hit Run and export/paste the whole result.
 --
--- Output shape: 3 columns — section, sort_key, detail (JSON).
+-- Output shape: 3 columns, section, sort_key, detail (JSON).
 -- Nothing here writes. access_token is masked to an 8-char prefix, so the
 -- output is safe to paste back into chat. Do NOT remove that masking.
 -- ============================================================
@@ -97,7 +97,7 @@ from (
 
   union all
 
-  -- 2. connection inventory — the main one
+  -- 2. connection inventory, the main one
   select '2_connection', 2, jsonb_build_object(
     'email',            u.email,
     'ledger_id',        bc.ledger_id,

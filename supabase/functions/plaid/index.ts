@@ -104,7 +104,7 @@ async function syncOne(
     }
   } catch (e) {
     // Persist the reason before rethrowing. Otherwise a dropped sign-in is
-    // invisible in the data — last_synced simply stops moving, and only
+    // invisible in the data, last_synced simply stops moving, and only
     // whoever happens to read the table ever finds out.
     const code = (e as PlaidError).code || null;
     await markStatus(conn.id, code, String((e as Error).message || e));
@@ -163,7 +163,7 @@ async function syncOne(
     if (remErr) throw remErr;
   }
 
-  // Everything is durable — only now is it safe to move the cursor past it.
+  // Everything is durable: only now is it safe to move the cursor past it.
   // A sync that got this far proves the Item is healthy, so clear any stale
   // failure recorded against it in the same write.
   const { error: curErr } = await supabase.from("bank_connections")
@@ -198,7 +198,7 @@ Deno.serve(async (req) => {
     const creds = { client_id: Deno.env.get("PLAID_CLIENT_ID"), secret: Deno.env.get("PLAID_SECRET") };
     if (!creds.client_id || !creds.secret) return json({ error: "Plaid keys are not configured yet" }, 400);
 
-    // The nightly autorefresh has no signed-in user — pg_cron calls this action
+    // The nightly autorefresh has no signed-in user, pg_cron calls this action
     // with a shared secret instead of a user JWT, so it needs the service-role
     // client (bypasses RLS) rather than the per-request anon client below.
     if (action === "cron_sync_all") {
@@ -278,7 +278,7 @@ Deno.serve(async (req) => {
 
       // Update mode: hand Link the existing access_token and it re-authenticates
       // the Item the user already has instead of creating a rival one. Plaid
-      // rejects `products` here — the Item's products are already fixed.
+      // rejects `products` here, the Item's products are already fixed.
       if (body.connection_id) {
         const { data: conn, error } = await supabase
           .from("bank_connections").select("access_token")
@@ -294,7 +294,7 @@ Deno.serve(async (req) => {
         const d = await plaid("/link/token/create", payload);
         return json({ link_token: d.link_token, oauth: Boolean(payload.redirect_uri) });
       } catch (e) {
-        // Not allowlisted yet — still open Link without OAuth redirect support.
+        // Not allowlisted yet: still open Link without OAuth redirect support.
         // Banks that authenticate in their own app can't finish in this mode,
         // so pass the reason back for the UI to surface.
         if (payload.redirect_uri && /redirect/i.test(String((e as Error).message || e))) {
@@ -325,7 +325,7 @@ Deno.serve(async (req) => {
       if (existing) {
         // `cursor` is deliberately absent: keeping it is what makes the next
         // sync resume where it left off instead of re-importing everything.
-        // The institution name only moves if Link actually supplied one —
+        // The institution name only moves if Link actually supplied one 
         // update mode often omits it, and "Bank" is worse than what's stored.
         const { error } = await supabase.from("bank_connections").update({
           access_token: d.access_token,

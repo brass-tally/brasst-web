@@ -1,7 +1,7 @@
 -- ============================================================
 -- Migration: balance anchor
 -- Run this if you ALREADY created the database from an earlier
--- schema.sql (fresh installs don't need it — it's in the schema now).
+-- schema.sql (fresh installs don't need it. It's in the schema now).
 -- Supabase Dashboard → SQL Editor → New query → Run
 -- ============================================================
 

@@ -1,5 +1,5 @@
 -- ============================================================
--- The Ledger — Supabase schema
+-- The Ledger: Supabase schema
 -- Run this once in: Supabase Dashboard → SQL Editor → New query
 -- ============================================================
 

@@ -22,9 +22,9 @@ alter table public.bank_connections
   add column if not exists status_error text,         -- raw Plaid error_message
   add column if not exists status_at   timestamptz;   -- when status was last confirmed
 
--- 'ok'             — syncing normally
--- 'login_required' — needs the user to sign in again via Link update mode
--- 'error'          — some other Plaid error; status_code carries the detail
+-- 'ok':             syncing normally
+-- 'login_required': needs the user to sign in again via Link update mode
+-- 'error':          some other Plaid error; status_code carries the detail
 alter table public.bank_connections
   drop constraint if exists bank_connections_status_check;
 alter table public.bank_connections

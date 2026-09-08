@@ -1,5 +1,5 @@
 -- ============================================================
--- Bank connections (Plaid) — run once in SQL Editor if missing
+-- Bank connections (Plaid): run once in SQL Editor if missing
 -- Live Ledger already has this table; keep for repo parity / fresh installs
 -- ============================================================
 

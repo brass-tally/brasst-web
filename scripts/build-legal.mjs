@@ -1,10 +1,49 @@
-<!doctype html>
+#!/usr/bin/env node
+/**
+ * Renders the three legal pages from app/src/lib/legal.js.
+ *
+ * The text was written into three HTML files by hand, and the app linked out to
+ * them. A correction could then land on the website and not in the app, for
+ * documents about someone's bank data. One source, two renderers.
+ *
+ *   node scripts/build-legal.mjs        (run from the repo root)
+ */
+import { writeFileSync, mkdirSync } from "node:fs";
+import { LEGAL, LEGAL_UPDATED, ENTITY, LEGAL_EMAIL } from "../app/src/lib/legal.js";
+
+const esc = (s) => s;   // the source is our own copy and already carries its markup
+
+const block = (b) => {
+  if (b.p) return `    <p>${b.p}</p>`;
+  if (b.ul) return `    <ul>\n${b.ul.map((li) => `      <li>${li}</li>`).join("\n")}\n    </ul>`;
+  if (b.note) return `    <div class="note"><b>${b.note.h}</b><p>${b.note.p}</p></div>`;
+  if (b.table) {
+    const { head, rows } = b.table;
+    return `    <table>\n      <tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr>\n` +
+      rows.map((r) => `      <tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("\n") +
+      `\n    </table>`;
+  }
+  return "";
+};
+
+const page = (key, doc) => {
+  const toc = doc.sections
+    .filter((s) => !(s.blocks.length === 1 && s.blocks[0].note))
+    .map((s) => `<a href="#${s.id}">${s.h}</a>`).join("");
+
+  const body = doc.sections.map((s, i) => {
+    const summaryOnly = i === 0 && s.blocks.length === 1 && s.blocks[0].note;
+    const inner = s.blocks.map(block).join("\n");
+    return summaryOnly ? inner : `    <h2 id="${s.id}">${s.h}</h2>\n${inner}`;
+  }).join("\n\n");
+
+  return `<!doctype html>
 <html lang="en" data-t="light"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Terms of use &middot; Brasstally</title>
-<meta name="description" content="What the service does, what it deliberately does not do, and the rules on both sides. Plain language, and short enough to actually read."/>
-<link rel="canonical" href="https://www.brasstally.com/terms"/>
+<title>${doc.title} &middot; Brasstally</title>
+<meta name="description" content="${doc.lede.replace(/<[^>]+>/g, "").slice(0, 155)}"/>
+<link rel="canonical" href="https://www.brasstally.com/${key === "data" ? "data" : key}"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -93,70 +132,43 @@ footer a{margin-right:16px}
 
 <div class="wrap">
   <header class="page">
-    <div class="kicker">Terms</div>
-    <h1>Terms of use</h1>
-    <div class="meta">Last updated 7 September 2026</div>
-    <p class="lede">What the service does, what it deliberately does not do, and the rules on both sides. Plain language, and short enough to actually read.</p>
+    <div class="kicker">${doc.kicker}</div>
+    <h1>${doc.title}</h1>
+    <div class="meta">Last updated ${LEGAL_UPDATED}</div>
+    <p class="lede">${doc.lede}</p>
   </header>
 
   <main>
-    <div class="toc"><div>On this page</div><a href="#agree">Agreeing to these terms</a><a href="#what">What Brasstally is</a><a href="#not">What it is not</a><a href="#account">Your account</a><a href="#yours">Your data stays yours</a><a href="#use">Acceptable use</a><a href="#banks">Bank connections</a><a href="#pay">Money</a><a href="#uptime">Availability</a><a href="#end">Ending it</a><a href="#liability">Liability</a><a href="#law">Governing law</a></div>
+    <div class="toc"><div>On this page</div>${toc}</div>
 
-    <div class="note"><b>It prepares. You file.</b><p>Brasstally prepares books and drafts returns. <strong>It is not an accountant, it does not give advice, and it cannot file anything with the CRA.</strong> A draft is a starting point for you or your accountant, and the numbers remain your responsibility.</p></div>
-
-    <h2 id="agree">Agreeing to these terms</h2>
-    <p>Using Brasstally means agreeing to what is on this page. If you are using it for a company, you are confirming you are allowed to accept on that company's behalf.</p>
-
-    <h2 id="what">What Brasstally is</h2>
-    <p>Bookkeeping software. It records entries, reads receipts, tracks what you owe and are owed, connects to your bank to reconcile, and prepares summaries and drafts for tax purposes.</p>
-
-    <h2 id="not">What it is not</h2>
-    <ul>
-      <li><strong>Not an accountant.</strong> Nothing in the app is accounting, tax or legal advice. It shows its working so a professional can check it, which is not the same as replacing one.</li>
-      <li><strong>Not a filing service.</strong> No Canadian tax software exposes a filing interface to third parties. Brasstally prepares the package and tracks the return through draft, sent, filed and assessed. You or your accountant file it.</li>
-      <li><strong>Not a bank or a payment service.</strong> It never moves money. A bank connection is read only.</li>
-      <li><strong>Not a guarantee of accuracy.</strong> Categories are suggested, tax treatment is derived from rules, and a receipt is read by a model. All of it is editable because all of it can be wrong. The figures you file are yours.</li>
-    </ul>
-
-    <h2 id="account">Your account</h2>
-    <p>Keep access to your email secure, since that is how you sign in. Tell us promptly if you think someone else is in your account. One account is for one person or one business; do not share credentials.</p>
-
-    <h2 id="yours">Your data stays yours</h2>
-    <p>You own your books. We claim no ownership of your entries or documents. We hold them in order to run the service for you, and you can export or delete them at any time. We do not use your ledger to train models.</p>
-
-    <h2 id="use">Acceptable use</h2>
-    <ul>
-      <li>Do not use Brasstally to record or facilitate anything unlawful.</li>
-      <li>Do not upload documents you have no right to.</li>
-      <li>Do not attempt to reach another account's data, or probe the service for weaknesses without asking us first. If you find something, tell us and we will thank you properly.</li>
-      <li>Do not resell access or scrape the service.</li>
-    </ul>
-
-    <h2 id="banks">Bank connections</h2>
-    <p>Bank connections are provided through Plaid, and using one means accepting Plaid's terms as well. You sign in on your bank's own screen; we never receive your banking credentials. We are not responsible for a bank feed being unavailable, delayed, or returning data your bank has mislabelled, though we will tell you when a connection needs attention.</p>
-
-    <h2 id="pay">Money</h2>
-    <p>Brasstally is currently in early access and free. Founding members keep a free tier when paid plans arrive. If pricing changes we will give notice in the app before anything is charged, and no card is required to use it today.</p>
-
-    <h2 id="uptime">Availability</h2>
-    <p>We do not promise a particular level of uptime during early access. We do promise not to lose your data carelessly, and to tell you if something goes wrong that affects it.</p>
-
-    <h2 id="end">Ending it</h2>
-    <p>You can stop at any time by deleting your account, and your data goes with it. We may suspend an account that breaks the acceptable use rules above, or if we are required to. If we ever discontinue the service, we will give reasonable notice and time to export.</p>
-
-    <h2 id="liability">Liability</h2>
-    <p>Brasstally is provided as is. To the extent the law allows, we are not liable for indirect or consequential loss, and our total liability is limited to what you have paid us in the previous twelve months, which during early access is nothing.</p>
-    <p>Said plainly: <strong>the figures you file are your responsibility.</strong> Please have a professional review anything material before it goes to the CRA.</p>
-    <p>Nothing here limits liability that cannot be limited by law.</p>
-
-    <h2 id="law">Governing law</h2>
-    <p>These terms are governed by the laws of Ontario and the federal laws of Canada that apply there, and the courts of Ontario have jurisdiction.</p>
+${body}
 
     <footer>
       <a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/data">Your financial data</a><br/><br/>
-      Developed by GENIE AI, Inc. in Ontario, Canada. Questions about any of this go to
-      <a href="mailto:legal@genieai.ca">legal@genieai.ca</a>.
+      Developed by ${ENTITY} in Ontario, Canada. Questions about any of this go to
+      <a href="mailto:${LEGAL_EMAIL}">${LEGAL_EMAIL}</a>.
     </footer>
   </main>
 </div>
 </body></html>
+`;
+};
+
+let n = 0;
+for (const [key, doc] of Object.entries(LEGAL)) {
+  mkdirSync(`landing/${key}`, { recursive: true });
+  let html = page(key, doc);
+  // the stacked mobile table needs each cell to know its column
+  html = html.replace(/<tr>((?:<th>.*?<\/th>)+)<\/tr>\n((?:\s*<tr>.*?<\/tr>\n?)+)/gs, (m, headRow, bodyRows) => {
+    const labels = [...headRow.matchAll(/<th>(.*?)<\/th>/g)].map((x) => x[1]);
+    const fixed = bodyRows.replace(/<tr>(.*?)<\/tr>/gs, (row, cells) => {
+      let i = 0;
+      return "<tr>" + cells.replace(/<td>/g, () => `<td data-l="${labels[i++] ?? ""}">`) + "</tr>";
+    });
+    return `<tr>${headRow}</tr>\n${fixed}`;
+  });
+  writeFileSync(`landing/${key}/index.html`, html);
+  n += 1;
+  console.log(`  landing/${key}/index.html  ${doc.sections.length} sections, ${html.length} bytes`);
+}
+console.log(`  ${n} pages generated from app/src/lib/legal.js`);
