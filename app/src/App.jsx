@@ -1895,14 +1895,31 @@ function Ledger({ onSignOut }) {
                 </button>
                 {ledgerMenuOpen && (
                   <>
-                    <div className="fixed inset-0 z-40" onClick={() => setLedgerMenuOpen(false)} />
+                    <div className="fixed inset-0 z-50" onClick={() => setLedgerMenuOpen(false)} />
                     {/* Two lines per ledger, an initials tile, and a check on
                         the open one. The old version was a 14px row with the
                         kind in tracked mono and "+ new ledger…" in 12px, which
                         is a desktop context menu wearing the app's colours. */}
+                    {/* An absolutely positioned child is sized by its
+                        containing block, and this one's is the ledger name
+                        button, which is itself truncated. So the menu inherited
+                        a narrow column and every row wrapped: "Business ledger"
+                        onto two lines, the second name down to "B...".
+
+                        The blanket `.app-inner * { max-width: 100% }` from the
+                        mobile pass was clamping it to that width too, which is
+                        why setting a width alone would not have been enough.
+                        `data-popover` opts out of that rule. */}
                     <div
-                      style={{ background: P.surface, boxShadow: elev(3), borderRadius: R.panel }}
-                      className="absolute left-0 top-full mt-2 z-50 p-2 overflow-hidden"
+                      data-popover
+                      style={{
+                        background: P.surface,
+                        boxShadow: elev(3),
+                        borderRadius: R.panel,
+                        width: "min(300px, calc(100vw - 32px))",
+                        maxWidth: "none",
+                      }}
+                      className="absolute left-0 top-full mt-2 z-[60] p-2"
                       role="menu"
                     >
                       {ledgers.map((l) => {
@@ -1927,7 +1944,7 @@ function Ledger({ onSignOut }) {
                             </span>
                             <span className="flex-1 min-w-0">
                               <span style={{ color: P.text }} className="text-[16px] block truncate">{l.name}</span>
-                              <span style={{ color: P.faint }} className="text-[13.5px] block">
+                              <span style={{ color: P.faint }} className="text-[13.5px] block whitespace-nowrap">
                                 {l.kind === "personal" ? "Personal ledger" : "Business ledger"}
                               </span>
                             </span>
@@ -1948,7 +1965,7 @@ function Ledger({ onSignOut }) {
                           >
                             <Plus size={18} />
                           </span>
-                          <span className="text-[16px]">New ledger</span>
+                          <span className="text-[16px] whitespace-nowrap">New ledger</span>
                         </button>
                       </div>
                     </div>
@@ -4019,10 +4036,12 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
       </button>
       {open && (
         <div
+          data-popover
           onClick={(e) => e.stopPropagation()}
           style={{
-            position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 45,
-            width: "min(420px, calc(100vw - 32px))", maxHeight: "70vh", overflowY: "auto",
+            position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 60,
+            width: "min(420px, calc(100vw - 32px))", maxWidth: "none",
+            maxHeight: "70vh", overflowY: "auto",
             background: P.surface, borderRadius: R.panel, boxShadow: elev(3), padding: 4,
           }}
         >

@@ -464,7 +464,11 @@ h1, h2, h3 {
      sentence was doing exactly that, and horizontal scroll on a ledger means
      the amounts leave the screen. */
   body { overflow-x: hidden; }
-  .app-inner, .app-inner * { max-width: 100%; }
+  /* Everything is held to the page width, except a popover: it is positioned
+     against a narrow anchor and has to be able to exceed it. Without the
+     exception the ledger menu was clamped to the width of the truncated button
+     it hangs from. */
+  .app-inner, .app-inner *:not([data-popover]):not([data-popover] *) { max-width: 100%; }
   .arap-panel, .budget-row { overflow: hidden; }
 }
 
