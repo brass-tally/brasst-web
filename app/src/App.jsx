@@ -1031,7 +1031,6 @@ function Ledger({ onSignOut }) {
 
   const [receiptSettle, setReceiptSettle] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [backTo, setBackTo] = useState("overview");
   // The same arithmetic the checklist does, so the dot on the icon and the
   // panel underneath it can never disagree.
   const setupProgress = useMemo(() => {
@@ -1851,9 +1850,6 @@ function Ledger({ onSignOut }) {
     reports: "Reports", settings: "Settings", profile: "Profile", taxpack: "Tax pack",
     "legal-data": "Your data", "legal-privacy": "Privacy", "legal-terms": "Terms",
   };
-  // Where Back goes. Set when the menu navigates, so a document opened from
-  // Settings returns to Settings rather than dropping you on Snapshot.
-  const MENU_ROUTES = ["taxpack", "profile", "legal-data", "legal-privacy", "legal-terms"];
 
   return (
     <div style={{ background: P.bg, color: P.text, minHeight: "100dvh", fontFamily: SANS, "--ring": P.brass }}
@@ -1982,31 +1978,15 @@ function Ledger({ onSignOut }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Btn
-              tone="ghost"
-              size="sm"
-              onClick={() => setAccountOpen(true)}
-              title="Profile, membership, and settings"
-              aria-label="Account"
-              className="hidden"
-              style={{ color: P.muted, padding: 9 }}
-            >
-              <User size={15} />
-            </Btn>
-            <Btn
-              tone="ghost"
-              size="sm"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-              aria-label={theme === "dark" ? "Switch to light" : "Switch to dark"}
-              className="hidden"
-              style={{ color: P.muted, padding: 9 }}
-            >
-              {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-            </Btn>
-            {/* The month stepper reads as one control, not three: the label
-                sits between its arrows inside a single bordered well. */}
-            {/* The month, then the menu, in line with the ledger name. */}
+            {/* An account button and a theme button used to sit here, both left
+                on `className="hidden"` when the menu took over their jobs.
+                Hidden is not removed: they were still in the tree, still
+                holding a handler, and still the thing a future reader would
+                have to work out. The menu has Profile; Settings has the theme.
+
+                The month stepper reads as one control rather than three: the
+                label sits between its arrows inside a single well, and the menu
+                follows it at the end of the row. */}
             <div
               className="flex items-center shrink-0"
               style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
@@ -2122,9 +2102,6 @@ function Ledger({ onSignOut }) {
           dbTry(() => db.updateLedger(data.ledger.id, patch));
         }} />}
         {tab === "reports" && <ReportsTab data={data} month={month} balance={balance} onAsk={askAgent} />}
-        {MENU_ROUTES.includes(tab) && (
-          <BackBar to={TAB_TITLES[backTo] || "Snapshot"} onBack={() => { setTab(backTo); window.scrollTo({ top: 0 }); }} />
-        )}
         {tab === "profile" && (
           <AccountModal
             asPage
@@ -2133,7 +2110,7 @@ function Ledger({ onSignOut }) {
             onSignOut={onSignOut}
             onResetLedger={resetAll}
             ledgerName={data.ledger.name}
-            onClose={() => setTab(backTo)}
+            onClose={() => setTab("overview")}
           />
         )}
         {tab === "taxpack" && (
@@ -2317,9 +2294,6 @@ function Ledger({ onSignOut }) {
           onClose={() => setMenuOpen(false)}
           onGo={(where) => {
             setMenuOpen(false);
-            // Only remember a return point when leaving a real section, so
-            // Back never bounces you between two menu pages.
-            if (!MENU_ROUTES.includes(tab)) setBackTo(tab);
             setTab(where);
             setChatOpen(false);
             window.scrollTo({ top: 0 });
@@ -4056,21 +4030,6 @@ function HeaderPopover({ icon: Icon, label, dot, badge, open, onToggle, children
   );
 }
 
-/* The way back. A page you arrived at from the menu needs a way out that lands
-   where you came from, not on Snapshot: opening Privacy from Settings and then
-   being dropped on the dashboard loses your place for no reason. */
-function BackBar({ to, onBack }) {
-  return (
-    <button
-      onClick={onBack}
-      style={{ background: P.surface, color: P.text, boxShadow: elev(1), borderRadius: R.pill }}
-      className="mb-4 inline-flex items-center gap-2 pl-3 pr-4 py-2.5 text-[15px] font-medium press"
-    >
-      <ChevronLeft size={18} /> Back to {to}
-    </button>
-  );
-}
-
 /* ================= the menu =================
    Everything you reach occasionally rather than live in: the two sections that
    came off the dock, your account, and the three documents anyone handing a
@@ -4397,21 +4356,22 @@ function TaxPack({ data, month, openPreview, ledgerName }) {
 
   return (
     <div className="space-y-6 stagger">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 style={{ fontFamily: SERIF }} className="text-2xl">Tax pack</h2>
-          <p style={{ color: P.muted }} className="text-[15px]">
-            Everything a preparer needs for {label}, and every receipt behind it.
-          </p>
-        </div>
+      {/* The section already names itself in the page heading above, so this
+          row carries only the action, pulled up in line with that heading. The
+          same shape Snapshot uses for its customise control. */}
+      <div className="flex items-center justify-end -mt-11">
         <button
           onClick={exportPack}
           style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-          className="px-4 py-2.5 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
+          className="h-11 px-4 text-[15px] font-medium inline-flex items-center gap-2 shrink-0 press"
         >
           <Download size={16} /> Export the pack
         </button>
       </div>
+
+      <p style={{ color: P.muted }} className="text-[15px] max-w-xl">
+        Everything a preparer needs for {label}, and every receipt behind it.
+      </p>
 
       <div className="flex flex-wrap items-center gap-2">
         {YEARS.map((y) => (
@@ -10111,13 +10071,10 @@ function AccountModal({ theme, setTheme, onSignOut, onResetLedger, ledgerName, o
         </Section>
 
         <Section title="Settings">
+          {/* The appearance switch used to sit here as well. Settings owns the
+              theme now, with a real toggle and the four palettes beside it, and
+              two switches for one setting is two places for it to look wrong. */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span style={{ color: P.muted }} className="text-sm">Appearance</span>
-              <Btn tone="ghost" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-                {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />} {theme === "dark" ? "Switch to daylight" : "Switch to midnight"}
-              </Btn>
-            </div>
             <div className="flex items-center justify-between gap-2">
               <span style={{ color: P.muted }} className="text-sm">Tab tutorials</span>
               <Btn tone="ghost" onClick={replayTours}><RotateCcw size={13} /> Show again</Btn>
