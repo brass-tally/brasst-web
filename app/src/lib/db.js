@@ -165,6 +165,7 @@ export async function loadAll(ledger) {
   // Missing table (migration not run) must not break the ledger, without it
   // the app simply falls back to asking about the gap every time.
   const consolidations = await listConsolidations(ledger.id);
+  const importRules = await listImportRules(ledger.id);
 
   return {
     ledger,
@@ -183,8 +184,83 @@ export async function loadAll(ledger) {
     payables: obs.data.filter((o) => o.kind === "payable").map(rowToOb),
     anchorHistory,
     consolidations,
+    importRules,
     credits,
   };
+}
+
+/* ---------------- remembered filing rules ---------------- */
+
+/* Every one of these tolerates the table not existing. Migration 0021 adds it,
+   and a ledger loaded before that migration runs has to keep working rather
+   than fail on a select: without the table the app simply asks about the same
+   bank line every month, which is where it started. */
+export async function listImportRules(ledgerId) {
+  try {
+    const { data, error } = await supabase
+      .from("import_rules").select("*").eq("ledger_id", ledgerId)
+      .order("times_used", { ascending: false });
+    if (error) throw error;
+    return (data || []).map((r) => ({
+      id: r.id,
+      signature: r.signature,
+      direction: r.direction,
+      category: r.category,
+      subcategory: r.subcategory || undefined,
+      learnedFrom: r.learned_from == null ? undefined : Number(r.learned_from),
+      timesUsed: r.times_used || 0,
+      createdAt: r.created_at,
+      lastUsedAt: r.last_used_at,
+    }));
+  } catch (e) {
+    console.warn("import_rules unavailable, filing rules are off:", e?.message || e);
+    return [];
+  }
+}
+
+export async function saveImportRule(ledgerId, { signature, direction, category, subcategory, learnedFrom }) {
+  try {
+    const { data, error } = await supabase
+      .from("import_rules")
+      .upsert(
+        {
+          ledger_id: ledgerId,
+          signature,
+          direction,
+          category,
+          subcategory: subcategory || null,
+          learned_from: learnedFrom ?? null,
+        },
+        { onConflict: "ledger_id,signature,direction" },
+      )
+      .select()
+      .single();
+    if (error) throw error;
+    return data?.id || null;
+  } catch (e) {
+    console.warn("could not save the filing rule:", e?.message || e);
+    return null;
+  }
+}
+
+export async function bumpImportRule(id, by = 1) {
+  try {
+    const { data } = await supabase.from("import_rules").select("times_used").eq("id", id).single();
+    await supabase
+      .from("import_rules")
+      .update({ times_used: (data?.times_used || 0) + by, last_used_at: new Date().toISOString() })
+      .eq("id", id);
+  } catch { /* a counter is not worth failing a run over */ }
+}
+
+export async function deleteImportRule(id) {
+  try {
+    await supabase.from("import_rules").delete().eq("id", id);
+    return true;
+  } catch (e) {
+    console.warn("could not remove the filing rule:", e?.message || e);
+    return false;
+  }
 }
 
 /* ---------------- consolidation history ---------------- */

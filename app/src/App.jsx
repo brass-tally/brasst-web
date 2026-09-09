@@ -14,6 +14,7 @@ import { askClaude, friendlyError } from "./lib/extract";
 import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } from "./lib/parse";
 import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross } from "./lib/tax";
 import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
+import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
 import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
   proposeMatches, explainDelta, clearedIndex, consolidationPlan,
@@ -1627,6 +1628,34 @@ function Ledger({ onSignOut }) {
     window.scrollTo({ top: 0 });
   };
 
+  /* Learning, counting and forgetting a filing rule.
+     Each one refreshes only the rule list, not the whole ledger. A full reload
+     would work and would also reset the tab and the month you were looking at,
+     which is a strange thing to have happen because you categorised a bank
+     line. */
+  const refreshRules = async () => {
+    if (!data?.ledger?.id) return;
+    const importRules = await db.listImportRules(data.ledger.id);
+    setData((d) => (d ? { ...d, importRules } : d));
+  };
+
+  const rememberFilingRule = async (rule) => {
+    if (!data?.ledger?.id) return;
+    const id = await db.saveImportRule(data.ledger.id, rule);
+    if (id) await refreshRules();
+  };
+
+  const bumpFilingRule = async (id, by) => {
+    await db.bumpImportRule(id, by);
+    await refreshRules();
+  };
+
+  const forgetFilingRule = async (id) => {
+    const ok = await db.deleteImportRule(id);
+    if (ok) await refreshRules();
+    return ok;
+  };
+
   const resetAll = async () => {
     const ok = await askConfirm({
       title: `Wipe "${data.ledger.name}" and start it fresh?`,
@@ -2327,6 +2356,9 @@ function Ledger({ onSignOut }) {
             removeDuplicates: removeDuplicateGroup,
             ignoreDupBank: ignoreDuplicateBankLines,
             record: recordConsolidation,
+            rememberRule: rememberFilingRule,
+            bumpRule: bumpFilingRule,
+            forgetRule: forgetFilingRule,
           }}
           onAnchorInstead={() => { setMatchOpen(false); setReconciling(true); }}
           onClose={() => setMatchOpen(false)}
@@ -2830,7 +2862,49 @@ function MatchView({
       description: b.description || "bank line",
       detail: `added to the books as ${opts.category}${opts.subcategory ? ` / ${opts.subcategory}` : ""}`,
     });
+
+    /* Remember how this was filed. The same line arrives every month and there
+       is no reason to be asked about it twice. Only when the description has
+       enough shape to identify it: "Cheque" on its own would match half a
+       statement, so a weak signature teaches nothing. */
+    const sig = ruleSignature(b.description);
+    if (signatureIsUseful(sig)) {
+      actions.rememberRule?.({
+        signature: sig,
+        direction: directionOf(b),
+        category: opts.category,
+        subcategory: opts.subcategory,
+        learnedFrom: Math.abs(Number(b.amount) || 0),
+      });
+    }
     return t;
+  };
+
+  /* Every unmatched line a remembered rule already covers, grouped by rule.
+     These go into the "I can sort this out myself" side of the plan, which is
+     reviewed on screen before it runs and recorded afterwards. Filing money
+     movements needs the person present, and pressing Consolidate is them being
+     present. */
+  const ruleWork = useMemo(
+    () => plannedByRules(bankTxns, data?.importRules || []),
+    [bankTxns, data?.importRules],
+  );
+
+  const doApplyRules = async () => {
+    let filed = 0;
+    for (const g of ruleWork) {
+      for (const line of g.lines) {
+        actions.createFrom(line, { category: g.rule.category, subcategory: g.rule.subcategory, ruleId: g.rule.id });
+        filed += 1;
+      }
+      await actions.bumpRule?.(g.rule.id, g.lines.length);
+      note({
+        kind: "created", date: g.lines[0].date, amount: g.total,
+        description: g.rule.subcategory || g.rule.category,
+        detail: `${g.lines.length} ${g.lines.length === 1 ? "line" : "lines"} filed from a rule you set${g.rule.createdAt ? ` on ${String(g.rule.createdAt).slice(0, 10)}` : ""}`,
+      });
+    }
+    return filed;
   };
 
   const doRemoveDup = (g) => {
@@ -2856,9 +2930,13 @@ function MatchView({
   };
 
   /* ---- the approved plan, run in one go ---- */
-  const runPlan = () => {
+  const runPlan = async () => {
     setFixing(true);
     let paired = 0, removed = 0, setAside = 0;
+
+    // Lines a remembered rule already covers. Filed first, so the plan's own
+    // matching does not then ask about entries this just created.
+    const filed = await doApplyRules();
 
     if (plan.fix.matches.length) {
       const pairs = plan.fix.matches.map((p) => ({ bankId: p.bankId, txId: p.txId }));
@@ -2876,7 +2954,7 @@ function MatchView({
     for (const g of plan.fix.duplicates) removed += doRemoveDup(g);
     for (const g of plan.fix.dupBank) setAside += doIgnoreDupBank(g);
 
-    setFixedSummary({ paired, removed, setAside });
+    setFixedSummary({ paired, removed, setAside, filed });
     setFixing(false);
   };
 
@@ -2894,6 +2972,7 @@ function MatchView({
     kind: log.length ? "reconcile" : "reviewed",
     matchedCount: count("matched"),
     createdCount: count("created"),
+    ruleFiledCount: log.filter((l) => l.kind === "created" && /filed from a rule/.test(l.detail || "")).length,
     ignoredCount: count("ignored"),
     unmatchedCount: count("unmatched"),
     duplicatesRemoved: log.filter((l) => l.kind === "duplicate").length,
@@ -2913,7 +2992,8 @@ function MatchView({
   closeRef.current = closeView;
 
   const connected = balance.source === "bank" && balance.bank != null;
-  const nothingToDo = plan.fix.count === 0 && plan.ask.count === 0;
+  const ruleLineCount = ruleWork.reduce((n, g) => n + g.lines.length, 0);
+  const nothingToDo = plan.fix.count === 0 && plan.ask.count === 0 && ruleLineCount === 0;
 
   // The opening line, in the register someone would actually use out loud.
   const headline = !connected
@@ -3045,6 +3125,41 @@ function MatchView({
             dropped: capping the groups without saying so would replace a
             dangerous offer with a silent omission, and the second is harder to
             notice. */}
+        {/* What your own rules will do, named before it happens. This is the
+            answer to being asked about the same bank fee every month: you
+            categorised it once and the app remembers. */}
+        {ruleLineCount > 0 && !fixedSummary && (
+          <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-4">
+            <div style={{ color: P.text }} className="text-[15px] mb-1">
+              {ruleLineCount} {ruleLineCount === 1 ? "line matches a rule" : "lines match rules"} you already set
+            </div>
+            {ruleWork.map((g) => (
+              <div key={g.rule.id} className="flex items-baseline justify-between gap-3 py-1.5 text-[14.5px]"
+                   style={{ borderTop: `1px solid ${P.line}` }}>
+                <span style={{ color: P.muted }} className="min-w-0 truncate">
+                  {g.lines.length} &times; {g.rule.subcategory || g.rule.category}
+                  {g.rule.timesUsed ? ` · used ${g.rule.timesUsed} times before` : " · first time"}
+                </span>
+                <span style={{ fontFamily: MONO, color: P.text }} className="tabular-nums shrink-0">{fmt(g.total)}</span>
+              </div>
+            ))}
+            <div style={{ color: P.faint }} className="text-[13.5px] mt-2">
+              These are filed when you run the plan below, and every one is listed in the record afterwards.
+            </div>
+          </div>
+        )}
+
+        {fixedSummary?.filed > 0 && (
+          <div style={{ background: P.credit + "14", borderRadius: 16 }} className="p-4 mb-4">
+            <div style={{ color: P.credit }} className="text-[15px]">
+              {fixedSummary.filed} {fixedSummary.filed === 1 ? "line" : "lines"} filed from your rules.
+            </div>
+            <div style={{ color: P.muted }} className="text-[14.5px] mt-1">
+              Each one is in the record for this run, so it can be undone entry by entry in Transactions.
+            </div>
+          </div>
+        )}
+
         {dupPatterns.length > 0 && (
           <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-4">
             <div style={{ color: P.text }} className="text-[15px] mb-1">

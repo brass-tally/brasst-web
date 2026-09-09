@@ -395,14 +395,42 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
         if (refsConflict(sorted[i].description, sorted[j].description)) continue;
         if (similarity(sorted[i].description, sorted[j].description) < DUP_TEXT) continue;
         members.push(sorted[j]);
-        if (members.length >= DUP_MAX_MEMBERS + 1) break;
+        /* No early break at the cap. Stopping here split a statement imported
+           thirty times into five groups of six, each asking the same question,
+           which is worse than the problem. The group is built whole and the cap
+           is applied to it afterwards, where it can also be waived for a group
+           that is certain. The bound is only here so a pathological import
+           cannot build an unbounded array. */
+        if (members.length >= 1000) break;
       }
       if (members.length < 2) continue;
       for (const m of members) used.add(m.id);
 
-      // Too many to be copies. Recorded so it is visible rather than silently
-      // dropped, but never offered as a deletion.
-      if (members.length > DUP_MAX_MEMBERS) {
+      // Both halves cleared the bank, so two real events that look alike.
+      if (members.filter((m) => matchedIds.has(m.id)).length > 1) continue;
+
+      const score = (t) => (matchedIds.has(t.id) ? 4 : 0) + (t.attachmentId ? 2 : 0) + (t.subcategory ? 1 : 0);
+      const keep = [...members].sort((a, b) => score(b) - score(a) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))[0];
+      const extras = members.filter((m) => m.id !== keep.id);
+
+      /* "Identical" has to mean the same characters, not a high similarity
+         score. The scorer drops tokens of two letters or less, so "Contractor A"
+         and "Contractor B" both reduce to {contractor} and score a perfect 1:
+         two real payments to two real people, one of which would be deleted as
+         a copy. Anything that is not literally the same text is a judgement
+         call and stays one.
+
+         Where it IS literally the same text on the same day, including the
+         reference number, the bank has told us as clearly as it can that this
+         is one event recorded many times. A statement imported thirty times
+         looks exactly like this, and asking about it thirty times is not
+         caution, it is just work. */
+      const identical = extras.every((e) => e.date === keep.date && sameText(e.description, keep.description));
+
+      // Too many to be copies, and not identical, so a judgement call at a size
+      // nobody should make in one tap. Recorded so it is visible rather than
+      // silently dropped, but never offered as a deletion.
+      if (!identical && members.length > DUP_MAX_MEMBERS) {
         patterns.push({
           id: `pat-${sorted[i].id}`,
           type: sorted[i].type,
@@ -415,20 +443,6 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
         continue;
       }
 
-      // Both halves cleared the bank → two real events that look alike.
-      if (members.filter((m) => matchedIds.has(m.id)).length > 1) continue;
-
-      const score = (t) => (matchedIds.has(t.id) ? 4 : 0) + (t.attachmentId ? 2 : 0) + (t.subcategory ? 1 : 0);
-      const keep = [...members].sort((a, b) => score(b) - score(a) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))[0];
-      const extras = members.filter((m) => m.id !== keep.id);
-      // "Identical" has to mean the same characters, not a high similarity
-      // score. The scorer drops tokens of two letters or less, so "Contractor A"
-      // and "Contractor B" both reduce to {contractor} and score a perfect 1 
-      // two real payments to two real people, one of which would be deleted as
-      // a copy. Anything that is not literally the same text is a judgement
-      // call and has to stay one.
-      const identical = extras.every((e) => e.date === keep.date && sameText(e.description, keep.description));
-
       groups.push({
         id: `dup-${keep.id}`,
         type: keep.type,
@@ -436,6 +450,9 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
         date: keep.date,
         description: keep.description,
         confidence: identical ? "high" : "medium",
+        /* Certain enough to do without asking: the same text, the same day, the
+           same amount, and no more than one of them backed by a bank line. */
+        certain: identical,
         keep,
         extras,
         extraTotal: round2(extras.reduce((s, e) => s + Number(e.amount || 0), 0)),

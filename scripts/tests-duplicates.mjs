@@ -57,3 +57,25 @@ console.log("\nfive weekly payments of the same amount to the same payee, no ref
   const r = findDuplicateEntries(rows);
   console.log(`  groups: ${r.length} (want 0, they are 7 days apart)`);
 }
+
+console.log("\ncertain versus ambiguous, after the tiering");
+{
+  const rows = [];
+  for (let i = 0; i < 30; i++) rows.push(tx("2026-05-19", "Online transfer sent - 0653 Bilal Shafi", 10));
+  const r = findDuplicateEntries(rows);
+  console.log(`  30 identical, one reference, one day: ${r.length} group, certain=${r[0]?.certain}, ${r[0]?.extras.length} removable`);
+  console.log(`    the cap is waived for it: ${r.patterns.length === 0}`);
+}
+{
+  const rows = [];
+  for (let i = 0; i < 8; i++) rows.push(tx(i % 2 ? "2026-05-19" : "2026-05-20", "Cleaner weekly", 150));
+  const r = findDuplicateEntries(rows);
+  console.log(`  8 same-text across two days: ${r.length} groups offered, ${r.patterns.length} pattern (the cap holds)`);
+}
+{
+  const r = findDuplicateEntries([
+    tx("2026-05-19", "Online transfer sent - 0653 Bilal Shafi", 10),
+    tx("2026-05-21", "Online transfer sent - 1490 Bilal Shafi", 10),
+  ]);
+  console.log(`  two references, two days: ${r.length} groups (want 0)`);
+}
