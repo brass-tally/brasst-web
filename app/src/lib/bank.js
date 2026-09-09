@@ -114,6 +114,14 @@ export async function unmatchBankTxn(id) {
     status: "unmatched",
     matched_at: null,
     match_source: null,
+    /* The review flag goes with the pairing.
+       A line is flagged for review because the bank changed it after it had
+       been paired. Undoing that pairing is one of the two answers to that
+       question, so leaving the flag set meant the line kept asking after it had
+       been dealt with: the button vanished, because it only shows while a
+       pairing exists, and the question stayed in the queue with no way left to
+       resolve it. */
+    review_reason: null,
     updated_at: new Date().toISOString(),
   }).eq("id", id);
   if (error) throw error;

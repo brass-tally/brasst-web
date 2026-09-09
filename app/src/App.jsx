@@ -1715,7 +1715,9 @@ function Ledger({ onSignOut }) {
   };
 
   const unmatchBankTxn = (bankId) => {
-    patchBankTxn(bankId, { status: "unmatched", matchedTxId: null, matchSource: null });
+    // reviewReason goes too: see the note in lib/bank.js. Undoing a pairing is
+    // an answer to the review question, not a way of dodging it.
+    patchBankTxn(bankId, { status: "unmatched", matchedTxId: null, matchSource: null, reviewReason: null });
     dbTry(() => bank.unmatchBankTxn(bankId));
   };
 
@@ -2727,7 +2729,7 @@ function AskCard({ title, detail, amount, date, children, tone = "line" }) {
 
 function MatchView({
   data, bankTxns, balance, recon, duplicates = [], dupBankLines = [], consolidation,
-  actions, onAnchorInstead, onClose, openGuide,
+  actions, onAnchorInstead, onClose, openGuide, addSub,
 }) {
   const [pickedBank, setPickedBank] = useState(null);
   const [pickedTx, setPickedTx] = useState(null);
@@ -3063,7 +3065,7 @@ function MatchView({
         {adding?.id === item.bank.id && (
           <div className="w-full">
             <AddFromBank
-              bankTxn={item.bank} data={data} bankTxns={bankTxns}
+              bankTxn={item.bank} data={data} bankTxns={bankTxns} addSub={addSub}
               onMatchInstead={(txId) => { doMatch(item.bank.id, txId, "manual"); setAdding(null); }}
               onCancel={() => setAdding(null)}
               onAdd={(opts) => { doCreate(item.bank, opts); setAdding(null); }}
@@ -3082,7 +3084,7 @@ function MatchView({
         {adding?.id === item.id && (
           <div className="w-full">
             <AddFromBank
-              bankTxn={item} data={data} bankTxns={bankTxns}
+              bankTxn={item} data={data} bankTxns={bankTxns} addSub={addSub}
               onMatchInstead={(txId) => { doMatch(item.id, txId, "manual"); setAdding(null); }}
               onCancel={() => setAdding(null)}
               onAdd={(opts) => { doCreate(item, opts); setAdding(null); }}
@@ -3530,7 +3532,7 @@ function itemStory(it) {
 
 /** Inline form to turn a bank line into a ledger entry. Amount, date and
  *  description come from the bank; only the coding is a decision. */
-function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCancel }) {
+function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCancel, addSub }) {
   const type = bankTxn.direction === "credit" ? "income" : "expense";
   const cats = data.categories[type] || [];
   const [category, setCategory] = useState(cats[0]?.name || "Other");
@@ -3574,10 +3576,20 @@ function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCa
         </div>
         <div>
           <Label>Subcategory</Label>
-          <Select value={subcategory} onChange={(e) => setSubcategory(e.target.value)} disabled={!subs.length}>
-            <option value="">{subs.length ? "·" : "none"}</option>
-            {subs.map((s) => <option key={s} value={s}>{s}</option>)}
-          </Select>
+          {/* SubPicker rather than a plain select, so a subcategory can be
+              created here. This form used a select with only the existing
+              options, which meant categorising a bank line in Consolidate was
+              the one place in the app where you could not name something new,
+              and the workaround was to abandon the run, go to Transactions,
+              create it there, and come back. */}
+          <SubPicker
+            data={data}
+            type={type}
+            category={category}
+            value={subcategory}
+            onChange={setSubcategory}
+            addSub={addSub}
+          />
         </div>
       </div>
       <div className="flex gap-2">
