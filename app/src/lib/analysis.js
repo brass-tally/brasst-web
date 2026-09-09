@@ -353,6 +353,17 @@ export function obligationsView(data, { kind, status = "open", limit = 40 } = {}
 
 /* ---------------- duplicate scan ---------------- */
 
+/* The same reference check the reconciler uses. Kept here too because the agent
+   answers "do I have duplicates" from this function, and an assistant confidently
+   reporting a hundred duplicates that are really a hundred separate transfers is
+   worse than one it cannot answer. */
+const refTokens = (s) => String(s || "").match(/\d{3,}/g) || [];
+function refsConflict(a, b) {
+  const ra = refTokens(a), rb = refTokens(b);
+  if (!ra.length || !rb.length) return false;
+  return !ra.some((x) => rb.includes(x));
+}
+
 export function findDuplicates(data, { windowDays = 6, minAmount = 5, threshold = 0.5 } = {}) {
   const txs = (data.transactions || []).filter((t) => t.date && t.amount >= minAmount && !t.transferId);
   const byAmount = new Map();
@@ -371,6 +382,10 @@ export function findDuplicates(data, { windowDays = 6, minAmount = 5, threshold 
         const gap = daysBetween(sorted[i].date, sorted[j].date);
         if (gap > windowDays) break; // sorted by date: everything after is further out
         if (sorted[i].type !== sorted[j].type) continue;
+        // A cheque number or an e-transfer reference that differs is the bank
+        // saying these are two events. The scorer strips those digits, so it
+        // cannot tell; this can.
+        if (refsConflict(sorted[i].description, sorted[j].description)) continue;
         const score = similarity(sorted[i].description, sorted[j].description);
         if (score < threshold) continue;
         pairs.push({

@@ -2926,6 +2926,10 @@ function MatchView({
           ? `I went through ${plan.scanned.bank} bank ${plan.scanned.bank === 1 ? "line" : "lines"} and found ${plan.fix.count} ${plan.fix.count === 1 ? "thing" : "things"} I can sort out myself. Nothing else needs you.`
           : `Nothing for me to fix automatically. ${plan.ask.count} ${plan.ask.count === 1 ? "thing needs" : "things need"} a decision from you.`;
 
+  /* Clusters the reconciler declined to offer for deletion because they are too
+     large to be copies of one payment. Read here so the modal can say so. */
+  const dupPatterns = duplicates?.patterns || [];
+
   /* ---- one question, drawn the same whether it arrives alone or in a list ----
      The stepper and the show-everything view render from this, so the wording
      and the buttons can never drift apart between the two. */
@@ -3034,6 +3038,37 @@ function MatchView({
           <div style={{ fontFamily: MONO, color: P.faint }} className="text-xs tabular-nums mb-4">
             bank {fmt(balance.bank)} · books {fmt(balance.book)} · difference{" "}
             <span style={{ color: Math.abs(balance.delta) < 0.01 ? P.credit : P.brass }}>{fmt(balance.delta)}</span>
+          </div>
+        )}
+
+        {/* Clusters too large to be copies of one payment. Shown rather than
+            dropped: capping the groups without saying so would replace a
+            dangerous offer with a silent omission, and the second is harder to
+            notice. */}
+        {dupPatterns.length > 0 && (
+          <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-4">
+            <div style={{ color: P.text }} className="text-[15px] mb-1">
+              {dupPatterns.length} {dupPatterns.length === 1 ? "run" : "runs"} of identical amounts, left alone
+            </div>
+            <p style={{ color: P.muted }} className="text-[14.5px] leading-snug mb-2">
+              Too many entries of the same amount to be copies of one payment, so nothing here is offered for
+              removal. Repeated transfers of a round number look exactly like this, and so does a statement
+              imported many times over.
+            </p>
+            {dupPatterns.slice(0, 4).map((pt) => (
+              <div key={pt.id} className="flex items-baseline justify-between gap-3 py-1.5 text-[14px]"
+                   style={{ borderTop: `1px solid ${P.line}` }}>
+                <span style={{ color: P.muted }} className="min-w-0 truncate">
+                  {pt.description || "no description"} &middot; {pt.count} entries
+                </span>
+                <span style={{ fontFamily: MONO, color: P.text }} className="tabular-nums shrink-0">{fmt(pt.amount)}</span>
+              </div>
+            ))}
+            {dupPatterns.length > 4 && (
+              <div style={{ color: P.faint }} className="text-[13.5px] mt-2">
+                and {dupPatterns.length - 4} more. Transactions has the full list.
+              </div>
+            )}
           </div>
         )}
 

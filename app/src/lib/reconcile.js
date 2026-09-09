@@ -325,6 +325,32 @@ export function signatureOf(parts) {
 const DUP_WINDOW_DAYS = 3;
 const DUP_TEXT = 0.8;
 
+/* A genuine duplicate is two entries, occasionally three. It is never a hundred.
+   A cluster that big is a pattern, an e-transfer of the same amount made weekly,
+   or a bad import, and either way offering to delete all but one of them in a
+   single tap is the most destructive thing this app could do. Above this size
+   the group is reported as a pattern to look at rather than copies to remove.
+
+   Capping does not weaken the case this is for. A statement imported twice
+   produces many groups of two, one per row, not one group of two hundred. */
+const DUP_MAX_MEMBERS = 5;
+
+/* Digit runs the bank puts in a description: a cheque number, an e-transfer
+   reference, an invoice number. These are the bank telling you two entries are
+   different events, which is the opposite of what the similarity scorer does
+   with them: it strips them, so "transfer sent 7098" and "transfer sent 4773"
+   score a perfect 1 and a hundred distinct transfers collapse into one group. */
+const refTokens = (s) => String(s || "").match(/\d{3,}/g) || [];
+
+/* True when both sides carry references and none of them agree. Deliberately
+   asymmetric: if only one side has a reference, that is an imported line paired
+   with a hand-typed one, which is exactly the duplicate this is looking for. */
+function refsConflict(a, b) {
+  const ra = refTokens(a), rb = refTokens(b);
+  if (!ra.length || !rb.length) return false;
+  return !ra.some((x) => rb.includes(x));
+}
+
 /**
  * Groups of ledger entries that look like the same event recorded more than
  * once. Each group names one entry to keep and the extras that can go.
@@ -351,6 +377,7 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
   }
 
   const groups = [];
+  const patterns = [];
   for (const bucket of buckets.values()) {
     if (bucket.length < 2) continue;
     const sorted = [...bucket].sort((a, b) => (a.date === b.date ? String(a.id).localeCompare(String(b.id)) : a.date < b.date ? -1 : 1));
@@ -363,11 +390,30 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
         if (used.has(sorted[j].id)) continue;
         // sorted by date, so once we're past the window everything after is too
         if (Math.abs(daysBetween(sorted[i].date, sorted[j].date)) > windowDays) break;
+        // The reference check runs before the text score, because the score is
+        // the thing that cannot see the difference.
+        if (refsConflict(sorted[i].description, sorted[j].description)) continue;
         if (similarity(sorted[i].description, sorted[j].description) < DUP_TEXT) continue;
         members.push(sorted[j]);
+        if (members.length >= DUP_MAX_MEMBERS + 1) break;
       }
       if (members.length < 2) continue;
       for (const m of members) used.add(m.id);
+
+      // Too many to be copies. Recorded so it is visible rather than silently
+      // dropped, but never offered as a deletion.
+      if (members.length > DUP_MAX_MEMBERS) {
+        patterns.push({
+          id: `pat-${sorted[i].id}`,
+          type: sorted[i].type,
+          amount: round2(sorted[i].amount),
+          date: sorted[i].date,
+          description: sorted[i].description,
+          count: members.length,
+          reason: `${members.length} entries of the same amount within ${windowDays} days. Too many to be copies of one payment, so nothing is offered for removal here. If they are genuinely repeats, remove them in Transactions.`,
+        });
+        continue;
+      }
 
       // Both halves cleared the bank → two real events that look alike.
       if (members.filter((m) => matchedIds.has(m.id)).length > 1) continue;
@@ -402,7 +448,13 @@ export function findDuplicateEntries(txs, { bankTxns = [], windowDays = DUP_WIND
     }
   }
 
-  return groups.sort((a, b) => b.extraTotal - a.extraTotal);
+  /* Callers treat the result as an array and several map straight over it, so
+     the patterns ride along as a property rather than changing the shape. Not
+     elegant, but changing a return type used in six places to carry a rare
+     secondary case is how you break five of them. */
+  const out = groups.sort((a, b) => b.extraTotal - a.extraTotal);
+  out.patterns = patterns.sort((a, b) => b.count - a.count);
+  return out;
 }
 
 /**
