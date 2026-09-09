@@ -3874,6 +3874,60 @@ function MiniLine({ show, sectionName, stats }) {
   );
 }
 
+/* In against out for the month, as one proportion and one sentence. */
+function FlowBar({ inc, exp }) {
+  const total = inc + exp;
+  if (total <= 0) return null;
+
+  const inShare = (inc / total) * 100;
+
+  /* The sentence is the point. A proportion on its own invites the reader to
+     work out what it is telling them, and the answer is nearly always a ratio
+     they would rather be handed. */
+  let caption;
+  if (inc === 0) caption = "Nothing came in this month.";
+  else if (exp === 0) caption = "Nothing went out this month.";
+  else {
+    const perDollar = exp / inc;
+    const cents = Math.round(perDollar * 100);
+    if (Math.abs(perDollar - 1) < 0.005) {
+      caption = "You spent almost exactly what you brought in.";
+    } else if (perDollar >= 1) {
+      caption = `${fmt(perDollar)} went out for every dollar that came in.`;
+    } else if (cents === 0) {
+      // A small expense against a large month rounds to zero cents, and "0 cents
+      // went out" reads as nothing having happened when something did.
+      caption = "Less than a cent went out for every dollar that came in.";
+    } else {
+      caption = `${cents} cents went out for every dollar that came in.`;
+    }
+  }
+
+  return (
+    <div className="mt-4">
+      <div
+        className="h-2 rounded-full overflow-hidden flex"
+        role="img"
+        aria-label={`${fmt(inc)} in, ${fmt(exp)} out`}
+      >
+        <div style={{ width: `${inShare}%`, background: P.credit }} className="h-full" />
+        <div style={{ width: `${100 - inShare}%`, background: P.debit }} className="h-full" />
+      </div>
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mt-2">
+        <span style={{ color: P.muted }} className="text-[14px] inline-flex items-center gap-1.5">
+          <span aria-hidden style={{ background: P.credit, width: 7, height: 7, borderRadius: "50%" }} />
+          {fmt(inc)} in
+        </span>
+        <span style={{ color: P.muted }} className="text-[14px] inline-flex items-center gap-1.5">
+          <span aria-hidden style={{ background: P.debit, width: 7, height: 7, borderRadius: "50%" }} />
+          {fmt(exp)} out
+        </span>
+        <span style={{ color: P.faint }} className="text-[14px]">{caption}</span>
+      </div>
+    </div>
+  );
+}
+
 /* ================= signature: the ledger line ================= */
 /* A figure and, underneath it, which way it is going. Percentages are only
    meaningful against a month that actually had activity, so a zero prior month
@@ -4122,14 +4176,18 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
         })}
       </div>
 
-      <div className="flex items-center gap-2 mt-3">
-        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: P.surface2 }}>
-          <div style={{ width: `${(sums.inc / Math.max(sums.inc, sums.exp, 1)) * 100}%`, background: P.credit }} className="h-full" />
-        </div>
-        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: P.surface2 }}>
-          <div style={{ width: `${(sums.exp / Math.max(sums.inc, sums.exp, 1)) * 100}%`, background: P.debit }} className="h-full" />
-        </div>
-      </div>
+      {/* The shape of the month, in one line.
+
+          This was two half-width tracks, each scaled to whichever of in and out
+          was larger. With nothing coming in and six dollars going out, the left
+          track was empty and the right was full, so what you saw was a red line
+          across half the screen with nothing to say what it meant. It also
+          repeated two figures the cards above already state.
+
+          One track now, split by share of the money that moved, with a sentence
+          underneath that says the thing the proportion is for. Hidden entirely
+          when nothing moved, because a bar of nothing is not information. */}
+      <FlowBar inc={sums.inc} exp={sums.exp} />
     </section>
   );
 }
