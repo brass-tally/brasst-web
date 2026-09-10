@@ -178,14 +178,38 @@ export async function listInbound(ledgerId, status = "pending") {
   }, []);
 }
 
+/* Mark a submission decided.
+   The obligation_id column has a foreign key to obligations, and the payable
+   is written to the database asynchronously by addAR. So this can arrive
+   before the row it points at exists, the key is rejected, and the submission
+   silently stays pending: the confirmation says it was filed and the card is
+   still sitting there.
+
+   Two answers, both needed. The link is worth having, so it is attempted. But
+   leaving the queue is worth more than the link, so a failure retries without
+   it rather than giving up. */
 export async function decideInbound(id, status, obligationId) {
-  return soft("decide", async () => {
-    const { error } = await supabase.from("inbound_invoices").update({
-      status, obligation_id: obligationId || null, decided_at: new Date().toISOString(),
-    }).eq("id", id);
+  const patch = { status, decided_at: new Date().toISOString() };
+
+  if (obligationId) {
+    try {
+      const { error } = await supabase
+        .from("inbound_invoices").update({ ...patch, obligation_id: obligationId }).eq("id", id);
+      if (!error) return { ok: true, linked: true };
+      console.warn("could not link the payable, deciding without it:", error.message);
+    } catch (e) {
+      console.warn("could not link the payable, deciding without it:", e?.message || e);
+    }
+  }
+
+  try {
+    const { error } = await supabase.from("inbound_invoices").update(patch).eq("id", id);
     if (error) throw error;
-    return { ok: true };
-  }, { ok: false });
+    return { ok: true, linked: false };
+  } catch (e) {
+    console.error("could not decide the invoice:", e);
+    return { ok: false, error: e?.message || "That did not save." };
+  }
 }
 
 export const invoiceLinkUrl = (token) =>

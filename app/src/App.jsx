@@ -1529,12 +1529,13 @@ function Ledger({ onSignOut }) {
     const label = kind === "receivables" ? "Invoice" : "Bill";
     const recurring = item.recurrence === "recurring" ? " (recurring)" : "";
     addNotification(notify.info(`${label} added${recurring}`));
-    dbTry(() => db.insertObligation(kind, rec));
-    /* Returns the record so a caller can keep hold of it. The invoice inbox
-       needs the id to record which submission became which payable, and
-       without it the trail from "a supplier sent this" to "this is what I owe"
-       is broken at exactly the point someone would want to follow it. */
-    return rec;
+    /* The write is returned, not just started.
+       A caller that needs the row to exist in the database, rather than just
+       on screen, can await it. The invoice inbox does: it writes a foreign key
+       pointing at this payable, and doing that before the insert lands means
+       the key is rejected and the invoice never leaves the queue. */
+    const saved = dbTry(() => db.insertObligation(kind, rec));
+    return Object.assign(rec, { saved });
   };
   const settleAR = (kind, id, actual = {}) => {
     const item = data[kind].find((x) => x.id === id);
@@ -4889,6 +4890,8 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(null);            // what the last action did
+  const [filed, setFiled] = useState(null);          // the row mid-flight, being filed
+  const [voided, setVoided] = useState(null);        // the last one removed
 
   const refresh = async () => {
     const [p, h, l] = await Promise.all([
@@ -4900,6 +4903,16 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     onCount?.(p.length);
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
+  /* Close the tray once it is empty. Not instantly: the "all caught up" line
+     needs a moment to be read, and a panel that vanishes the instant you press
+     a button feels like a crash rather than a finish. */
+  useEffect(() => {
+    if (open !== "inbox" || filed || pending.length) return;
+    if (!history.length) return;   // never opened on an empty tray, leave it
+    const t = setTimeout(() => setOpen(null), 1900);
+    return () => clearTimeout(t);
+  }, [open, filed, pending.length, history.length]);
+
   useEffect(() => {
     if (!open) return;
     const esc = (e) => e.key === "Escape" && setOpen(null);
@@ -4911,6 +4924,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
 
   const accept = async (inv) => {
     setBusy(inv.id);
+    setErr("");
     const created = await onAccept({
       party: inv.party,
       description: inv.description || inv.invoiceNo || "Invoice",
@@ -4920,13 +4934,26 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
       attachmentId: inv.filePath,
       attachmentName: inv.invoiceNo ? `${inv.invoiceNo}.pdf` : `${inv.party} invoice`,
     });
-    await share.decideInbound(inv.id, "accepted", created?.id);
+    // Wait for the payable to reach the database before pointing at it.
+    await created?.saved;
+    const res = await share.decideInbound(inv.id, "accepted", created?.id);
+    if (!res.ok) {
+      setBusy("");
+      setErr(`Added to what you owe, but the invoice could not be cleared from this list: ${res.error}`);
+      return;
+    }
     setBusy("");
-    /* Say what happened, in the words of the thing that happened.
-       Accepting used to make the row vanish and nothing else, which reads as a
-       button that did not work rather than one that did. */
-    setDone(`${inv.party} added to what you owe, ${fmt(inv.amount)}${inv.dueDate ? `, due ${inv.dueDate}` : ""}.`);
-    refresh();
+
+    /* The row files itself before it leaves.
+       It used to vanish and leave a sentence behind, which reads as the card
+       having been deleted rather than filed. Now it turns into its own
+       receipt for a moment, then goes, so the eye follows the thing it acted
+       on instead of hunting for what changed. */
+    setFiled({ id: inv.id, party: inv.party, amount: inv.amount, dueDate: inv.dueDate });
+    setTimeout(() => {
+      setFiled(null);
+      refresh();
+    }, 1400);
   };
 
   const decline = async (inv) => {
@@ -4949,9 +4976,9 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
 
     if (settled) {
       const ok = await onConfirmVoid?.({
-        title: "This one was already settled",
-        body: `${inv.party} was marked paid${payable.settledOn ? ` on ${payable.settledOn}` : ""}. Voiding removes the invoice and the payable. The transaction it created stays in your books, because it has already counted against your balance.`,
-        confirmLabel: "Void it anyway",
+        title: `Void ${inv.party}, ${fmt(inv.amount)}?`,
+        body: `This was marked paid${payable.settledOn ? ` on ${payable.settledOn}` : ""}. The invoice and the payable go. The transaction stays, because the money already moved and removing it would put your balance out by ${fmt(inv.amount)}.`,
+        confirmLabel: "Void it",
       });
       if (!ok) return;
     }
@@ -4960,9 +4987,10 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     const r = await share.voidInbound(inv.id);
     if (r.obligationId) onDeletePayable?.(r.obligationId);
     setBusy("");
-    setDone(settled
-      ? `${inv.party} voided. The transaction from settling it is still in your books.`
-      : `${inv.party} voided. Removed from the list and from what you owe.`);
+    /* Same shape as filing, in reverse. Voiding used to leave two sentences
+       of explanation where a person wanted to see the thing disappear. */
+    setVoided({ party: inv.party, amount: inv.amount, settled });
+    setTimeout(() => setVoided(null), 2600);
     refresh();
   };
 
@@ -5057,7 +5085,32 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
         </span>
       </div>
 
-      {done && (
+      {voided && (
+        <div
+          style={{ background: P.surface2, borderRadius: 14 }}
+          className="flex items-start gap-3 p-3.5 mt-2 filed-pop"
+        >
+          <span
+            aria-hidden
+            style={{ background: P.debit + "1f", color: P.debit, borderRadius: 10 }}
+            className="w-8 h-8 flex items-center justify-center shrink-0"
+          >
+            <Trash2 size={15} />
+          </span>
+          <span>
+            <span style={{ color: P.text }} className="text-[15px] block">
+              {voided.party} voided, {fmt(voided.amount)}
+            </span>
+            <span style={{ color: P.muted }} className="text-[14px]">
+              {voided.settled
+                ? "Gone from the list and from what you owe. The payment stays in your books."
+                : "Gone from the list and from what you owe."}
+            </span>
+          </span>
+        </div>
+      )}
+
+      {done && !voided && (
         <div style={{ background: P.credit + "14", borderRadius: 14 }} className="p-3.5 mt-2">
           <span style={{ color: P.credit }} className="text-[14.5px]">{done}</span>
         </div>
@@ -5067,16 +5120,63 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
         <div style={cardStyle()} className="p-5 mt-2">
           {open === "inbox" && (
             <>
-              <h3 style={{ fontFamily: SERIF }} className="text-xl">
-                {pending.length ? "Waiting on you" : "Nothing waiting"}
-              </h3>
-              <p style={{ color: P.muted }} className="text-[15px] mb-2">
-                {pending.length
-                  ? "Sent through your intake link. Accepting one adds it to what you owe."
-                  : "Invoices sent through your link arrive here before they touch your books."}
-              </p>
+              {/* The heading only exists while there is something under it.
+                  "Nothing waiting" is a card that appears the moment you clear
+                  the last one, so the reward for finishing is a box telling you
+                  the box is empty. */}
+              {pending.length > 0 && !filed && (
+                <>
+                  <h3 style={{ fontFamily: SERIF }} className="text-xl">Waiting on you</h3>
+                  <p style={{ color: P.muted }} className="text-[15px] mb-2">
+                    Sent through your intake link. Accepting one adds it to what you owe.
+                  </p>
+                </>
+              )}
 
-              {pending.map((inv) => (
+              {/* Cleared, and it says so once. The panel closes itself a beat
+                  later, because the point of clearing a queue is not having to
+                  look at it. */}
+              {pending.length === 0 && !filed && (
+                <div className="py-2 text-center">
+                  <div
+                    style={{ background: P.credit + "18", color: P.credit }}
+                    className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3"
+                  >
+                    <Check size={22} />
+                  </div>
+                  <div style={{ color: P.text }} className="text-[16px]">
+                    {history.length ? "All caught up" : "Nothing has come in yet"}
+                  </div>
+                  <div style={{ color: P.muted }} className="text-[14.5px] mt-1">
+                    {history.length
+                      ? "Every invoice sent to you has been dealt with."
+                      : "Share your link and invoices will land here."}
+                  </div>
+                </div>
+              )}
+
+              {/* The row that was just accepted, holding its place for a beat
+                  so the confirmation happens where you were looking. */}
+              {filed && (
+                <div className="py-6 text-center filed-pop">
+                  <div
+                    style={{ background: P.credit, color: "#fff" }}
+                    className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3"
+                  >
+                    <Check size={26} />
+                  </div>
+                  <div style={{ color: P.text }} className="text-[17px]">Filed</div>
+                  <div style={{ color: P.muted }} className="text-[15px] mt-1">
+                    {filed.party} &middot; {fmt(filed.amount)}
+                    {filed.dueDate ? ` · due ${filed.dueDate}` : ""}
+                  </div>
+                  <div style={{ color: P.faint }} className="text-[14px] mt-1">
+                    Added to what you owe
+                  </div>
+                </div>
+              )}
+
+              {!filed && pending.map((inv) => (
                 <Row
                   key={inv.id}
                   inv={inv}

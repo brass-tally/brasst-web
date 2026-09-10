@@ -590,3 +590,12 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
 /* A row that would rather scroll than wrap keeps its scrollbar to itself. */
 .no-bar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-bar::-webkit-scrollbar { display: none; }
+
+/* The moment a filed invoice holds its place. Short enough that it never
+   feels like a wait, long enough that the eye lands on it. */
+@keyframes filed-pop {
+  from { opacity: 0; transform: scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+.filed-pop { animation: filed-pop 260ms cubic-bezier(.2, .9, .3, 1) both; }
+@media (prefers-reduced-motion: reduce) { .filed-pop { animation: none; } }
