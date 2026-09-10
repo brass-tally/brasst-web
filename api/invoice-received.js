@@ -18,11 +18,12 @@
  * POST /api/invoice-received
  *   { action: "upload", token, filename }   -> { ok, path, signedUrl }
  *   { action: "notify", token, id }         -> { ok }
+ *   { action: "test", token }               -> { ok, to } or the reason not
  */
 
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
-import { invoiceReceivedEmail } from "./lib/email.js";
+import { invoiceReceivedEmail, invoiceSubmittedEmail } from "./lib/email.js";
 
 const BUCKET = "receipts";
 
@@ -79,11 +80,42 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: false, error: "Not found." });
       }
 
+      const resend = new Resend(process.env.RESEND_API_KEY);
+
+      /* The supplier's copy goes first.
+         They are the one waiting on a signal, and if only one of these two can
+         be sent it should be the one that stops someone emailing the invoice
+         again the old way. */
+      const { data: full } = await db
+        .from("inbound_invoices")
+        .select("contact_email")
+        .eq("id", inv.id)
+        .maybeSingle();
+      if (full?.contact_email) {
+        try {
+          await resend.emails.send({
+            from: process.env.RESEND_FROM_EMAIL,
+            to: full.contact_email,
+            subject: `Your invoice reached ${link.ledgers.name}`,
+            html: invoiceSubmittedEmail({
+              business: link.ledgers.name,
+              party: inv.party,
+              amount: Number(inv.amount),
+              description: inv.description,
+              invoiceNo: inv.invoice_no,
+              dueDate: inv.due_date,
+            }),
+          });
+        } catch (e) {
+          // A bad address from a form field must not stop the owner being told.
+          console.warn("supplier copy failed:", e?.message || e);
+        }
+      }
+
       const { data: owner } = await db.auth.admin.getUserById(link.ledgers.user_id);
       const to = owner?.user?.email;
       if (!to) return res.status(200).json({ ok: true, sent: false });
 
-      const resend = new Resend(process.env.RESEND_API_KEY);
       await resend.emails.send({
         from: process.env.RESEND_FROM_EMAIL,
         to,
@@ -99,6 +131,42 @@ export default async function handler(req, res) {
         }),
       });
       return res.status(200).json({ ok: true, sent: true });
+    }
+
+    if (action === "test") {
+      /* Prove the mail path without submitting an invoice.
+         Every failure here is a configuration problem rather than a code one,
+         so it names the variable that is missing instead of saying it did not
+         work. Nothing is written; this only sends. */
+      const missing = ["RESEND_API_KEY", "RESEND_FROM_EMAIL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_URL"]
+        .filter((k) => !process.env[k]);
+      if (missing.length) {
+        return res.status(200).json({ ok: false, error: `Not set in Vercel: ${missing.join(", ")}` });
+      }
+
+      const { data: owner } = await db.auth.admin.getUserById(link.ledgers.user_id);
+      const to = owner?.user?.email;
+      if (!to) return res.status(200).json({ ok: false, error: "No email on the ledger owner." });
+
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      const sent = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL,
+        to,
+        subject: "Test: an invoice arrived",
+        html: invoiceReceivedEmail({
+          business: link.ledgers.name,
+          party: "Test Supplier",
+          amount: 1250,
+          description: "A test, sent from the invoice link",
+          invoiceNo: "TEST-0001",
+          dueDate: null,
+          appUrl: process.env.APP_URL || "https://brasstally.com",
+        }),
+      });
+      if (sent?.error) {
+        return res.status(200).json({ ok: false, error: `Resend refused it: ${sent.error.message || sent.error}` });
+      }
+      return res.status(200).json({ ok: true, to, id: sent?.data?.id || null });
     }
 
     return res.status(200).json({ ok: false, error: "Unknown action." });

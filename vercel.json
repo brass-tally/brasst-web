@@ -109,9 +109,18 @@
           "destination": "/index.html"
         }
       ]
+    },
+    "api": {
+      "root": "api"
     }
   },
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": {
+        "service": "api"
+      }
+    },
     {
       "source": "/app",
       "destination": {

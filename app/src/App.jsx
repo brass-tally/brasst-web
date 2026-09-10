@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye, Inbox, Link2 as LinkIcon,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -1032,6 +1032,36 @@ function Ledger({ onSignOut }) {
   }), [data?.ledger?.capitalThreshold, data?.ledger?.province, data?.ledger?.gstRegistered]);
 
   const [receiptSettle, setReceiptSettle] = useState(null);
+
+  /* Invoices a supplier sent in, loaded at the top rather than inside AR / AP.
+     The section that displays them is not the only thing that needs to know:
+     Tally mentions them, the dock marks them, and neither can wait for someone
+     to visit the page that would have told them. */
+  const [inbound, setInbound] = useState([]);
+  /* One refresh the section can call, so accepting an invoice clears the dot
+     on the dock immediately instead of at the next poll. Two counts from two
+     fetches that disagree for two minutes is worse than one that is slightly
+     late. */
+  const refreshInbound = async () => {
+    if (!data?.ledger?.id) return;
+    setInbound(await share.listInbound(data.ledger.id, "pending"));
+  };
+  useEffect(() => {
+    if (!data?.ledger?.id || data.ledger.readOnly) { setInbound([]); return; }
+    let alive = true;
+    const load = async () => {
+      const rows = await share.listInbound(data.ledger.id, "pending");
+      if (alive) setInbound(rows);
+    };
+    load();
+    /* Every two minutes, and again whenever the tab comes back. An invoice
+       arrives while the app is open in another window, so a load-time fetch
+       alone would only ever find it on the next refresh. */
+    const timer = setInterval(load, 120000);
+    const onFocus = () => document.visibilityState === "visible" && load();
+    document.addEventListener("visibilitychange", onFocus);
+    return () => { alive = false; clearInterval(timer); document.removeEventListener("visibilitychange", onFocus); };
+  }, [data?.ledger?.id, data?.ledger?.readOnly]);
   const [menuOpen, setMenuOpen] = useState(false);
   // The same arithmetic the checklist does, so the dot on the icon and the
   // panel underneath it can never disagree.
@@ -1307,6 +1337,7 @@ function Ledger({ onSignOut }) {
       balance,
       consolidation,
       obligations: data ? [...data.receivables, ...data.payables] : [],
+      inbound,
       today: todayStr(),
     },
     { enabled: !chatOpen }
@@ -1923,6 +1954,7 @@ function Ledger({ onSignOut }) {
         onNewLedger={() => setNewLedgerOpen(true)}
         onAccount={() => { setTab("settings"); setChatOpen(false); }}
         accountActive={tab === "settings"}
+        dots={{ arap: inbound.length > 0 }}
       />
       <div className="flex-1 min-w-0">
       {/* The ledger is a reading surface, so it stops widening past the point
@@ -2166,6 +2198,7 @@ function Ledger({ onSignOut }) {
             openPreview={openPreview}
             receiptSettle={receiptSettle} onReceiptSettleUsed={() => setReceiptSettle(null)}
             readOnly={readOnly}
+            onInboundChange={refreshInbound}
           />
         )}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
@@ -2329,7 +2362,18 @@ function Ledger({ onSignOut }) {
           style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: elev(3) }}
         >
           {tabs.map(([k, label, Icon]) => (
-            <DockBtn key={k} label={label} active={tab === k} onClick={() => { setTab(k); setChatOpen(false); }}><Icon size={18} /></DockBtn>
+            <DockBtn
+              key={k}
+              label={label}
+              active={tab === k}
+              /* A dot on the section that has something waiting. An invoice
+                 that arrived while you were on Snapshot should be visible from
+                 Snapshot, not only once you happen to open AR / AP. */
+              dot={k === "arap" && inbound.length > 0}
+              onClick={() => { setTab(k); setChatOpen(false); }}
+            >
+              <Icon size={18} />
+            </DockBtn>
           ))}
 
           {/* divider */}
@@ -4826,27 +4870,106 @@ function TaxPack({ data, month, openPreview, ledgerName }) {
   );
 }
 
-/* The intake link, where the invoices are.
-   It is also in Settings, because that is where you turn things off. But
-   nobody goes to Settings to send a contractor a link: you go to AR / AP,
-   notice you are chasing a bill that has not arrived, and want the link then.
-   The same list, in the place the thought occurs. */
-function InvoiceLinkBar({ ledgerId }) {
-  const [links, setLinks] = useState(null);
-  const [busy, setBusy] = useState(false);
+/* Invoices, as two icons rather than two panels.
+
+   The inbox and the link were stacked cards above AR / AP, which on a phone
+   meant scrolling past both of them every visit to reach the thing you came
+   for. They are buttons now: a tray with a count, and a link. Each opens a
+   sheet, and only one is open at a time.
+
+   Built narrow first. The sheet is full width on a phone and a panel on a
+   desktop, and every control clears 44px, because this is the part of AR / AP
+   most likely to be used standing up. */
+function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onConfirmVoid }) {
+  const [open, setOpen] = useState(null);            // "inbox" | "link" | null
+  const [pending, setPending] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [links, setLinks] = useState([]);
+  const [busy, setBusy] = useState("");
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState("");
+  const [done, setDone] = useState(null);            // what the last action did
 
-  const refresh = async () => setLinks(await share.listInvoiceLinks(ledgerId));
+  const refresh = async () => {
+    const [p, h, l] = await Promise.all([
+      share.listInbound(ledgerId, "pending"),
+      share.listInbound(ledgerId, "all"),
+      share.listInvoiceLinks(ledgerId),
+    ]);
+    setPending(p); setHistory(h); setLinks(l);
+    onCount?.(p.length);
+  };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
+  useEffect(() => {
+    if (!open) return;
+    const esc = (e) => e.key === "Escape" && setOpen(null);
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [open]);
 
-  if (links === null) return null;
   const first = links[0];
 
-  const create = async () => {
-    setErr(""); setBusy(true);
+  const accept = async (inv) => {
+    setBusy(inv.id);
+    const created = await onAccept({
+      party: inv.party,
+      description: inv.description || inv.invoiceNo || "Invoice",
+      amount: inv.amount,
+      dueDate: inv.dueDate || todayStr(),
+      taxAmount: inv.taxAmount,
+      attachmentId: inv.filePath,
+      attachmentName: inv.invoiceNo ? `${inv.invoiceNo}.pdf` : `${inv.party} invoice`,
+    });
+    await share.decideInbound(inv.id, "accepted", created?.id);
+    setBusy("");
+    /* Say what happened, in the words of the thing that happened.
+       Accepting used to make the row vanish and nothing else, which reads as a
+       button that did not work rather than one that did. */
+    setDone(`${inv.party} added to what you owe, ${fmt(inv.amount)}${inv.dueDate ? `, due ${inv.dueDate}` : ""}.`);
+    refresh();
+  };
+
+  const decline = async (inv) => {
+    setBusy(inv.id);
+    await share.decideInbound(inv.id, "declined");
+    setBusy("");
+    setDone(`${inv.party} set aside. Nothing was added to your books.`);
+    refresh();
+  };
+
+  /* Void removes the invoice everywhere: the submission, and the payable it
+     created. The one case that cannot be undone quietly is a payable that has
+     already been settled, because settling wrote a transaction and may have
+     paired it to a bank line. That gets asked about rather than assumed, and
+     the transaction is left alone either way: deleting a payment that has
+     cleared the bank would put the books out by its amount. */
+  const voidOne = async (inv) => {
+    const payable = inv.obligationId ? onFindPayable?.(inv.obligationId) : null;
+    const settled = payable && payable.status !== "open";
+
+    if (settled) {
+      const ok = await onConfirmVoid?.({
+        title: "This one was already settled",
+        body: `${inv.party} was marked paid${payable.settledOn ? ` on ${payable.settledOn}` : ""}. Voiding removes the invoice and the payable. The transaction it created stays in your books, because it has already counted against your balance.`,
+        confirmLabel: "Void it anyway",
+      });
+      if (!ok) return;
+    }
+
+    setBusy(inv.id);
+    const r = await share.voidInbound(inv.id);
+    if (r.obligationId) onDeletePayable?.(r.obligationId);
+    setBusy("");
+    setDone(settled
+      ? `${inv.party} voided. The transaction from settling it is still in your books.`
+      : `${inv.party} voided. Removed from the list and from what you owe.`);
+    refresh();
+  };
+
+  const createLink = async () => {
+    setErr(""); setBusy("link");
     const r = await share.createInvoiceLink(ledgerId, null);
-    setBusy(false);
+    setBusy("");
     if (!r.ok) return setErr(r.error || "That did not save.");
     refresh();
   };
@@ -4856,157 +4979,203 @@ function InvoiceLinkBar({ ledgerId }) {
       await navigator.clipboard.writeText(share.invoiceLinkUrl(first.token));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch { /* the link is on screen either way */ }
+    } catch { /* the link is on screen anyway */ }
   };
 
-  return (
-    <section style={cardStyle()} className="p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 style={{ fontFamily: SERIF }} className="text-xl">Let them send it to you</h3>
-          <p style={{ color: P.muted }} className="text-[15px]">
-            {first
-              ? "Send a contractor this link and their invoice lands here for review."
-              : "A link a contractor can use to send you an invoice. It arrives here, and becomes something you owe only when you accept it."}
-          </p>
-        </div>
-        {first ? (
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={copy}
-              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-              className="h-11 px-4 text-[15px] font-medium press"
-            >
-              {copied ? "Copied" : "Copy the link"}
-            </button>
-          </div>
-        ) : (
+  const Tool = ({ id, icon: Icon, label, count }) => (
+    <button
+      onClick={() => { setOpen(open === id ? null : id); setDone(null); }}
+      aria-label={label}
+      aria-expanded={open === id}
+      title={label}
+      style={{
+        background: open === id ? P.brass : P.surface,
+        color: open === id ? P.onbrass : P.text,
+        boxShadow: open === id ? "none" : elev(1),
+        borderRadius: 14,
+      }}
+      className="relative w-11 h-11 flex items-center justify-center shrink-0 press"
+    >
+      <Icon size={18} />
+      {count > 0 && (
+        <span
+          style={{
+            position: "absolute", top: -5, right: -5, minWidth: 19, height: 19, padding: "0 5px",
+            borderRadius: 999, background: P.debit, color: "#fff",
+            fontSize: 11.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: `0 0 0 2px ${P.bg}`,
+          }}
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  );
+
+  const Row = ({ inv, actions }) => (
+    <div className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
+          {inv.party}
+          {inv.description ? <span style={{ color: P.muted }}> &middot; {inv.description}</span> : null}
+        </span>
+        <span style={{ fontFamily: MONO, color: P.debit }} className="text-[15.5px] tabular-nums shrink-0">
+          {fmt(inv.amount)}
+        </span>
+      </div>
+      <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+        {inv.invoiceNo ? `${inv.invoiceNo} · ` : ""}
+        {inv.dueDate ? `due ${inv.dueDate}` : "no due date"}
+        {inv.taxAmount ? ` · ${fmt(inv.taxAmount)} tax` : ""}
+        {inv.status !== "pending" ? ` · ${inv.status === "accepted" ? "added to what you owe" : "set aside"}` : ""}
+      </div>
+      {inv.note && <p style={{ color: P.muted }} className="text-[14px] mt-1.5 leading-snug">{inv.note}</p>}
+      <div className="flex flex-wrap items-center gap-2 mt-2.5">
+        {inv.filePath && (
           <button
-            onClick={create}
-            disabled={busy}
-            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill, opacity: busy ? 0.6 : 1 }}
-            className="h-11 px-4 text-[15px] font-medium shrink-0 press"
+            onClick={() => openPreview(inv.filePath, inv.invoiceNo || `${inv.party} invoice`, inv)}
+            style={{ color: P.brassText }}
+            className="text-[14px] inline-flex items-center gap-1.5 press"
           >
-            {busy ? "Creating" : "Create a link"}
+            <Paperclip size={14} /> See it
           </button>
         )}
+        {actions}
       </div>
-
-      {first && (
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-3">
-          <span style={{ color: P.faint, fontFamily: MONO }} className="text-[13.5px] min-w-0 truncate">
-            {share.invoiceLinkUrl(first.token)}
-          </span>
-          <span style={{ color: P.faint }} className="text-[13.5px]">
-            {first.submissions} received
-            {links.length > 1 ? ` · ${links.length} links in Settings` : ""}
-          </span>
-        </div>
-      )}
-      {err && <p style={{ color: P.debit }} className="text-[14px] mt-2">{err}</p>}
-    </section>
+    </div>
   );
-}
-
-/* Invoices a supplier sent through a link, waiting on you.
-   They sit here rather than in the payables list because the link is public:
-   holding it is enough to submit, so nothing it produces is allowed to reach
-   the books without a person agreeing to it. Accepting creates an ordinary
-   payable, which then settles the ordinary way. */
-function InboundInbox({ ledgerId, onAccept, openPreview }) {
-  const [items, setItems] = useState([]);
-  const [working, setWorking] = useState("");
-
-  const refresh = async () => setItems(await share.listInbound(ledgerId, "pending"));
-  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
-
-  if (!items.length) return null;
-
-  const accept = async (inv) => {
-    setWorking(inv.id);
-    const created = await onAccept({
-      party: inv.party,
-      description: inv.description || inv.invoiceNo || "Invoice",
-      amount: inv.amount,
-      dueDate: inv.dueDate || todayStr(),
-      taxAmount: inv.taxAmount,
-      /* The file the supplier attached becomes the payable's own document, so
-         settling it later already has its evidence and the settle step does
-         not ask for a receipt you were sent weeks ago. */
-      attachmentId: inv.filePath,
-      attachmentName: inv.invoiceNo ? `${inv.invoiceNo}.pdf` : `${inv.party} invoice`,
-    });
-    await share.decideInbound(inv.id, "accepted", created?.id);
-    setWorking("");
-    refresh();
-  };
-
-  const decline = async (inv) => {
-    setWorking(inv.id);
-    await share.decideInbound(inv.id, "declined");
-    setWorking("");
-    refresh();
-  };
 
   return (
-    <section style={{ ...cardStyle(), borderLeft: `3px solid ${P.brass}` }} className="p-5">
-      <h3 style={{ fontFamily: SERIF }} className="text-xl">
-        {items.length} {items.length === 1 ? "invoice" : "invoices"} sent to you
-      </h3>
-      <p style={{ color: P.muted }} className="text-[15px] mb-4">
-        Submitted through your intake link. Accepting one adds it to what you owe.
-      </p>
+    <>
+      <div className="flex items-center gap-2">
+        <Tool id="inbox" icon={Inbox} label="Invoices sent to you" count={pending.length} />
+        <Tool id="link" icon={LinkIcon} label="Your intake link" />
+        <span style={{ color: P.faint }} className="text-[14px] min-w-0 truncate">
+          {pending.length
+            ? `${pending.length} ${pending.length === 1 ? "invoice" : "invoices"} waiting`
+            : "Invoices sent to you"}
+        </span>
+      </div>
 
-      {items.map((inv) => (
-        <div key={inv.id} className="py-4" style={{ borderTop: `1px solid ${P.line}` }}>
-          <div className="flex items-baseline justify-between gap-3">
-            <span style={{ color: P.text }} className="text-[16px] min-w-0 truncate">
-              {inv.party}
-              {inv.description ? <span style={{ color: P.muted }}> &middot; {inv.description}</span> : null}
-            </span>
-            <span style={{ fontFamily: MONO, color: P.debit }} className="text-[16px] tabular-nums shrink-0">
-              {fmt(inv.amount)}
-            </span>
-          </div>
-          <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
-            {inv.invoiceNo ? `${inv.invoiceNo} · ` : ""}
-            {inv.dueDate ? `due ${inv.dueDate}` : "no due date given"}
-            {inv.taxAmount ? ` · ${fmt(inv.taxAmount)} tax` : ""}
-            {inv.contactEmail ? ` · ${inv.contactEmail}` : ""}
-          </div>
-          {inv.note && (
-            <p style={{ color: P.muted }} className="text-[14.5px] mt-2 leading-snug">{inv.note}</p>
-          )}
-          {inv.filePath && (
-            <button
-              onClick={() => openPreview(inv.filePath, inv.invoiceNo || `${inv.party} invoice`, inv)}
-              style={{ color: P.brassText }}
-              className="text-[14.5px] mt-2 inline-flex items-center gap-1.5 press"
-            >
-              <Paperclip size={14} /> See the invoice they sent
-            </button>
-          )}
-          <div className="flex flex-wrap gap-2 mt-3">
-            <button
-              onClick={() => accept(inv)}
-              disabled={working === inv.id}
-              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-              className="h-11 px-4 text-[15px] font-medium press"
-            >
-              {working === inv.id ? "Adding" : "Add to what I owe"}
-            </button>
-            <button
-              onClick={() => decline(inv)}
-              disabled={working === inv.id}
-              style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-              className="h-11 px-4 text-[15px] font-medium press"
-            >
-              Not mine
-            </button>
-          </div>
+      {done && (
+        <div style={{ background: P.credit + "14", borderRadius: 14 }} className="p-3.5 mt-2">
+          <span style={{ color: P.credit }} className="text-[14.5px]">{done}</span>
         </div>
-      ))}
-    </section>
+      )}
+
+      {open && (
+        <div style={cardStyle()} className="p-5 mt-2">
+          {open === "inbox" && (
+            <>
+              <h3 style={{ fontFamily: SERIF }} className="text-xl">
+                {pending.length ? "Waiting on you" : "Nothing waiting"}
+              </h3>
+              <p style={{ color: P.muted }} className="text-[15px] mb-2">
+                {pending.length
+                  ? "Sent through your intake link. Accepting one adds it to what you owe."
+                  : "Invoices sent through your link arrive here before they touch your books."}
+              </p>
+
+              {pending.map((inv) => (
+                <Row
+                  key={inv.id}
+                  inv={inv}
+                  actions={
+                    <>
+                      <button
+                        onClick={() => accept(inv)}
+                        disabled={busy === inv.id}
+                        style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                        className="h-11 px-4 text-[15px] font-medium press"
+                      >
+                        {busy === inv.id ? "Adding" : "Add to what I owe"}
+                      </button>
+                      <button
+                        onClick={() => decline(inv)}
+                        disabled={busy === inv.id}
+                        style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                        className="h-11 px-4 text-[15px] font-medium press"
+                      >
+                        Not mine
+                      </button>
+                    </>
+                  }
+                />
+              ))}
+
+              {history.length > pending.length && (
+                <details className="mt-4">
+                  <summary style={{ color: P.brassText }} className="text-[15px] cursor-pointer press">
+                    Everything that has come in ({history.length})
+                  </summary>
+                  <div className="mt-2">
+                    {history.filter((h) => h.status !== "pending").map((inv) => (
+                      <Row
+                        key={inv.id}
+                        inv={inv}
+                        actions={
+                          <button
+                            onClick={() => voidOne(inv)}
+                            disabled={busy === inv.id}
+                            style={{ color: P.debit }}
+                            className="text-[14px] press"
+                          >
+                            Void
+                          </button>
+                        }
+                      />
+                    ))}
+                  </div>
+                </details>
+              )}
+            </>
+          )}
+
+          {open === "link" && (
+            <>
+              <h3 style={{ fontFamily: SERIF }} className="text-xl">Let them send it to you</h3>
+              <p style={{ color: P.muted }} className="text-[15px] mb-3">
+                Send a contractor this link. Their invoice arrives in the tray, and becomes something you owe
+                only when you accept it.
+              </p>
+              {first ? (
+                <>
+                  <div
+                    style={{ background: P.surface2, borderRadius: 14, fontFamily: MONO }}
+                    className="p-3 text-[13px] break-all"
+                  >
+                    {share.invoiceLinkUrl(first.token)}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <button
+                      onClick={copy}
+                      style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                      className="h-11 px-4 text-[15px] font-medium press"
+                    >
+                      {copied ? "Copied" : "Copy the link"}
+                    </button>
+                    <span style={{ color: P.faint }} className="text-[14px]">
+                      {first.submissions} received
+                      {links.length > 1 ? ` · ${links.length} links, the rest are in Settings` : ""}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <button
+                  onClick={createLink}
+                  disabled={busy === "link"}
+                  style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                  className="h-11 px-4 text-[15px] font-medium press"
+                >
+                  {busy === "link" ? "Creating" : "Create a link"}
+                </button>
+              )}
+              {err && <p style={{ color: P.debit }} className="text-[14px] mt-2">{err}</p>}
+            </>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -7308,7 +7477,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -7353,12 +7522,17 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
 
   return (
     <div className="space-y-6 stagger">
-      <InboundInbox
-        ledgerId={data.ledger.id}
-        openPreview={openPreview}
-        onAccept={(inv) => addAR("payables", inv)}
-      />
-      {!readOnly && <InvoiceLinkBar ledgerId={data.ledger.id} />}
+      {!readOnly && (
+        <InvoiceTools
+          ledgerId={data.ledger.id}
+          openPreview={openPreview}
+          onAccept={(inv) => addAR("payables", inv)}
+          onCount={onInboundChange}
+          onFindPayable={(id) => data.payables.find((p) => p.id === id) || null}
+          onDeletePayable={(id) => delAR("payables", id)}
+          onConfirmVoid={askConfirm}
+        />
+      )}
       <div className="flex items-center justify-end gap-2">
         <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
         <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
@@ -8826,7 +9000,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
 }
 
 /* ================= floating dock button ================= */
-function DockBtn({ label, active, onClick, children }) {
+function DockBtn({ label, active, onClick, children, dot }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -8846,6 +9020,16 @@ function DockBtn({ label, active, onClick, children }) {
       }}
     >
       {children}
+      {dot && (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute", top: 6, right: 6, width: 8, height: 8,
+            borderRadius: "50%", background: P.brass,
+            boxShadow: `0 0 0 2px ${P.surface}`,
+          }}
+        />
+      )}
       {hover && !active && (
         <span
           className="dock-tip"

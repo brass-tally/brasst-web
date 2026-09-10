@@ -159,11 +159,12 @@ export async function revokeInvoiceLink(id) {
   }, { ok: false });
 }
 
+/** status: "pending", "accepted", "declined", or "all" for the history. */
 export async function listInbound(ledgerId, status = "pending") {
   return soft("inbound_invoices", async () => {
-    const { data, error } = await supabase
-      .from("inbound_invoices").select("*").eq("ledger_id", ledgerId).eq("status", status)
-      .order("submitted_at", { ascending: false });
+    let q = supabase.from("inbound_invoices").select("*").eq("ledger_id", ledgerId);
+    if (status !== "all") q = q.eq("status", status);
+    const { data, error } = await q.order("submitted_at", { ascending: false }).limit(200);
     if (error) throw error;
     return (data || []).map((r) => ({
       id: r.id, party: r.party, contactEmail: r.contact_email || undefined,
@@ -171,7 +172,8 @@ export async function listInbound(ledgerId, status = "pending") {
       amount: Number(r.amount), taxAmount: r.tax_amount == null ? undefined : Number(r.tax_amount),
       issueDate: r.issue_date || undefined, dueDate: r.due_date || undefined,
       note: r.note || undefined, filePath: r.file_path || undefined,
-      submittedAt: r.submitted_at, status: r.status,
+      submittedAt: r.submitted_at, decidedAt: r.decided_at || undefined,
+      obligationId: r.obligation_id || undefined, status: r.status,
     }));
   }, []);
 }
@@ -188,3 +190,22 @@ export async function decideInbound(id, status, obligationId) {
 
 export const invoiceLinkUrl = (token) =>
   `${window.location.origin}/invoice?t=${encodeURIComponent(token)}`;
+
+/* Void removes the submission outright.
+   Not a status change: the row goes. "Void" should leave nothing behind in the
+   list, and a declined row that still shows up under history is the thing this
+   was asked to stop.
+
+   The payable it created is deleted by the caller, which has the ledger in
+   hand. This returns the id so the caller knows what to remove, and returns it
+   even though the row is already gone, because losing the link and then being
+   unable to clean up the payable is the worst of both. */
+export async function voidInbound(id) {
+  return soft("void", async () => {
+    const { data: row } = await supabase
+      .from("inbound_invoices").select("obligation_id").eq("id", id).maybeSingle();
+    const { error } = await supabase.from("inbound_invoices").delete().eq("id", id);
+    if (error) throw error;
+    return { ok: true, obligationId: row?.obligation_id || null };
+  }, { ok: false });
+}

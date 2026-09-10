@@ -17,7 +17,7 @@ import { P, R, elev, MONO, SANS } from "../ui";
 const initials = (name) =>
   String(name || "").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase();
 
-export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, onNewLedger, onAccount, accountActive }) {
+export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, onNewLedger, onAccount, accountActive, dots = {} }) {
   const [menu, setMenu] = useState(false);
   const [hover, setHover] = useState(null);
 
@@ -30,7 +30,7 @@ export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, on
     return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", esc); };
   }, [menu]);
 
-  const Btn = ({ id, label, active, onClick, children }) => (
+  const Btn = ({ id, label, active, onClick, children, dot }) => (
     <button
       onClick={onClick}
       onMouseEnter={() => setHover(id)}
@@ -47,6 +47,16 @@ export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, on
       }}
     >
       {children}
+      {dot && (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute", top: 8, right: 8, width: 8, height: 8,
+            borderRadius: "50%", background: active ? P.onbrass : P.brass,
+            boxShadow: `0 0 0 2px ${P.bg}`,
+          }}
+        />
+      )}
       {hover === id && !active && (
         <span
           style={{
@@ -157,7 +167,7 @@ export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, on
       </div>
 
       {tabs.map(([k, label, Icon]) => (
-        <Btn key={k} id={k} label={label} active={tab === k} onClick={() => setTab(k)}>
+        <Btn key={k} id={k} label={label} active={tab === k} onClick={() => setTab(k)} dot={dots[k]}>
           <Icon size={19} />
         </Btn>
       ))}

@@ -31,8 +31,26 @@ const remember = (id) => {
 const fmt = (n) => "$" + Math.abs(Number(n) || 0).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Build the candidate list from state the app already computes. */
-export function buildNudges({ insights = [], balance, consolidation, obligations = [], today }) {
+export function buildNudges({ insights = [], balance, consolidation, obligations = [], today, inbound = [] }) {
   const out = [];
+
+  /* Someone sent you an invoice. First in the list on purpose: it arrived from
+     outside, it is the only item here you could not have known about by
+     looking, and it is waiting on a decision that stops a supplier being paid.
+     Everything below is the app noticing something about work you already
+     did. */
+  if (inbound.length) {
+    const total = inbound.reduce((n, i) => n + Math.abs(Number(i.amount) || 0), 0);
+    out.push({
+      // The ids are in the key, so a second invoice speaks again rather than
+      // being swallowed by the dismissal of the first.
+      id: `inbound:${inbound.map((i) => i.id).sort().join(",")}`,
+      text: inbound.length === 1
+        ? `${inbound[0].party} sent you an invoice for ${fmt(inbound[0].amount)}.`
+        : `${inbound.length} invoices came in, ${fmt(total)} between them.`,
+      action: { view: "arap", label: "Take a look" },
+    });
+  }
 
   const drift = balance?.source === "bank" ? Number(balance.delta || 0) : 0;
   if (Math.abs(drift) >= 0.01 && !consolidation?.settled) {
