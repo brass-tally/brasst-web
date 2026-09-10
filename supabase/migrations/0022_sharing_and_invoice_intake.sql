@@ -78,16 +78,44 @@ grant execute on function public.can_read_ledger(uuid) to authenticated;
 do $$
 declare t text;
 begin
+  /* Only tables that actually have a ledger_id.
+     The first version of this migration listed `settings` among them. It is
+     keyed on user_id and has no ledger_id, so the statement failed, and
+     because the SQL editor runs a script as one transaction the entire
+     migration rolled back: no tables, no functions, nothing. The app then
+     reported the tables as missing, which was true and gave no hint why.
+
+     Checking the column rather than trusting a hand-written list means a table
+     that does not fit is skipped instead of taking everything else with it. */
   foreach t in array array[
-    'transactions', 'obligations', 'categories', 'credits', 'settings',
+    'transactions', 'obligations', 'categories', 'credits',
     'balance_anchors', 'consolidations', 'filings', 'bank_transactions', 'import_rules'
   ]
   loop
+    if to_regclass('public.' || t) is null then
+      raise notice 'skipping %, table not present', t;
+      continue;
+    end if;
+
+    if not exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = t and column_name = 'ledger_id'
+    ) then
+      raise notice 'skipping %, no ledger_id column', t;
+      continue;
+    end if;
+
     execute format('drop policy if exists "shared read" on public.%I', t);
     execute format(
       'create policy "shared read" on public.%I for select to authenticated using (public.can_read_ledger(ledger_id))', t);
   end loop;
 end $$;
+
+/* `settings` is deliberately not in that list, and not just because of the
+   column. It is one row per user holding preferences, not per ledger, so
+   sharing it would hand a reader the owner's own settings rather than
+   anything about the books. The figures that matter, the starting balance and
+   the anchor date, live on the ledger row itself since 0007. */
 
 -- The ledger row itself, so it can appear in their switcher.
 drop policy if exists "shared read" on public.ledgers;
@@ -180,7 +208,8 @@ create or replace function public.submit_invoice(
   p_due_date    date default null,
   p_tax_amount  numeric default null,
   p_contact     text default null,
-  p_note        text default null
+  p_note        text default null,
+  p_file_path   text default null
 )
 returns json
 language plpgsql
@@ -191,6 +220,7 @@ declare
   v_link public.invoice_links%rowtype;
   v_id uuid;
   v_recent integer;
+  v_path text;
 begin
   select * into v_link from public.invoice_links where token = p_token and active limit 1;
   if not found then
@@ -213,14 +243,28 @@ begin
     return json_build_object('ok', false, 'error', 'Too many submissions on this link. Try again later.');
   end if;
 
+  /* A file, if one was uploaded, but only under this ledger's own prefix.
+     The path comes from /api/invoice-received, which resolves the token server
+     side and signs an upload for a key it chooses. Checked again here because
+     a server route can change and a free check should not depend on one. A
+     path pointing anywhere else is dropped rather than rejected: the invoice
+     details are worth keeping even when the attachment is wrong. */
+  v_path := null;
+  if p_file_path is not null
+     and p_file_path like 'inbound/' || v_link.ledger_id::text || '/%'
+     and length(p_file_path) < 400
+  then
+    v_path := p_file_path;
+  end if;
+
   insert into public.inbound_invoices (
     ledger_id, link_id, party, contact_email, invoice_no, description,
-    amount, tax_amount, issue_date, due_date, note
+    amount, tax_amount, issue_date, due_date, note, file_path
   ) values (
     v_link.ledger_id, v_link.id, trim(p_party), nullif(trim(coalesce(p_contact, '')), ''),
     nullif(trim(coalesce(p_invoice_no, '')), ''), nullif(trim(coalesce(p_description, '')), ''),
     round(p_amount, 2), case when p_tax_amount is null then null else round(p_tax_amount, 2) end,
-    p_issue_date, p_due_date, nullif(trim(coalesce(p_note, '')), '')
+    p_issue_date, p_due_date, nullif(trim(coalesce(p_note, '')), ''), v_path
   ) returning id into v_id;
 
   update public.invoice_links set submissions = submissions + 1 where id = v_link.id;
@@ -229,8 +273,8 @@ begin
 end;
 $$;
 
-revoke all on function public.submit_invoice(text, text, numeric, text, text, date, date, numeric, text, text) from public;
-grant execute on function public.submit_invoice(text, text, numeric, text, text, date, date, numeric, text, text) to anon, authenticated;
+revoke all on function public.submit_invoice(text, text, numeric, text, text, date, date, numeric, text, text, text) from public;
+grant execute on function public.submit_invoice(text, text, numeric, text, text, date, date, numeric, text, text, text) to anon, authenticated;
 
 /* What the supplier is allowed to see about the link they were sent: the
    business name, so the form does not look like a phishing page, and nothing
@@ -252,3 +296,13 @@ $$;
 
 revoke all on function public.invoice_link_info(text) from public;
 grant execute on function public.invoice_link_info(text) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- Did it work?
+-- ------------------------------------------------------------
+-- Four rows means yes. Fewer means something above did not run, and the
+-- statement that failed will be in the editor's output.
+select 'ledger_shares'   as object, to_regclass('public.ledger_shares')::text   as present
+union all select 'invoice_links',    to_regclass('public.invoice_links')::text
+union all select 'inbound_invoices', to_regclass('public.inbound_invoices')::text
+union all select 'submit_invoice',   (select proname from pg_proc where proname = 'submit_invoice' limit 1);
