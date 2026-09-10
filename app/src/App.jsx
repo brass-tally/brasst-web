@@ -2165,6 +2165,7 @@ function Ledger({ onSignOut }) {
             removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit}
             openPreview={openPreview}
             receiptSettle={receiptSettle} onReceiptSettleUsed={() => setReceiptSettle(null)}
+            readOnly={readOnly}
           />
         )}
         {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
@@ -4825,6 +4826,88 @@ function TaxPack({ data, month, openPreview, ledgerName }) {
   );
 }
 
+/* The intake link, where the invoices are.
+   It is also in Settings, because that is where you turn things off. But
+   nobody goes to Settings to send a contractor a link: you go to AR / AP,
+   notice you are chasing a bill that has not arrived, and want the link then.
+   The same list, in the place the thought occurs. */
+function InvoiceLinkBar({ ledgerId }) {
+  const [links, setLinks] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState("");
+
+  const refresh = async () => setLinks(await share.listInvoiceLinks(ledgerId));
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
+
+  if (links === null) return null;
+  const first = links[0];
+
+  const create = async () => {
+    setErr(""); setBusy(true);
+    const r = await share.createInvoiceLink(ledgerId, null);
+    setBusy(false);
+    if (!r.ok) return setErr(r.error || "That did not save.");
+    refresh();
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(share.invoiceLinkUrl(first.token));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* the link is on screen either way */ }
+  };
+
+  return (
+    <section style={cardStyle()} className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl">Let them send it to you</h3>
+          <p style={{ color: P.muted }} className="text-[15px]">
+            {first
+              ? "Send a contractor this link and their invoice lands here for review."
+              : "A link a contractor can use to send you an invoice. It arrives here, and becomes something you owe only when you accept it."}
+          </p>
+        </div>
+        {first ? (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={copy}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {copied ? "Copied" : "Copy the link"}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={create}
+            disabled={busy}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill, opacity: busy ? 0.6 : 1 }}
+            className="h-11 px-4 text-[15px] font-medium shrink-0 press"
+          >
+            {busy ? "Creating" : "Create a link"}
+          </button>
+        )}
+      </div>
+
+      {first && (
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-3">
+          <span style={{ color: P.faint, fontFamily: MONO }} className="text-[13.5px] min-w-0 truncate">
+            {share.invoiceLinkUrl(first.token)}
+          </span>
+          <span style={{ color: P.faint }} className="text-[13.5px]">
+            {first.submissions} received
+            {links.length > 1 ? ` · ${links.length} links in Settings` : ""}
+          </span>
+        </div>
+      )}
+      {err && <p style={{ color: P.debit }} className="text-[14px] mt-2">{err}</p>}
+    </section>
+  );
+}
+
 /* Invoices a supplier sent through a link, waiting on you.
    They sit here rather than in the payables list because the link is public:
    holding it is enough to submit, so nothing it produces is allowed to reach
@@ -7225,7 +7308,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -7275,6 +7358,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         openPreview={openPreview}
         onAccept={(inv) => addAR("payables", inv)}
       />
+      {!readOnly && <InvoiceLinkBar ledgerId={data.ledger.id} />}
       <div className="flex items-center justify-end gap-2">
         <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
         <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">

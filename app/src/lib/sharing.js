@@ -17,6 +17,34 @@ const soft = async (label, fn, fallback) => {
   }
 };
 
+/* Say what actually went wrong.
+   These calls used to report "run migration 0022" for every failure, so a
+   not-null violation, a permission problem and a genuinely missing table all
+   produced the same sentence, and the one instruction it gave was the one
+   thing that would not help. A wrong diagnosis stated confidently costs more
+   than no diagnosis. */
+function explain(e) {
+  const msg = String(e?.message || e || "");
+  const code = e?.code || "";
+
+  // The table is not there. PostgREST says PGRST205, Postgres says 42P01.
+  if (code === "PGRST205" || code === "42P01" || /does not exist|schema cache/i.test(msg)) {
+    return "This needs migration 0022. Run it in the Supabase SQL editor and try again.";
+  }
+  // The column exists but has no default, which is the shape 0022 shipped in
+  // first. 0024 is the repair.
+  if (code === "23502" || /null value in column "owner_id"|violates not-null/i.test(msg)) {
+    return "Your database has an older version of this table. Run migration 0024, it takes a second.";
+  }
+  if (code === "23505" || /duplicate key/i.test(msg)) {
+    return "That address already has access to this ledger.";
+  }
+  if (code === "42501" || /row-level security|permission denied/i.test(msg)) {
+    return "The database refused that. You can only share a ledger you own.";
+  }
+  return msg ? `That did not save: ${msg}` : "That did not save.";
+}
+
 /* ---------------- read access ---------------- */
 
 export async function listShares(ledgerId) {
@@ -37,10 +65,11 @@ export async function inviteViewer(ledgerId, email, note) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) {
     return { ok: false, error: "That does not look like an email address." };
   }
-  return soft("invite", async () => {
+  try {
     const { error } = await supabase.from("ledger_shares").upsert(
       {
-        // owner_id is filled by the database from auth.uid().
+        /* owner_id is filled by the database from auth.uid(). If your
+           ledger_shares predates that default, migration 0024 adds it. */
         ledger_id: ledgerId, email: clean, role: "viewer",
         /* Active immediately, not on acceptance.
            The check that matters happens at read time: a policy compares this
@@ -53,7 +82,10 @@ export async function inviteViewer(ledgerId, email, note) {
     );
     if (error) throw error;
     return { ok: true };
-  }, { ok: false, error: "Sharing is not set up on this database yet. Run migration 0022." });
+  } catch (e) {
+    console.warn("invite failed:", e);
+    return { ok: false, error: explain(e) };
+  }
 }
 
 export async function revokeShare(id) {
@@ -105,14 +137,17 @@ export async function listInvoiceLinks(ledgerId) {
 }
 
 export async function createInvoiceLink(ledgerId, label) {
-  return soft("create link", async () => {
+  try {
     const token = makeToken();
     const { error } = await supabase
       .from("invoice_links")
       .insert({ ledger_id: ledgerId, token, label: label || null });
     if (error) throw error;
     return { ok: true, token };
-  }, { ok: false, error: "Invoice links are not set up on this database yet. Run migration 0022." });
+  } catch (e) {
+    console.warn("create link failed:", e);
+    return { ok: false, error: explain(e) };
+  }
 }
 
 export async function revokeInvoiceLink(id) {
