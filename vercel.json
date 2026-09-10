@@ -149,6 +149,12 @@
       }
     },
     {
+      "source": "/invoice",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "landing"

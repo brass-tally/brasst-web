@@ -16,7 +16,7 @@ export const GUIDES = {
     blurb: "Walk me through my personal return",
     avatar: "T1",
     opener:
-      "I can take you through your personal return step by step. Your slips come from CRA automatically, so what matters here is everything CRA cannot see: self employment, deductions, donations, medical. Where do you want to start?",
+      "Your slips come from CRA already. What matters here is what it cannot see. Where do you want to start?",
     steps: [
       "What CRA already knows, and what it needs from you",
       "Check my self employment figures",
@@ -52,7 +52,7 @@ Explain and prepare. Do not state a filing position, a residency determination, 
     blurb: "Walk me through the corporate return",
     avatar: "T2",
     opener:
-      "Corporate returns are a package, not one form. I can tell you which schedules yours actually needs, which version each one is for your year, and what has to happen before the deadline. Where do you want to start?",
+      "A corporate return is a package, not one form. Where do you want to start?",
     steps: [
       "Which schedules does my corporation actually need",
       "Explain my deadlines and what they cost if I miss them",
@@ -82,7 +82,7 @@ No Canadian tax software exposes a filing API. Nothing transmits from Brasstally
     blurb: "Help me connect or fix my bank",
     avatar: "BK",
     opener:
-      "I can help you get the bank feed working, or work out why a sync is not doing what you expect. What is happening?",
+      "Something wrong with the feed, or setting one up?",
     steps: [
       "Walk me through connecting my bank",
       "My bank keeps asking me to sign in again",
@@ -112,7 +112,7 @@ Never suggest reconnecting from scratch when Reconnect on the existing row is av
     blurb: "Explain what consolidating does",
     avatar: "CO",
     opener:
-      "Consolidating means pairing what the bank saw with what the books say, so every difference has a name. I can explain what is open right now and what each choice does. What do you want to know?",
+      "Pairing what the bank saw with what the books say, so every gap has a name. What do you want to know?",
     steps: [
       "What is the gap between my bank and my books made of",
       "What happens if I mark this consolidated",
@@ -144,7 +144,7 @@ Re-anchoring, which forces the books to the bank balance, hides the gap rather t
     blurb: "Help me chase and pay",
     avatar: "AR",
     opener:
-      "I can tell you who owes you, what is overdue, and what has to go out next. Where do you want to look?",
+      "Who owes you, what is overdue, what goes out next. Where do you want to look?",
     steps: [
       "Who owes me money and how late are they",
       "What do I owe and when is it due",

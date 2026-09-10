@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -15,6 +15,7 @@ import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } 
 import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross } from "./lib/tax";
 import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
+import * as share from "./lib/sharing";
 import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
   proposeMatches, explainDelta, clearedIndex, consolidationPlan,
@@ -1173,8 +1174,26 @@ function Ledger({ onSignOut }) {
 
   // local state updates immediately; the matching database write runs behind it
   // Background writes should never blow away the UI. Log, surface a soft toast, keep going.
+    /* Is this somebody else's ledger, shared with me to read? */
+  const readOnly = Boolean(data?.ledger?.readOnly);
+
   const dbTry = async (fn) => {
-    try { await fn(); } catch (e) { console.error("save failed:", e); addNotification(notify.error("Couldn't reach the server, your last change may not have saved. Check your connection.")); }
+    if (readOnly) {
+      /* The database refuses these anyway: the shared policy grants select and
+         nothing else. Catching it here is about the message. A row level
+         security failure reads as "new row violates row-level security policy",
+         which tells a visiting accountant nothing except that something is
+         broken. */
+      addNotification(notify.error("You can read this ledger, but not change it. Ask the owner if you need an edit."));
+      return;
+    }
+    try { await fn(); } catch (e) {
+      console.error("save failed:", e);
+      const denied = /row-level security|permission denied|violates/i.test(e?.message || "");
+      addNotification(notify.error(denied
+        ? "You can read this ledger, but not change it."
+        : "Couldn't reach the server, your last change may not have saved. Check your connection."));
+    }
   };
 
   /* ---- derived ---- */
@@ -1480,6 +1499,11 @@ function Ledger({ onSignOut }) {
     const recurring = item.recurrence === "recurring" ? " (recurring)" : "";
     addNotification(notify.info(`${label} added${recurring}`));
     dbTry(() => db.insertObligation(kind, rec));
+    /* Returns the record so a caller can keep hold of it. The invoice inbox
+       needs the id to record which submission became which payable, and
+       without it the trail from "a supplier sent this" to "this is what I owe"
+       is broken at exactly the point someone would want to follow it. */
+    return rec;
   };
   const settleAR = (kind, id, actual = {}) => {
     const item = data[kind].find((x) => x.id === id);
@@ -2055,6 +2079,24 @@ function Ledger({ onSignOut }) {
           </div>
         </header>
 
+        {readOnly && (
+          <div
+            style={{ background: P.brass + "1f", borderRadius: 16 }}
+            className="flex items-start gap-3 p-4 mb-4"
+          >
+            <Eye size={17} style={{ color: P.brassText }} className="shrink-0 mt-0.5" />
+            <div>
+              <div style={{ color: P.text }} className="text-[15px]">
+                You are reading {data.ledger.name}, not keeping it
+              </div>
+              <div style={{ color: P.muted }} className="text-[14px] leading-snug">
+                Shared with you by its owner. Everything is here to look at and export. Nothing can be changed
+                from this side, including by mistake.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* The page says its name once, small, on the same line as the month,
             and then hands the screen to the content. A 28px title above every
             section spent the first inch of every page telling you where you
@@ -2152,6 +2194,7 @@ function Ledger({ onSignOut }) {
         {tab === "legal-terms" && <LegalPage which="terms" />}
         {tab === "settings" && (
           <SettingsPage
+            readOnly={readOnly}
             setup={!setupHidden ? (
               <SetupChecklist
                 data={data}
@@ -2242,8 +2285,11 @@ function Ledger({ onSignOut }) {
         </div>
       </div>
 
+      {/* The nudge queue is about work to do, and a reader has none. Tally
+          herself stays, because answering "what is in this category" is most of
+          why the ledger was shared. */}
       <TallyPeek
-        peek={chatOpen ? null : nudges.peek}
+        peek={chatOpen || readOnly ? null : nudges.peek}
         onOpen={() => { setChatOpen(true); setChatUnread(false); nudges.clear(); }}
         onDismiss={nudges.dismiss}
       />
@@ -4779,11 +4825,256 @@ function TaxPack({ data, month, openPreview, ledgerName }) {
   );
 }
 
+/* Invoices a supplier sent through a link, waiting on you.
+   They sit here rather than in the payables list because the link is public:
+   holding it is enough to submit, so nothing it produces is allowed to reach
+   the books without a person agreeing to it. Accepting creates an ordinary
+   payable, which then settles the ordinary way. */
+function InboundInbox({ ledgerId, onAccept, openPreview }) {
+  const [items, setItems] = useState([]);
+  const [working, setWorking] = useState("");
+
+  const refresh = async () => setItems(await share.listInbound(ledgerId, "pending"));
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
+
+  if (!items.length) return null;
+
+  const accept = async (inv) => {
+    setWorking(inv.id);
+    const created = await onAccept({
+      party: inv.party,
+      description: inv.description || inv.invoiceNo || "Invoice",
+      amount: inv.amount,
+      dueDate: inv.dueDate || todayStr(),
+      taxAmount: inv.taxAmount,
+      /* The file the supplier attached becomes the payable's own document, so
+         settling it later already has its evidence and the settle step does
+         not ask for a receipt you were sent weeks ago. */
+      attachmentId: inv.filePath,
+      attachmentName: inv.invoiceNo ? `${inv.invoiceNo}.pdf` : `${inv.party} invoice`,
+    });
+    await share.decideInbound(inv.id, "accepted", created?.id);
+    setWorking("");
+    refresh();
+  };
+
+  const decline = async (inv) => {
+    setWorking(inv.id);
+    await share.decideInbound(inv.id, "declined");
+    setWorking("");
+    refresh();
+  };
+
+  return (
+    <section style={{ ...cardStyle(), borderLeft: `3px solid ${P.brass}` }} className="p-5">
+      <h3 style={{ fontFamily: SERIF }} className="text-xl">
+        {items.length} {items.length === 1 ? "invoice" : "invoices"} sent to you
+      </h3>
+      <p style={{ color: P.muted }} className="text-[15px] mb-4">
+        Submitted through your intake link. Accepting one adds it to what you owe.
+      </p>
+
+      {items.map((inv) => (
+        <div key={inv.id} className="py-4" style={{ borderTop: `1px solid ${P.line}` }}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span style={{ color: P.text }} className="text-[16px] min-w-0 truncate">
+              {inv.party}
+              {inv.description ? <span style={{ color: P.muted }}> &middot; {inv.description}</span> : null}
+            </span>
+            <span style={{ fontFamily: MONO, color: P.debit }} className="text-[16px] tabular-nums shrink-0">
+              {fmt(inv.amount)}
+            </span>
+          </div>
+          <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+            {inv.invoiceNo ? `${inv.invoiceNo} · ` : ""}
+            {inv.dueDate ? `due ${inv.dueDate}` : "no due date given"}
+            {inv.taxAmount ? ` · ${fmt(inv.taxAmount)} tax` : ""}
+            {inv.contactEmail ? ` · ${inv.contactEmail}` : ""}
+          </div>
+          {inv.note && (
+            <p style={{ color: P.muted }} className="text-[14.5px] mt-2 leading-snug">{inv.note}</p>
+          )}
+          {inv.filePath && (
+            <button
+              onClick={() => openPreview(inv.filePath, inv.invoiceNo || `${inv.party} invoice`, inv)}
+              style={{ color: P.brassText }}
+              className="text-[14.5px] mt-2 inline-flex items-center gap-1.5 press"
+            >
+              <Paperclip size={14} /> See the invoice they sent
+            </button>
+          )}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button
+              onClick={() => accept(inv)}
+              disabled={working === inv.id}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {working === inv.id ? "Adding" : "Add to what I owe"}
+            </button>
+            <button
+              onClick={() => decline(inv)}
+              disabled={working === inv.id}
+              style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              Not mine
+            </button>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/* ================= sharing and intake =================
+   Two things the owner sets up once and mostly forgets: who can read this
+   ledger, and the link a supplier uses to send an invoice in. Both live in
+   Settings because both are configuration rather than daily work. */
+function AccessCard({ ledger }) {
+  const [shares, setShares] = useState([]);
+  const [links, setLinks] = useState([]);
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState("");
+
+  const refresh = async () => {
+    setShares(await share.listShares(ledger.id));
+    setLinks(await share.listInvoiceLinks(ledger.id));
+  };
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledger.id]);
+
+  const invite = async () => {
+    setErr(""); setBusy(true);
+    const r = await share.inviteViewer(ledger.id, email);
+    setBusy(false);
+    if (!r.ok) return setErr(r.error || "That did not save.");
+    setEmail(""); refresh();
+  };
+
+  const newLink = async () => {
+    setBusy(true);
+    const r = await share.createInvoiceLink(ledger.id, null);
+    setBusy(false);
+    if (!r.ok) return setErr(r.error || "That did not save.");
+    refresh();
+  };
+
+  const copy = async (token) => {
+    try {
+      await navigator.clipboard.writeText(share.invoiceLinkUrl(token));
+      setCopied(token);
+      setTimeout(() => setCopied(""), 2000);
+    } catch { /* clipboard blocked, the link is on screen anyway */ }
+  };
+
+  return (
+    <>
+      <section style={cardStyle()} className="p-5">
+        <h3 style={{ fontFamily: SERIF }} className="text-xl">Who can read this ledger</h3>
+        <p style={{ color: P.muted }} className="text-[15px] mb-4">
+          Give your accountant the books without giving them the keys. They can read everything except your
+          bank connection, and they cannot change or delete anything.
+        </p>
+
+        {shares.map((sh) => (
+          <div key={sh.id} className="flex items-center gap-3 py-3" style={{ borderTop: `1px solid ${P.line}` }}>
+            <span className="flex-1 min-w-0">
+              <span style={{ color: P.text }} className="text-[15px] block truncate">{sh.email}</span>
+              <span style={{ color: P.faint }} className="text-[13.5px]">
+                Can read &middot; invited {String(sh.invitedAt).slice(0, 10)}
+              </span>
+            </span>
+            <button
+              onClick={async () => { await share.revokeShare(sh.id); refresh(); }}
+              style={{ color: P.debit }} className="text-[14.5px] shrink-0 press"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+
+        <div className="flex flex-wrap gap-2 mt-4">
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !busy && email && invite()}
+            placeholder="accountant@firm.ca"
+            type="email"
+            inputMode="email"
+            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+            className="flex-1 min-w-[220px] px-4 h-11 text-[15px] outline-none border-none"
+          />
+          <button
+            onClick={invite}
+            disabled={busy || !email.trim()}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill, opacity: busy || !email.trim() ? 0.5 : 1 }}
+            className="h-11 px-4 text-[15px] font-medium shrink-0 press"
+          >
+            Give read access
+          </button>
+        </div>
+        <p style={{ color: P.faint }} className="text-[13.5px] mt-2 leading-snug">
+          Access is tied to that address. Nothing opens until they sign in with it, and removing them here
+          closes it immediately.
+        </p>
+        {err && <p style={{ color: P.debit }} className="text-[14px] mt-2">{err}</p>}
+      </section>
+
+      <section style={cardStyle()} className="p-5">
+        <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices sent to you</h3>
+        <p style={{ color: P.muted }} className="text-[15px] mb-4">
+          Send a contractor this link and their invoice arrives in your books. Nothing becomes a payable until
+          you accept it, because anyone holding the link can submit.
+        </p>
+
+        {links.map((l) => (
+          <div key={l.id} className="py-3" style={{ borderTop: `1px solid ${P.line}` }}>
+            <div className="flex items-center gap-3">
+              <span style={{ color: P.text, fontFamily: MONO }} className="text-[13.5px] flex-1 min-w-0 truncate">
+                {share.invoiceLinkUrl(l.token)}
+              </span>
+              <button onClick={() => copy(l.token)} style={{ color: P.brassText }} className="text-[14.5px] shrink-0 press">
+                {copied === l.token ? "Copied" : "Copy"}
+              </button>
+              <button
+                onClick={async () => { await share.revokeInvoiceLink(l.id); refresh(); }}
+                style={{ color: P.debit }} className="text-[14.5px] shrink-0 press"
+              >
+                Turn off
+              </button>
+            </div>
+            <div style={{ color: P.faint }} className="text-[13.5px] mt-1">
+              {l.submissions} {l.submissions === 1 ? "invoice" : "invoices"} received
+            </div>
+          </div>
+        ))}
+
+        <button
+          onClick={newLink}
+          disabled={busy}
+          style={{ background: links.length ? P.surface2 : P.brass, color: links.length ? P.text : P.onbrass, borderRadius: R.pill }}
+          className="h-11 px-4 text-[15px] font-medium mt-4 press"
+        >
+          {links.length ? "Another link" : "Create a link"}
+        </button>
+        {links.length > 1 && (
+          <p style={{ color: P.faint }} className="text-[13.5px] mt-2 leading-snug">
+            One link each makes it obvious who sent what, and lets you turn off a single supplier without
+            reissuing to everyone.
+          </p>
+        )}
+      </section>
+    </>
+  );
+}
+
 /* ================= Settings =================
    Its own page rather than the account sheet in page clothes. Two cards over
    an Account section, which is the order the prototype puts them in and the
    order people look: which books am I in, how does it look, then who am I. */
-function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLedger, onSignOut, onResetLedger, setup }) {
+function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLedger, onSignOut, onResetLedger, setup, readOnly }) {
   const [pal, setPal] = useState(currentPalette);
 
   const applyPalette = (name) => {
@@ -4903,6 +5194,16 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
           which is where someone goes looking for "what have I not set up yet". */}
       {setup}
 
+      {/* Sharing and intake links belong to whoever owns the books. */}
+      {!readOnly && (
+        <>
+          <h2 style={{ fontFamily: SERIF }} className="text-2xl mt-2">Access</h2>
+          <div className="grid md:grid-cols-2 gap-4">
+            <AccessCard ledger={ledger} />
+          </div>
+        </>
+      )}
+
       <h2 style={{ fontFamily: SERIF }} className="text-2xl mt-2">Account</h2>
       <div className="grid md:grid-cols-2 gap-4">
         <section style={cardStyle()} className="p-5">
@@ -4931,7 +5232,8 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
           </p>
           <button
             onClick={onResetLedger}
-            style={{ background: P.surface2, color: P.debit, borderRadius: R.pill }}
+            disabled={readOnly}
+            style={{ background: P.surface2, color: readOnly ? P.faint : P.debit, borderRadius: R.pill, opacity: readOnly ? 0.5 : 1 }}
             className="w-full px-4 py-3 text-[15px] font-medium inline-flex items-center justify-center gap-2 mb-2"
           >
             <RotateCcw size={16} /> Reset this ledger
@@ -5457,6 +5759,49 @@ const TOOL_LABEL = {
   open_view: "finding the right screen",
 };
 
+/* Three choices in one card, lettered, with the reminder that typing is always
+   an option.
+
+   They used to be loose full-width buttons stacked in the transcript, which at
+   three looked like three unanswered messages and at eight looked like a menu
+   someone forgot to close. A card says these belong together and there are this
+   many of them, which is the difference between a suggestion and a demand.
+
+   Three is the ceiling on purpose. A fourth option is nearly always the one
+   nobody reads, and the input below covers everything the list does not. */
+function OptionCard({ options, onPick, title }) {
+  if (!options?.length) return null;
+  const LETTERS = ["A", "B", "C"];
+  return (
+    <div style={{ background: P.surface2, borderRadius: 16 }} className="mt-2 overflow-hidden">
+      {title && (
+        <div style={{ color: P.text }} className="text-[15px] font-medium px-4 pt-3.5 pb-1">{title}</div>
+      )}
+      {options.slice(0, 3).map((q, i) => (
+        <button
+          key={q}
+          type="button"
+          onClick={() => onPick(q)}
+          style={{ borderTop: i && !title ? `1px solid ${P.line}` : i ? `1px solid ${P.line}` : "none" }}
+          className="w-full flex items-start gap-3 px-4 py-3.5 text-left press"
+        >
+          <span
+            aria-hidden
+            style={{ background: P.surface, color: P.faint, borderRadius: 8 }}
+            className="w-6 h-6 shrink-0 flex items-center justify-center text-[12.5px] font-semibold mt-px"
+          >
+            {LETTERS[i]}
+          </span>
+          <span style={{ color: P.text }} className="text-[15px] leading-snug flex-1">{q}</span>
+        </button>
+      ))}
+      <div style={{ color: P.faint, borderTop: `1px solid ${P.line}` }} className="text-[13.5px] px-4 py-2.5">
+        Or just type below
+      </div>
+    </div>
+  );
+}
+
 const DEFAULT_ASKS = [
   "Where did my money go this month?",
   "What's my cash position over the next 60 days?",
@@ -5472,9 +5817,14 @@ function Capture({
   // ledger you reconciled yesterday should not greet you with it again.
   const drift = balance?.source === "bank" && balance.delta != null
     && Math.abs(balance.delta) >= 0.01 && !consolidation?.settled;
+  /* One line, and it is the same length whether there is a problem or not.
+     This used to be two paragraphs listing everything Tally can do, followed by
+     up to five guide steps, followed by three more suggestions. Eleven things
+     to read before you could say anything. A greeting that explains its own
+     feature set is a greeting nobody finishes. */
   const opener = drift
-    ? `I'm Tally, I keep this ledger. Right now the bank says ${fmt(balance.bank)} and the books say ${fmt(balance.book)}, a gap of ${fmt(balance.delta)}. Ask me to walk it and I'll go entry by entry. You can also drop a receipt or type an entry any time.`
-    : "I'm Tally, I keep your books. Drop a receipt or an invoice, type something like “paid Vercel $70 today” and I'll file it, or just ask me about the money. I can dig through transactions, budgets, AR/AP, and cash to answer.";
+    ? `The bank and the books disagree by ${fmt(balance.delta)}. Want me to walk it?`
+    : "I keep your books. What do you need?";
   const [msgs, setMsgs] = useState([{ role: "assistant", text: opener }]);
   const [input, setInput] = useState("");
   // Empty when idle, otherwise the line shown under the transcript. One piece
@@ -5785,15 +6135,10 @@ function Capture({
                 </div>
               )}
               {m.guideId && GUIDES[m.guideId] && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {GUIDES[m.guideId].steps.map((q) => (
-                    <button key={q} type="button" onClick={() => { setGuideId(m.guideId); ask(q, m.guideId); }}
-                      style={{ background: P.surface2, color: P.text, borderRadius: 12 }}
-                      className="px-3 py-2 text-[14px] text-left leading-snug">
-                      {q}
-                    </button>
-                  ))}
-                </div>
+                <OptionCard
+                  options={GUIDES[m.guideId].steps.slice(0, 3)}
+                  onPick={(q) => { setGuideId(m.guideId); ask(q, m.guideId); }}
+                />
               )}
               {/* Tally said something unprompted, and left the follow-up
                   question on the table rather than making the user phrase it. */}
@@ -5844,22 +6189,12 @@ function Capture({
             stay up until the first question, and never re-offer something Tally
             has already put on the table unprompted. */}
         {!msgs.some((m) => m.role === "user") && !busy && (
-          <div className="flex flex-col gap-2 pt-1">
-            {[...new Set([...insights.slice(0, 3).map((i) => i.ask), ...DEFAULT_ASKS])]
+          <OptionCard
+            options={[...new Set([...insights.slice(0, 3).map((i) => i.ask), ...DEFAULT_ASKS])]
               .filter((q) => !msgs.some((m) => m.followUp === q))
-              .slice(0, 3)
-              .map((q) => (
-                <button
-                  key={q}
-                  type="button"
-                  onClick={() => ask(q)}
-                  style={{ background: P.surface2, color: P.text, borderRadius: 14 }}
-                  className="w-full px-4 py-3 text-[14.5px] text-left leading-snug"
-                >
-                  {q}
-                </button>
-              ))}
-          </div>
+              .slice(0, 3)}
+            onPick={(q) => ask(q)}
+          />
         )}
         {busy && (
           <LoadingLine>{busy}</LoadingLine>
@@ -6935,6 +7270,11 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
 
   return (
     <div className="space-y-6 stagger">
+      <InboundInbox
+        ledgerId={data.ledger.id}
+        openPreview={openPreview}
+        onAccept={(inv) => addAR("payables", inv)}
+      />
       <div className="flex items-center justify-end gap-2">
         <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
         <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">

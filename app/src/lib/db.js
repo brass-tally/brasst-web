@@ -9,6 +9,13 @@ export const setLedgerId = (id) => { LID = id; };
 /* ---------------- ledgers ---------------- */
 
 export async function listLedgers() {
+  /* Shared ledgers arrive in this list on their own, because the "shared read"
+     policy added in migration 0022 lets them through the same select. What the
+     query cannot tell you is which are yours, so compare the owner: a row you
+     can read but do not own is a ledger somebody shared with you. No second
+     query, and it stays correct if the sharing rules change. */
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth?.user?.id || null;
   const { data, error } = await supabase.from("ledgers").select("*").order("created_at");
   if (error) {
     // most common cause: multi-ledger migration not run yet
@@ -17,6 +24,7 @@ export async function listLedgers() {
     throw e;
   }
   return (data || []).map((l) => ({
+    readOnly: Boolean(uid && l.user_id && l.user_id !== uid),
     id: l.id, name: l.name, kind: l.kind, currency: l.currency,
     startingBalance: Number(l.starting_balance), anchorDate: l.anchor_date, fye: l.fye || "12-31",
   }));
