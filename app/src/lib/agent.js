@@ -251,6 +251,25 @@ export const TOOLS = [
     },
   },
   {
+    name: "contacts",
+    description:
+      "The people and businesses this ledger deals with, with their roles and email addresses. Use this " +
+      "before saying you do not have somebody's address, and before proposing to add a contact who may " +
+      "already exist. Filter by name or role, or call it with nothing to see everyone.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Part of a name or an email. Leave empty for all of them." },
+        role: {
+          type: "string",
+          enum: ["contractor", "vendor", "employee", "client", "accountant"],
+          description: "Optional, narrows to one kind.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "propose_invoice_link",
     description:
       "Draft an intake link for this ledger, which suppliers use to send invoices in. Nothing is created " +
@@ -270,8 +289,8 @@ export const TOOLS = [
     name: "propose_contact",
     description:
       "Draft a new contact for the user to confirm. Nothing is saved until they tap it. Use when the user " +
-      "mentions a person or business they deal with and it is not already in their contacts. Check the " +
-      "contacts list in the overview before proposing, so you do not offer to add somebody twice.",
+      "mentions a person or business they deal with and it is not already in their contacts. Call the " +
+      "contacts tool first so you do not offer to add somebody twice.",
     input_schema: {
       type: "object",
       properties: {
@@ -295,7 +314,8 @@ export const TOOLS = [
       "Draft an email inviting a supplier to send their invoice through the intake link. Nothing is sent " +
       "until the user taps it. Use when the user wants a contractor to bill them, or asks you to chase an " +
       "invoice. If the ledger has no intake link yet, propose this anyway: the card creates one and then " +
-      "sends, in a single confirmation. Never tell the user to go and make a link first.",
+      "sends, in a single confirmation. Never tell the user to go and make a link first. If you do not have " +
+      "their address, call the contacts tool before asking the user for it.",
     input_schema: {
       type: "object",
       properties: {
@@ -351,6 +371,9 @@ HOW YOU WORK
 - Dollar amounts as $1,234.56. Never use em dashes; use a comma, a full stop, or a new sentence.
 
 WHAT YOU KNOW ABOUT THIS LEDGER
+- Contacts: ${(ctx.contacts || []).length
+    ? `${ctx.contacts.length} saved. Call the contacts tool for names, roles and addresses. Never say you have no address for somebody without looking first.`
+    : "none saved yet."}
 - Expense categories: ${cats.expense.map((c) => c.name).join(", ") || "none"}.
 - Income categories: ${cats.income.map((c) => c.name).join(", ") || "none"}.
 - The balance counts from an anchor date: only cash transactions AFTER it move the balance. Earlier months can be untracked without distorting anything.
@@ -416,6 +439,32 @@ function consolidationHistory(ctx, { limit = 10 } = {}) {
 const READERS = {
   ledger_overview: (input, ctx) =>
     A.ledgerSummary(ctx.data, { balance: ctx.balance, month: ctx.month, bankConns: ctx.bankConns, recon: ctx.recon }),
+
+  /* Contacts were in ctx and in no tool and in no prompt, so the only thing
+     that ever read them was the duplicate check inside propose_contact. The
+     tool description told her to "check the contacts list in the overview",
+     which does not contain one. She answered honestly from what she could
+     see, which was AR / AP, and said there was no address on file for
+     somebody whose address was on the screen behind her. */
+  contacts: (input, ctx) => {
+    const all = ctx.contacts || [];
+    const q = String(input.query || "").trim().toLowerCase();
+    const rows = all
+      .filter((c) => (!input.role || c.role === input.role))
+      .filter((c) => !q || c.name.toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q));
+    if (!all.length) return "No contacts saved on this ledger yet.";
+    if (!rows.length) return `No contact matches that. Saved: ${all.map((c) => c.name).join(", ")}.`;
+    return {
+      found: rows.length,
+      contacts: rows.slice(0, 40).map((c) => ({
+        name: c.name,
+        role: c.role,
+        email: c.email || null,
+        phone: c.phone || null,
+        note: c.note || null,
+      })),
+    };
+  },
 
   list_transactions: (input, ctx) => A.listTransactions(ctx.data, input),
 

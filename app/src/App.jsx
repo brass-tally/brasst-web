@@ -7173,6 +7173,7 @@ const TOOL_LABEL = {
   propose_contact: "drafting a contact",
   propose_invoice_invite: "drafting an invitation",
   propose_invoice_link: "drafting an intake link",
+  contacts: "looking up a contact",
   propose_obligation: "drafting a receivable / payable",
   propose_settle: "drafting a settlement",
   propose_budget: "drafting a budget",
