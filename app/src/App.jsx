@@ -6625,6 +6625,12 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
         </>
       )}
 
+      {/* Which build you are looking at. Two rounds were spent on a fix that
+          was not deployed yet, on both sides of the conversation. */}
+      <p style={{ color: P.faint, fontFamily: MONO }} className="text-[12.5px] mt-6">
+        build {typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev"}
+      </p>
+
       <h2 style={{ fontFamily: SERIF }} className="text-2xl mt-2">Account</h2>
       <div className="grid md:grid-cols-2 gap-4">
         <section style={cardStyle()} className="p-5">

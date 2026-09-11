@@ -11,6 +11,7 @@
 // anything was saved.
 
 import * as A from "./analysis";
+import { listContacts } from "./contacts";
 import { askClaudeAgent } from "./extract";
 import { guideBrief } from "./guides";
 
@@ -446,8 +447,27 @@ const READERS = {
      which does not contain one. She answered honestly from what she could
      see, which was AR / AP, and said there was no address on file for
      somebody whose address was on the screen behind her. */
-  contacts: (input, ctx) => {
-    const all = ctx.contacts || [];
+  /* Read from the database, not from props.
+
+     This was reading ctx.contacts, which arrives through the component tree,
+     and one signature had the prop outside the destructuring brace so it was
+     always the empty default. Tally then told someone there was no email on
+     file for a contact whose email was on the screen behind her.
+
+     The prop is fixed. But a lookup that is only correct while five layers of
+     prop passing stay correct is a lookup waiting to break again, so this asks
+     the database. ctx is the fallback for the same call in the same turn. */
+  contacts: async (input, ctx) => {
+    let all = ctx.contacts || [];
+    const lid = ctx?.data?.ledger?.id;
+    if (lid) {
+      try {
+        const fresh = await listContacts(lid);
+        if (fresh.length || !all.length) all = fresh;
+      } catch (e) {
+        console.warn("contacts lookup fell back to context:", e?.message || e);
+      }
+    }
     const q = String(input.query || "").trim().toLowerCase();
     const rows = all
       .filter((c) => (!input.role || c.role === input.role))
@@ -545,10 +565,12 @@ function validateProposal(name, input, ctx) {
  * @returns {{ result: object, proposal?: object, link?: object }}
  *   `proposal` and `link` are for the UI to render; `result` goes back to the model.
  */
-export function runTool(name, input = {}, ctx) {
+export async function runTool(name, input = {}, ctx) {
   if (READERS[name]) {
     try {
-      return { result: READERS[name](input, ctx) };
+      // Awaited, so a reader can go to the database rather than depending on
+      // a value having been threaded correctly through the component tree.
+      return { result: await READERS[name](input, ctx) };
     } catch (e) {
       console.error(`tool ${name} failed:`, e);
       return { result: { error: `That lookup failed: ${e.message}` } };
@@ -636,7 +658,7 @@ export async function runAgent({ history, ctx, onEvent = () => {}, call = askCla
     const results = [];
     for (const use of toolUses) {
       onEvent({ type: "tool", name: use.name, input: use.input });
-      const out = runTool(use.name, use.input || {}, ctx);
+      const out = await runTool(use.name, use.input || {}, ctx);
       if (out.proposal) onEvent({ type: "proposal", proposal: out.proposal });
       if (out.link) onEvent({ type: "link", link: out.link });
       results.push({ type: "tool_result", tool_use_id: use.id, content: serialize(out.result) });
