@@ -705,11 +705,34 @@ function AuthCard({ children }) {
   );
 }
 
+/* An accountant arriving from a share invitation.
+
+   The invitation links to /app?share=<ledger>&to=<address>&name=<business>,
+   so the address is known before they type anything and the screen can say
+   whose books they are opening. Without this they met a generic sign-in and a
+   choice of password or code, which reads as "create an account with a
+   company you have never heard of" rather than "open the file your client
+   sent you".
+
+   The code is emailed when they press the button, not carried in the
+   invitation. An invitation gets forwarded, sits in an inbox for months and
+   is sometimes printed. A code requested at that moment expires, and proves
+   they hold the mailbox now rather than that somebody once did. */
+function readShareInvite() {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const to = (q.get("to") || "").trim().toLowerCase();
+    if (!q.get("share") || !to) return null;
+    return { ledgerId: q.get("share"), email: to, business: q.get("name") || "" };
+  } catch { return null; }
+}
+
 function AuthScreen({ linkError = "" }) {
+  const invite = useMemo(readShareInvite, []);
   // step: email → code is the default road. Password is kept as a side door for
   // people who already set one, and forgot hangs off it.
   const [step, setStep] = useState("email"); // email | code | password | signup | forgot
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(invite?.email || "");
   const [code, setCode] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
@@ -904,24 +927,46 @@ function AuthScreen({ linkError = "" }) {
   /* ---- step 1: email ---- */
   return (
     <AuthCard>
-      <p style={{ color: P.muted }} className="text-sm mt-3 mb-4">
-        Enter your email and we'll send a 6-digit code. New here? The same code creates your account.
-      </p>
+      {invite ? (
+        <>
+          <div
+            style={{ background: P.brass + "1a", borderRadius: 14 }}
+            className="p-3.5 mt-3 mb-3"
+          >
+            <div style={{ color: P.text }} className="text-[15px]">
+              {invite.business ? `${invite.business} shared their books with you` : "Someone shared their books with you"}
+            </div>
+            <div style={{ color: P.muted }} className="text-[13.5px] mt-0.5 leading-snug">
+              You will be able to read everything and change nothing. No account to set up.
+            </div>
+          </div>
+          <p style={{ color: P.muted }} className="text-sm mb-4">
+            We will send a 6-digit code to <strong style={{ color: P.text }}>{invite.email}</strong>, because
+            the access is tied to that address.
+          </p>
+        </>
+      ) : (
+        <p style={{ color: P.muted }} className="text-sm mt-3 mb-4">
+          Enter your email and we'll send a 6-digit code. New here? The same code creates your account.
+        </p>
+      )}
 
-      <Label>Email</Label>
-      <Input type="email" placeholder="you@example.com" value={email} autoComplete="email" autoFocus
-        inputMode="email"
-        onChange={(e) => setEmail(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && emailValid && sendCode()} />
+      {!invite && <Label>Email</Label>}
+      {!invite && (
+        <Input type="email" placeholder="you@example.com" value={email} autoComplete="email" autoFocus
+          inputMode="email"
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && emailValid && sendCode()} />
+      )}
 
       {err && <p style={{ color: P.debit }} className="text-xs mt-2">{err}</p>}
 
       <Btn className="w-full justify-center mt-3" onClick={() => sendCode()} loading={busy} disabled={!emailValid}>
         {!busy && <Mail size={14} />}
-        Email me a code
+        {invite ? "Send me the code" : "Email me a code"}
       </Btn>
 
-      <div className="flex justify-between mt-3">
+      <div className={`flex justify-between mt-3 ${invite ? "hidden" : ""}`}>
         <button onClick={() => goTo("password")} style={linkStyle} className="text-xs underline decoration-dotted underline-offset-2">Use a password instead</button>
       </div>
 
@@ -996,6 +1041,9 @@ function Ledger({ onSignOut }) {
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
+  /* Clearing the transcript. A conversation that persists needs a way to end
+     it, or the only way to start fresh is to stop using the feature. */
+  const [chatReset, setChatReset] = useState(0);
   const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
   const [chatNudge, setChatNudge] = useState(null); // { at, received, total } money landed, say so
   const [chatBrief, setChatBrief] = useState(null); // { at, insight } Tally opening the conversation unprompted
@@ -1066,6 +1114,58 @@ function Ledger({ onSignOut }) {
      on the dock immediately instead of at the next poll. Two counts from two
      fetches that disagree for two minutes is worse than one that is slightly
      late. */
+  /* The morning pass.
+
+     After a sync brings lines in, the pairs the reconciler is certain about
+     are made without being asked, once per day, and Tally says what she did.
+
+     Only pairing. Not duplicate removal, not creating entries, not settling
+     anything. A pairing is reversible from the Consolidate screen in one tap
+     and changes no figure in the books: it records that a bank line and an
+     entry are the same event. Deleting a row while nobody is watching is a
+     different promise and this does not make it.
+
+     Once a day, keyed on the date, so opening the app four times before
+     lunch does not produce four announcements. */
+  const morningRan = useRef("");
+  const runMorningPass = async () => {
+    const today = todayStr();
+    if (!data?.ledger?.id || morningRan.current === `${data.ledger.id}:${today}`) return;
+    if (!bankTxns.length || !recon) return;
+
+    const { auto } = proposeMatches(bankTxns, data.transactions, {
+      anchorDate: balance?.anchorDate || "1970-01-01",
+    });
+    morningRan.current = `${data.ledger.id}:${today}`;
+    if (!auto.length) return;
+
+    applyAutoMatches(auto.map((p) => ({ bankId: p.bank.id, txId: p.tx.id })));
+    await dbTry(() => bank.matchMany(auto.map((p) => ({ bankId: p.bank.id, txId: p.tx.id }))));
+
+    recordConsolidation({
+      kind: "auto",
+      matched: auto.length,
+      created: 0,
+      removed: 0,
+      items: auto.slice(0, 300).map((p) => ({
+        kind: "matched", date: p.bank.date, amount: p.bank.amount,
+        description: p.bank.description || "bank line", detail: "paired automatically",
+      })),
+    });
+
+    /* Told in the chat, because that is where the app already speaks and an
+       alert nobody opens is not a notification. */
+    setChatNudge({ at: Date.now(), paired: auto, total: auto.reduce((n, p) => n + Math.abs(p.bank.amount), 0) });
+    setChatUnread(true);
+  };
+
+  useEffect(() => {
+    if (!data?.ledger?.id || !bankTxns.length) return;
+    const t = setTimeout(runMorningPass, 1200);
+    return () => clearTimeout(t);
+    /* eslint-disable-next-line */
+  }, [data?.ledger?.id, bankTxns.length]);
+
   const refreshInbound = async () => {
     if (!data?.ledger?.id) return;
     setInbound(await share.listInbound(data.ledger.id, "pending"));
@@ -1129,11 +1229,19 @@ function Ledger({ onSignOut }) {
         const list = await db.listLedgers();
         setLedgers(list);
         if (list.length) {
-          // Prefer the ledger that started a Plaid OAuth redirect, else last-used
+          /* Whichever ledger they came here for.
+
+             An accountant following a share invitation lands on the books
+             they were sent, not on whatever they happened to open last. That
+             was the other half of the complaint: they signed in and arrived
+             somewhere generic, having been told they were being given access
+             to a specific set of books. */
+          const invited = readShareInvite();
           const oauthSession = bank.oauthReturnUri() ? bank.loadLinkSession() : null;
           const last = window.localStorage.getItem("ledger:last");
           setCurrentLedger(
-            (oauthSession?.ledger_id && list.find((l) => l.id === oauthSession.ledger_id))
+            (invited?.ledgerId && list.find((l) => l.id === invited.ledgerId))
+            || (oauthSession?.ledger_id && list.find((l) => l.id === oauthSession.ledger_id))
             || list.find((l) => l.id === last)
             || list[0]
           );
@@ -1155,6 +1263,13 @@ function Ledger({ onSignOut }) {
     setBankTxns([]);
     setMatchOpen(false);
     window.localStorage.setItem("ledger:last", currentLedger.id);
+    /* The invitation has done its job. Clearing it means a refresh does not
+       drag them back to the shared ledger after they have switched away, and
+       an address does not sit in the URL bar for the next person who borrows
+       the laptop. */
+    if (new URLSearchParams(window.location.search).get("share")) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     (async () => {
       try {
         const loaded = await db.loadAll(currentLedger);
@@ -2341,7 +2456,16 @@ function Ledger({ onSignOut }) {
                   {data.ledger.name} · your bookkeeper
                 </div>
               </div>
-              <button onClick={() => setChatOpen(false)} aria-label="Close" style={{ color: P.muted }} className="p-1.5"><X size={17} /></button>
+              <button
+                  onClick={() => setChatReset(Date.now())}
+                  aria-label="Start a new conversation"
+                  title="Start again"
+                  style={{ color: P.muted }}
+                  className="p-1.5 press"
+                >
+                  <RefreshCw size={15} />
+                </button>
+                <button onClick={() => setChatOpen(false)} aria-label="Close" style={{ color: P.muted }} className="p-1.5"><X size={17} /></button>
             </div>
             <Capture
               key={data.ledger.id}
@@ -2368,6 +2492,7 @@ function Ledger({ onSignOut }) {
               onBriefUsed={() => setChatBrief(null)}
               contacts={contacts}
               hasInvoiceLink={hasInvoiceLink}
+              resetAt={chatReset}
               apply={{
                 addTx, addAR, settleAR, setPlanned, setAnchor,
                 addContact: async (c) => {
@@ -7056,7 +7181,7 @@ function Capture({
   data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, consolidation, bankConns,
   insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, brief, onBriefUsed, apply, onGo,
   onSettleFromReceipt, taxPolicy = TAX_POLICY,
-}, contacts = [], hasInvoiceLink = false ) {
+}, contacts = [], hasInvoiceLink = false, resetAt = 0 ) {
   // A gap that's already been consolidated isn't news, opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
   const drift = balance?.source === "bank" && balance.delta != null
@@ -7069,7 +7194,24 @@ function Capture({
   const opener = drift
     ? `The bank and the books disagree by ${fmt(balance.delta)}. Want me to walk it?`
     : "I keep your books. What do you need?";
-  const [msgs, setMsgs] = useState([{ role: "assistant", text: opener }]);
+  /* The transcript survives a reload.
+
+     It was in memory only, so every refresh and every time an installed app
+     was evicted from the background started the conversation again. On a
+     phone that is constant, and losing what Tally worked out about your
+     books thirty seconds ago is the most annoying possible way to lose it.
+
+     Kept per ledger, so switching between business and personal does not
+     mix two conversations. */
+  const chatKey = `bt-chat:${data.ledger.id}`;
+
+  const [msgs, setMsgs] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(chatKey) || "null");
+      if (Array.isArray(saved?.msgs) && saved.msgs.length) return saved.msgs;
+    } catch { /* corrupt or unavailable, start fresh */ }
+    return [{ role: "assistant", text: opener }];
+  });
   const [input, setInput] = useState("");
   // Empty when idle, otherwise the line shown under the transcript. One piece
   // of state instead of a boolean plus a mode to phrase it with.
@@ -7082,7 +7224,46 @@ function Capture({
   const greetedDrift = useRef(false);
   // The agent's own message history, in Anthropic shape. Separate from `msgs`,
   // which is what the panel draws, tool traffic belongs in one and not the other.
-  const convo = useRef([]);
+  const convo = useRef((() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(chatKey) || "null");
+      if (Array.isArray(saved?.convo)) return saved.convo;
+    } catch { /* as above */ }
+    return [];
+  })());
+
+  /* What gets written, and what deliberately does not.
+
+     `att` and `image` hold a File and a blob URL. Neither survives a reload,
+     and a restored message pointing at a dead blob renders a broken image, so
+     those are dropped and the text around them stays. A card that was never
+     tapped is dropped too: a proposal restored days later is an offer to act
+     on figures nobody has looked at since.
+
+     Fifty messages, which is a long conversation and a small amount of
+     storage. */
+  /* Start again. Clears what is on screen, what the model has been told, and
+     what is stored, so "again" means again rather than "hidden". */
+  useEffect(() => {
+    if (!resetAt) return;
+    convo.current = [];
+    setMsgs([{ role: "assistant", text: opener }]);
+    try { localStorage.removeItem(chatKey); } catch { /* nothing to clear */ }
+  }, [resetAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const keep = msgs.slice(-50).map((m) => {
+      const { att, image, proposal, draft, ...rest } = m;
+      return rest;
+    });
+    try {
+      localStorage.setItem(chatKey, JSON.stringify({
+        msgs: keep,
+        convo: convo.current.slice(-24),
+        at: Date.now(),
+      }));
+    } catch { /* private mode, or full. The conversation still works. */ }
+  }, [msgs, chatKey]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
 
   const push = (m) => setMsgs((prev) => [...prev, m]);
@@ -7220,6 +7401,32 @@ function Capture({
      The whole point of a proactive message is that it arrives without a
      question. It states what came in, then puts the payments that are actually
      due in front of the user with one tap to settle each. */
+  /* ---- what the morning pass did ----
+     A table rather than a sentence, because it is a list of pairs and four of
+     those in prose is a paragraph. Six rows at most, like everything else
+     she writes. */
+  useEffect(() => {
+    if (!nudge?.paired?.length) return;
+    onNudgeUsed?.();
+    const rows = nudge.paired.slice(0, 6);
+    const table = [
+      "| Bank line | Amount | Matched to |",
+      "| --- | --- | --- |",
+      ...rows.map((p) =>
+        `| ${(p.bank.description || "bank line").slice(0, 28)} | ${fmt(Math.abs(p.bank.amount))} | ${(p.tx.description || p.tx.category || "entry").slice(0, 24)} |`),
+    ].join("\n");
+    const more = nudge.paired.length > rows.length
+      ? `\n\n${nudge.paired.length - rows.length} more paired the same way.`
+      : "";
+    push({
+      role: "assistant",
+      text:
+        `**Paired ${nudge.paired.length} bank ${nudge.paired.length === 1 ? "line" : "lines"} this morning, ${fmt(nudge.total)}.**\n\n` +
+        `${table}${more}\n\nNothing was deleted or created. Undo any of it in Consolidate.`,
+      followUp: "What is still unmatched?",
+    });
+  }, [nudge?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!nudge?.received?.length) return;
     onNudgeUsed?.();
@@ -7400,7 +7607,7 @@ function Capture({
                   <FileText size={13} style={{ color: P.brassText }} /> {m.pdfName}
                 </div>
               )}
-              {m.text && <p style={{ color: m.role === "assistant" ? P.muted : P.text }} className="whitespace-pre-wrap">{m.text}</p>}
+              {m.text && <TallyText text={m.text} tone={m.role === "assistant" ? P.muted : P.text} />}
               {m.steps && (
                 <div style={{ color: P.faint, fontFamily: MONO }} className="text-xs space-y-0.5">
                   {m.steps.map((name, k) => (
@@ -7652,6 +7859,141 @@ function DraftCard({ draft, att, data, addSub, onSave }) {
           </Btn>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* What Tally says, rendered.
+
+   Her text went into a <p> unchanged, so a model that writes **like this**
+   put asterisks on the screen. The fix is not to tell her to stop using
+   markdown, because every model reaches for it under pressure and the
+   instruction fails exactly when the answer is complicated. Render the small
+   part of it she actually uses instead.
+
+   Three things: bold, bullets, and pipe tables. Tables are the point. Four
+   overdue invoices as a paragraph is a paragraph you read twice; as four rows
+   it is a glance, and the amounts line up so the big one finds you. */
+
+const inlineBold = (text, key) => {
+  const out = [];
+  const re = /\*\*(.+?)\*\*/g;
+  let last = 0, m, i = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<strong key={`${key}-b${i++}`} style={{ color: P.text, fontWeight: 600 }}>{m[1]}</strong>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+};
+
+/* A cell that is money gets the mono face and sits right, so a column of
+   amounts can be compared by eye rather than read one at a time. */
+const looksLikeMoney = (v) => /^[-+(]?\s*\$?\s*[\d,]+(\.\d{2})?\s*\)?$/.test(String(v).trim());
+
+function TallyTable({ rows }) {
+  const [head, ...body] = rows;
+  return (
+    <div className="my-2 -mx-0.5 overflow-x-auto">
+      <table style={{ borderCollapse: "collapse", width: "100%" }}>
+        <thead>
+          <tr>
+            {head.map((h, i) => (
+              <th
+                key={i}
+                style={{ color: P.faint, borderBottom: `1px solid ${P.line}` }}
+                className={`text-[12.5px] font-normal pb-1.5 pr-3 ${i && looksLikeMoney(body[0]?.[i]) ? "text-right" : "text-left"}`}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={ri}>
+              {r.map((c, ci) => {
+                const money = looksLikeMoney(c);
+                return (
+                  <td
+                    key={ci}
+                    style={{
+                      color: ci === 0 ? P.text : P.muted,
+                      borderTop: ri ? `1px solid ${P.line}` : "none",
+                      fontFamily: money ? MONO : undefined,
+                    }}
+                    className={`text-[13.5px] py-1.5 pr-3 align-top ${money ? "text-right tabular-nums whitespace-nowrap" : ""}`}
+                  >
+                    {inlineBold(c, `${ri}-${ci}`)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TallyText({ text, tone }) {
+  const blocks = useMemo(() => {
+    const lines = String(text || "").split("\n");
+    const out = [];
+    let para = [], bullets = [], table = [];
+
+    const flushPara = () => { if (para.length) { out.push({ t: "p", v: para.join(" ") }); para = []; } };
+    const flushBullets = () => { if (bullets.length) { out.push({ t: "ul", v: bullets }); bullets = []; } };
+    const flushTable = () => {
+      // Two columns and two rows minimum, or it is a sentence with a pipe in it.
+      if (table.length >= 2 && table[0].length >= 2) out.push({ t: "table", v: table });
+      else table.forEach((r) => para.push(r.join(" | ")));
+      table = [];
+    };
+
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      const isRow = /^\s*\|?.+\|.+\|?\s*$/.test(line) && line.includes("|");
+      const isDivider = /^[\s|:-]+$/.test(line) && line.includes("-");
+      const isBullet = /^\s*[-*]\s+/.test(line);
+
+      if (isRow && !isBullet) {
+        flushPara(); flushBullets();
+        if (isDivider) continue;   // the |---|---| separator carries nothing
+        table.push(line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim()));
+        continue;
+      }
+      flushTable();
+
+      if (isBullet) { flushPara(); bullets.push(line.replace(/^\s*[-*]\s+/, "")); continue; }
+      flushBullets();
+
+      if (!line.trim()) { flushPara(); continue; }
+      para.push(line);
+    }
+    flushPara(); flushBullets(); flushTable();
+    return out;
+  }, [text]);
+
+  return (
+    <div className="space-y-1.5">
+      {blocks.map((b, i) => {
+        if (b.t === "table") return <TallyTable key={i} rows={b.v} />;
+        if (b.t === "ul") {
+          return (
+            <ul key={i} className="space-y-1">
+              {b.v.map((li, j) => (
+                <li key={j} className="flex gap-2">
+                  <span aria-hidden style={{ background: P.brass, width: 5, height: 5, borderRadius: "50%", marginTop: 8 }} className="shrink-0" />
+                  <span style={{ color: tone }} className="flex-1">{inlineBold(li, `${i}-${j}`)}</span>
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        return <p key={i} style={{ color: tone }}>{inlineBold(b.v, String(i))}</p>;
+      })}
     </div>
   );
 }

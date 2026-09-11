@@ -146,7 +146,14 @@ Deno.serve(async (req) => {
         business: ledger.name,
         fromEmail: caller.user.email ?? null,
         note: note || null,
-        appUrl: Deno.env.get("APP_URL") || "https://brasstally.com",
+        /* The link carries who it is for and which books, so the page that
+           opens knows both before they type anything. No secret is in it:
+           the address is theirs, the ledger id opens nothing on its own, and
+           the code that does the work is sent when they press the button. */
+        openUrl: `${Deno.env.get("APP_URL") || "https://brasstally.com"}/app` +
+          `?share=${encodeURIComponent(body.ledgerId as string)}` +
+          `&to=${encodeURIComponent(to)}` +
+          `&name=${encodeURIComponent(ledger.name)}`,
       }),
       caller.user.email ?? undefined,
     );

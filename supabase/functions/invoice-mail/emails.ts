@@ -360,8 +360,8 @@ export function invoiceCorrectionEmail(
  * an invitation.
  */
 export function shareInviteEmail(
-  { business, fromEmail, note, appUrl }: {
-    business: string; fromEmail?: string | null; note?: string | null; appUrl: string;
+  { business, fromEmail, note, openUrl }: {
+    business: string; fromEmail?: string | null; note?: string | null; openUrl: string;
   },
 ) {
   const brass = "#A9620A";
@@ -408,9 +408,9 @@ export function shareInviteEmail(
 
       <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
         <tr><td style="border-radius:999px;background:${fill};">
-          <a href="${appUrl}/app" style="display:inline-block;padding:14px 28px;font-size:16px;
+          <a href="${openUrl}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
-            Open the books
+            Open ${business}
           </a>
         </td></tr>
       </table>
