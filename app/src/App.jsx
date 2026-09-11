@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye, Inbox, Link2 as LinkIcon, RefreshCw,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye, Inbox, Link2 as LinkIcon, RefreshCw, Users,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -16,6 +16,11 @@ import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross
 import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
 import * as share from "./lib/sharing";
+import {
+  listContacts as contacts_list, addContact as contacts_add, updateContact as contacts_update,
+  deleteContact as contacts_delete, matchContacts as contacts_matchContacts,
+  roleLabel as contacts_roleLabel, CONTACT_ROLES,
+} from "./lib/contacts";
 import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
   proposeMatches, explainDelta, clearedIndex, consolidationPlan,
@@ -1038,6 +1043,16 @@ function Ledger({ onSignOut }) {
      Tally mentions them, the dock marks them, and neither can wait for someone
      to visit the page that would have told them. */
   const [inbound, setInbound] = useState([]);
+
+  /* Contacts, loaded once per ledger and passed to every picker. One list in
+     one place: a field that fetched its own would be a field that disagrees
+     with the one above it after you add somebody. */
+  const [contacts, setContacts] = useState([]);
+  const refreshContacts = async () => {
+    if (!data?.ledger?.id) return;
+    setContacts(await contacts_list(data.ledger.id));
+  };
+  useEffect(() => { refreshContacts(); /* eslint-disable-next-line */ }, [data?.ledger?.id]);
   /* One refresh the section can call, so accepting an invoice clears the dot
      on the dock immediately instead of at the next poll. Two counts from two
      fetches that disagree for two minutes is worse than one that is slightly
@@ -1955,7 +1970,7 @@ function Ledger({ onSignOut }) {
   const TAB_TITLES = {
     overview: "Snapshot", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
     credits: "Credits", calendar: "Calendar", integrations: "Connectors",
-    reports: "Reports", settings: "Settings", profile: "Profile", taxpack: "Tax pack",
+    reports: "Reports", settings: "Settings", profile: "Profile", taxpack: "Tax pack", contacts: "Contacts",
     "legal-data": "Your data", "legal-privacy": "Privacy", "legal-terms": "Terms",
   };
 
@@ -2220,6 +2235,7 @@ function Ledger({ onSignOut }) {
             openPreview={openPreview}
             receiptSettle={receiptSettle} onReceiptSettleUsed={() => setReceiptSettle(null)}
             readOnly={readOnly}
+            contacts={contacts}
             onInboundChange={refreshInbound}
           />
         )}
@@ -2242,6 +2258,14 @@ function Ledger({ onSignOut }) {
             onClose={() => setTab("overview")}
           />
         )}
+        {tab === "contacts" && (
+          <ContactsPage
+            ledgerId={data.ledger.id}
+            contacts={contacts}
+            onChanged={refreshContacts}
+            readOnly={readOnly}
+          />
+        )}
         {tab === "taxpack" && (
           <TaxPack data={data} month={month} openPreview={openPreview} ledgerName={data.ledger.name} />
         )}
@@ -2251,6 +2275,7 @@ function Ledger({ onSignOut }) {
         {tab === "settings" && (
           <SettingsPage
             readOnly={readOnly}
+            contacts={contacts}
             setup={!setupHidden ? (
               <SetupChecklist
                 data={data}
@@ -4449,6 +4474,8 @@ function MenuSheet({ onClose, onGo, tab, setupPending }) {
         </div>
 
         <div className="px-2 pb-2">
+          <Item icon={Users} label="Contacts" hint="Everyone this ledger deals with"
+            active={tab === "contacts"} onClick={() => onGo("contacts")} />
           <Item icon={Landmark} label="Tax pack" hint="A year's figures, and every receipt behind them"
             active={tab === "taxpack"} onClick={() => onGo("taxpack")} />
           <Item icon={BarChart3} label="Reports" hint="Statements and exports for any period"
@@ -4924,7 +4951,7 @@ const ordinal = (n) => {
   return `${v}${suffix}`;
 };
 
-function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onConfirmVoid }) {
+function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onConfirmVoid, contacts = [] }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
@@ -5009,6 +5036,11 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   const quietSchedules = schedules.filter((sc) => !pendingScheduleIds.has(sc.id));
   const scheduleFor = (inv) => schedules.find((sc) => sc.id === inv.scheduleId) || null;
 
+  /* Has anything ever arrived? The history cannot answer that, because voiding
+     deletes the row. The link counts every submission it has ever taken and
+     nothing removes that, so it is the honest source. */
+  const everReceived = links.some((l) => l.submissions > 0) || history.length > 0 || schedules.length > 0;
+
   const accept = async (inv) => {
     setBusy(inv.id);
     setErr("");
@@ -5053,9 +5085,16 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
 
   const decline = async (inv) => {
     setBusy(inv.id);
+    const sch = scheduleFor(inv);
     if (first?.token) share.notifySupplierDecision(first.token, inv.id, "declined").catch(() => {});
     await share.decideInbound(inv.id, "declined");
     setBusy("");
+    if (sch) {
+      setVoided({ party: inv.party, amount: inv.amount, settled: false, schedule: sch, denied: true });
+      setTimeout(() => setVoided(null), 12000);
+      refresh();
+      return;
+    }
     setDone(`${inv.party} set aside. Nothing was added to your books.`);
     refresh();
   };
@@ -5092,9 +5131,20 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     if (r.obligationId) onDeletePayable?.(r.obligationId);
     setBusy("");
     /* Same shape as filing, in reverse. Voiding used to leave two sentences
-       of explanation where a person wanted to see the thing disappear. */
-    setVoided({ party: inv.party, amount: inv.amount, settled });
-    setTimeout(() => setVoided(null), 2600);
+       of explanation where a person wanted to see the thing disappear.
+
+       If it came from a monthly arrangement, the offer to stop that comes
+       with it. Voiding one month's invoice is not the same as cancelling the
+       arrangement, and guessing either way is wrong: silently stopping it
+       loses an agreement, silently continuing raises the same invoice again
+       in four weeks. So it asks, once, where you just acted. */
+    setVoided({
+      party: inv.party,
+      amount: inv.amount,
+      settled,
+      schedule: scheduleFor(inv),
+    });
+    setTimeout(() => setVoided(null), 12000);
     refresh();
   };
 
@@ -5310,15 +5360,44 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
           >
             <Trash2 size={15} />
           </span>
-          <span>
+          <span className="min-w-0">
             <span style={{ color: P.text }} className="text-[15px] block">
-              {voided.party} voided, {fmt(voided.amount)}
+              {voided.party} {voided.denied ? "denied" : "voided"}, {fmt(voided.amount)}
             </span>
             <span style={{ color: P.muted }} className="text-[14px]">
-              {voided.settled
-                ? "Gone from the list and from what you owe. The payment stays in your books."
-                : "Gone from the list and from what you owe."}
+              {voided.denied
+                ? "Set aside. Nothing was added to your books."
+                : voided.settled
+                  ? "Gone from the list and from what you owe. The payment stays in your books."
+                  : "Gone from the list and from what you owe."}
             </span>
+
+            {voided.schedule && (
+              <span className="flex flex-wrap items-center gap-2 mt-2">
+                <span style={{ color: P.text }} className="text-[14px]">
+                  This one repeats. Next on the {ordinal(voided.schedule.dayOfMonth)}.
+                </span>
+                <button
+                  onClick={async () => {
+                    await share.stopSchedule(voided.schedule.id);
+                    setVoided(null);
+                    setDone(`${voided.party} will not be raised again.`);
+                    refresh();
+                  }}
+                  style={{ background: P.debit, color: "#fff", borderRadius: R.pill }}
+                  className="h-9 px-3 text-[14px] font-medium press"
+                >
+                  Stop it too
+                </button>
+                <button
+                  onClick={() => setVoided(null)}
+                  style={{ color: P.muted }}
+                  className="h-9 px-2 text-[14px] press"
+                >
+                  Keep it
+                </button>
+              </span>
+            )}
           </span>
         </div>
       )}
@@ -5357,12 +5436,17 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                   >
                     <Check size={22} />
                   </div>
+                  {/* "Nothing has come in yet" was keyed on the history, and
+                      voiding deletes the row it counted. Void your only
+                      invoice and the app announced that none had ever
+                      arrived, which is a thing it could see was untrue: the
+                      link's own counter says how many were received. */}
                   <div style={{ color: P.text }} className="text-[16px]">
-                    {history.length ? "All caught up" : "Nothing has come in yet"}
+                    {everReceived ? "All caught up" : "Nothing has come in yet"}
                   </div>
                   <div style={{ color: P.muted }} className="text-[14.5px] mt-1">
-                    {history.length
-                      ? "Every invoice sent to you has been dealt with."
+                    {everReceived
+                      ? "Nothing is waiting on you."
                       : "Share your link and invoices will land here."}
                   </div>
                 </div>
@@ -5497,8 +5581,13 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                   <div style={{ color: P.text }} className="text-[15.5px]">
                     {quietSchedules.length === 1 ? "Also repeating" : "Also repeating"}
                   </div>
+                  {/* Not "nothing due yet this month": the month's invoice may
+                      have been raised and then voided, and telling someone
+                      nothing was due when they just deleted it is the same
+                      kind of wrong as the line above. */}
                   <p style={{ color: P.muted }} className="text-[14px] mb-1">
-                    Nothing due from {quietSchedules.length === 1 ? "this one" : "these"} yet this month.
+                    {quietSchedules.length === 1 ? "This one is not" : "These are not"} waiting on you right now.
+                    The next will be raised on the day it is due.
                   </p>
                   {quietSchedules.map((sc) => (
                     <div
@@ -5608,15 +5697,13 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                       <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">
                         Their email
                       </label>
-                      <input
+                      <ContactPicker
                         value={mailTo}
-                        onChange={(e) => setMailTo(e.target.value)}
-                        type="email"
-                        inputMode="email"
-                        autoComplete="off"
+                        onChange={setMailTo}
+                        contacts={contacts}
+                        field="email"
+                        roles={["contractor", "vendor", "employee"]}
                         placeholder="accounts@contractor.ca"
-                        style={{ background: P.surface, color: P.text, borderRadius: 13 }}
-                        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
                       />
                       <label style={{ color: P.muted }} className="text-[14px] block mt-3 mb-1.5">
                         A line for them, if you want one
@@ -5680,11 +5767,337 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   );
 }
 
+/* The list itself. Reached from the menu, because it is a place you set up
+   once and then mostly meet through the pickers elsewhere. */
+function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ name: "", email: "", phone: "", role: "vendor", note: "" });
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState("");
+
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const list = needle
+      ? contacts.filter((c) =>
+          c.name.toLowerCase().includes(needle) || (c.email || "").toLowerCase().includes(needle))
+      : contacts;
+    return [...list].sort((a, b) => a.name.localeCompare(b.name));
+  }, [contacts, q]);
+
+  const byRole = useMemo(() => {
+    const out = new Map();
+    for (const c of shown) {
+      if (!out.has(c.role)) out.set(c.role, []);
+      out.get(c.role).push(c);
+    }
+    return [...out.entries()].sort(
+      (a, b) => CONTACT_ROLES.findIndex((r) => r.id === a[0]) - CONTACT_ROLES.findIndex((r) => r.id === b[0]),
+    );
+  }, [shown]);
+
+  const blank = () => setForm({ name: "", email: "", phone: "", role: "vendor", note: "" });
+
+  const save = async () => {
+    setErr(""); setBusy(true);
+    const r = editing
+      ? await contacts_update(editing.id, {
+          name: form.name.trim(), email: form.email.trim().toLowerCase() || null,
+          phone: form.phone.trim() || null, role: form.role, note: form.note.trim() || null,
+        })
+      : await contacts_add(ledgerId, form);
+    setBusy(false);
+    if (!r.ok) return setErr(r.error || "That did not save.");
+    setAdding(false); setEditing(null); blank();
+    onChanged?.();
+  };
+
+  const remove = async (c) => {
+    /* Deleting a contact leaves every entry that used them alone. The name
+       was copied onto those rows when they were made, so nothing is orphaned
+       and nothing silently changes in the books. */
+    if (!(await askConfirm({
+      title: `Remove ${c.name}?`,
+      body: "Entries and invoices that already name them are untouched. This only takes them out of the list you pick from.",
+      confirmLabel: "Remove",
+    }))) return;
+    await contacts_delete(c.id);
+    onChanged?.();
+  };
+
+  const Field = ({ label, k, type, placeholder }) => (
+    <div>
+      <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">{label}</label>
+      <input
+        value={form[k]}
+        onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+        type={type || "text"}
+        placeholder={placeholder}
+        style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
+      />
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 stagger">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <p style={{ color: P.muted }} className="text-[15px] max-w-xl">
+          The people and businesses this ledger deals with. Once someone is here, every party and email field
+          in the app offers them rather than asking you to type the name again.
+        </p>
+        {!readOnly && (
+          <button
+            onClick={() => { setEditing(null); blank(); setAdding(!adding); setErr(""); }}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+            className="h-11 px-4 text-[15px] font-medium shrink-0 press"
+          >
+            {adding ? "Cancel" : "Add a contact"}
+          </button>
+        )}
+      </div>
+
+      {(adding || editing) && (
+        <section style={cardStyle()} className="p-5 max-w-2xl">
+          <h3 style={{ fontFamily: SERIF }} className="text-xl mb-4">
+            {editing ? `Edit ${editing.name}` : "New contact"}
+          </h3>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Name" k="name" placeholder="Acme Contracting" />
+            <div>
+              <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">Role</label>
+              <div className="flex flex-wrap gap-1.5">
+                {CONTACT_ROLES.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => setForm((f) => ({ ...f, role: r.id }))}
+                    title={r.hint}
+                    style={{
+                      background: form.role === r.id ? P.brass : P.surface2,
+                      color: form.role === r.id ? P.onbrass : P.muted,
+                      borderRadius: R.pill,
+                    }}
+                    className="h-11 px-3.5 text-[14.5px] font-medium press"
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Field label="Email" k="email" type="email" placeholder="ap@acme.ca" />
+            <Field label="Phone" k="phone" placeholder="Optional" />
+          </div>
+          <div className="mt-3">
+            <Field label="A note, if you want one" k="note" placeholder="Framing and drywall" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-4">
+            <button
+              onClick={save}
+              disabled={busy || !form.name.trim()}
+              style={{
+                background: P.brass, color: P.onbrass, borderRadius: R.pill,
+                opacity: busy || !form.name.trim() ? 0.5 : 1,
+              }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {busy ? "Saving" : editing ? "Save" : "Add them"}
+            </button>
+            <button
+              onClick={() => { setAdding(false); setEditing(null); blank(); setErr(""); }}
+              style={{ color: P.muted }}
+              className="h-11 px-2 text-[15px] press"
+            >
+              Cancel
+            </button>
+          </div>
+          {err && <p style={{ color: P.debit }} className="text-[14.5px] mt-3">{err}</p>}
+        </section>
+      )}
+
+      {contacts.length > 6 && (
+        <label
+          style={{ background: P.surface, boxShadow: elev(1), borderRadius: R.pill }}
+          className="flex items-center gap-2.5 px-4 h-11 max-w-sm"
+        >
+          <Search size={16} style={{ color: P.faint }} />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Find someone"
+            style={{ background: "transparent", color: P.text }}
+            className="flex-1 text-[15px] outline-none border-none"
+          />
+        </label>
+      )}
+
+      {contacts.length === 0 ? (
+        <EmptyState icon={Users} title="Nobody here yet">
+          Add the contractors, vendors and clients you deal with, and their names will be one tap away
+          everywhere else.
+        </EmptyState>
+      ) : (
+        byRole.map(([role, people]) => (
+          <section key={role} style={cardStyle()} className="p-5">
+            <h3 style={{ fontFamily: SERIF }} className="text-xl">{contacts_roleLabel(role)}</h3>
+            <p style={{ color: P.muted }} className="text-[14.5px] mb-2">
+              {CONTACT_ROLES.find((r) => r.id === role)?.hint}
+            </p>
+            {people.map((c) => (
+              <div key={c.id} className="flex items-center gap-3 py-3" style={{ borderTop: `1px solid ${P.line}` }}>
+                <span
+                  aria-hidden
+                  style={{ background: P.surface2, color: P.muted, borderRadius: 11 }}
+                  className="w-10 h-10 flex items-center justify-center shrink-0 text-[13px] font-semibold"
+                >
+                  {c.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span style={{ color: P.text }} className="text-[15.5px] block truncate">{c.name}</span>
+                  <span style={{ color: P.faint }} className="text-[13.5px] block truncate">
+                    {[c.email, c.phone, c.note].filter(Boolean).join(" · ") || "No details"}
+                  </span>
+                </span>
+                {!readOnly && (
+                  <>
+                    <button
+                      onClick={() => { setEditing(c); setAdding(false); setForm({
+                        name: c.name, email: c.email || "", phone: c.phone || "", role: c.role, note: c.note || "",
+                      }); }}
+                      style={{ color: P.muted }}
+                      className="h-11 px-2 text-[14px] shrink-0 press"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => remove(c)}
+                      style={{ color: P.debit }}
+                      className="h-11 px-2 text-[14px] shrink-0 press"
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </section>
+        ))
+      )}
+    </div>
+  );
+}
+
+/* ================= contacts =================
+   One input that is still an input.
+
+   Everywhere a party or an address is asked for, you can type freely as
+   before, and what you have typed narrows a list of people you already deal
+   with. Choosing one fills the field. Nothing is forced: a name that is not
+   in the list is still a valid answer, which matters because the first time
+   you deal with anyone they are not in the list.
+
+   The role sits beside the name in smaller type because it is what tells two
+   similar entries apart, and it is the second thing you read rather than
+   something you have to hunt for. */
+function ContactPicker({
+  value, onChange, contacts = [], field = "name", roles = null,
+  placeholder, onPick, id, autoFocus,
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const box = useRef(null);
+
+  const matches = useMemo(
+    () => contacts_matchContacts(contacts, value, { field, roles }),
+    [contacts, value, field, roles],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [open]);
+
+  const choose = (c) => {
+    onChange(field === "email" ? (c.email || "") : c.name);
+    onPick?.(c);
+    setOpen(false);
+  };
+
+  /* Arrow keys and Enter, because a list that can only be clicked is a list
+     that slows down the person who types quickly, which is the person filling
+     in the same form for the tenth time. */
+  const onKeyDown = (e) => {
+    if (!open || !matches.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((i) => (i + 1) % matches.length); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((i) => (i - 1 + matches.length) % matches.length); }
+    else if (e.key === "Enter" && matches[active]) { e.preventDefault(); choose(matches[active]); }
+    else if (e.key === "Escape") setOpen(false);
+  };
+
+  return (
+    <div ref={box} className="relative">
+      <input
+        id={id}
+        value={value}
+        autoFocus={autoFocus}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(0); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+        placeholder={placeholder}
+        type={field === "email" ? "email" : "text"}
+        inputMode={field === "email" ? "email" : undefined}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open && matches.length > 0}
+        aria-autocomplete="list"
+        style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
+      />
+
+      {open && matches.length > 0 && (
+        <div
+          role="listbox"
+          data-popover
+          style={{ background: P.surface, boxShadow: elev(3), borderRadius: 14, maxWidth: "none" }}
+          className="absolute left-0 right-0 top-full mt-1.5 z-50 p-1 overflow-hidden"
+        >
+          {matches.map((c, i) => (
+            <button
+              key={c.id}
+              type="button"
+              role="option"
+              aria-selected={i === active}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => choose(c)}
+              style={{ background: i === active ? P.surface2 : "transparent", borderRadius: 10 }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
+            >
+              <span className="flex-1 min-w-0">
+                <span style={{ color: P.text }} className="text-[15px] block truncate">
+                  {c.name}
+                  <span style={{ color: P.faint }} className="text-[12.5px] ml-2">
+                    {contacts_roleLabel(c.role)}
+                  </span>
+                </span>
+                {(field === "email" ? c.email : c.email) && (
+                  <span style={{ color: P.faint }} className="text-[13px] block truncate">{c.email}</span>
+                )}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ================= sharing and intake =================
    Two things the owner sets up once and mostly forgets: who can read this
    ledger, and the link a supplier uses to send an invoice in. Both live in
    Settings because both are configuration rather than daily work. */
-function AccessCard({ ledger }) {
+function AccessCard({ ledger, contacts = [] }) {
   const [shares, setShares] = useState([]);
   const [links, setLinks] = useState([]);
   const [email, setEmail] = useState("");
@@ -5755,16 +6168,16 @@ function AccessCard({ ledger }) {
         ))}
 
         <div className="flex flex-wrap gap-2 mt-4">
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !busy && email && invite()}
-            placeholder="accountant@firm.ca"
-            type="email"
-            inputMode="email"
-            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-            className="flex-1 min-w-[220px] px-4 h-11 text-[15px] outline-none border-none"
-          />
+          <div className="flex-1 min-w-[220px]">
+            <ContactPicker
+              value={email}
+              onChange={setEmail}
+              contacts={contacts}
+              field="email"
+              roles={["accountant"]}
+              placeholder="accountant@firm.ca"
+            />
+          </div>
           <button
             onClick={invite}
             disabled={busy || !email.trim()}
@@ -5836,7 +6249,7 @@ function AccessCard({ ledger }) {
    Its own page rather than the account sheet in page clothes. Two cards over
    an Account section, which is the order the prototype puts them in and the
    order people look: which books am I in, how does it look, then who am I. */
-function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLedger, onSignOut, onResetLedger, setup, readOnly }) {
+function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLedger, onSignOut, onResetLedger, setup, readOnly, contacts = [] }) {
   const [pal, setPal] = useState(currentPalette);
 
   const applyPalette = (name) => {
@@ -5961,7 +6374,7 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
         <>
           <h2 style={{ fontFamily: SERIF }} className="text-2xl mt-2">Access</h2>
           <div className="grid md:grid-cols-2 gap-4">
-            <AccessCard ledger={ledger} />
+            <AccessCard ledger={ledger} contacts={contacts} />
           </div>
         </>
       )}
@@ -8013,7 +8426,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [] }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -8064,6 +8477,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
           openPreview={openPreview}
           onAccept={(inv) => addAR("payables", inv)}
           onCount={onInboundChange}
+          contacts={contacts}
           onFindPayable={(id) => data.payables.find((p) => p.id === id) || null}
           onDeletePayable={(id) => delAR("payables", id)}
           onConfirmVoid={askConfirm}
@@ -8112,14 +8526,25 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
 }
 
 /* ---------- shared field block for AR/AP add + edit forms ---------- */
-function ARFields({ kind, f, set, data, addSub, addCredit }) {
+function ARFields({ kind, f, set, data, addSub, addCredit, contacts = [] }) {
   const type = kind === "receivables" ? "income" : "expense";
   const cats = data.categories[type].map((c) => c.name);
   const catVal = f.category && cats.includes(f.category) ? f.category : (kind === "receivables" ? "Client revenue" : "GENIE AI");
   return (
     <>
       <div className="grid grid-cols-2 gap-2">
-        <div><Label>{kind === "receivables" ? "Who owes you" : "Who you owe"}</Label><Input value={f.party} onChange={(e) => set("party", e.target.value)} placeholder="Client / vendor" /></div>
+        <div>
+          <Label>{kind === "receivables" ? "Who owes you" : "Who you owe"}</Label>
+          {/* Filtered by which side of the books this is. Asking who owes you
+              and offering your vendors is a list that makes the work harder. */}
+          <ContactPicker
+            value={f.party}
+            onChange={(v) => set("party", v)}
+            contacts={contacts}
+            roles={kind === "receivables" ? ["client", "contractor", "vendor"] : ["vendor", "contractor", "employee"]}
+            placeholder={kind === "receivables" ? "Client" : "Vendor or contractor"}
+          />
+        </div>
         <div><Label>Amount</Label><Input type="number" value={f.amount} onChange={(e) => set("amount", e.target.value)} placeholder="0.00" /></div>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -8328,7 +8753,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
     if (editingId === i.id && editForm) {
       return (
         <div key={i.id} style={{ background: P.bg, border: `1px solid ${P.brass}` }} className="rounded-lg p-3 space-y-2">
-          <ARFields kind={kind} f={editForm} set={eset} data={data} addSub={addSub} addCredit={addCredit} />
+          <ARFields kind={kind} f={editForm} set={eset} data={data} addSub={addSub} addCredit={addCredit} contacts={contacts} />
           <div className="flex gap-2">
     <Btn className="flex-1 justify-center" onClick={saveEdit}><Check size={14} /> Save changes</Btn>
     <Btn tone="ghost" onClick={() => { setEditingId(null); setEditForm(null); }}><X size={14} /></Btn>
@@ -8444,7 +8869,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
             {reading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
             {reading ? "reading the invoice…" : "Upload an invoice to fill this automatically"}
           </button>
-          <ARFields kind={kind} f={form} set={set} data={data} addSub={addSub} addCredit={addCredit} />
+          <ARFields kind={kind} f={form} set={set} data={data} addSub={addSub} addCredit={addCredit} contacts={contacts} />
           {readErr && <p style={{ color: P.brassText }} className="text-xs">{readErr}</p>}
           <Btn className="w-full justify-center" onClick={submit}><Check size={14} /> Add</Btn>
         </div>
