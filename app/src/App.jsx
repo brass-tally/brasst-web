@@ -1367,6 +1367,21 @@ function Ledger({ onSignOut }) {
     /* Is this somebody else's ledger, shared with me to read? */
   const readOnly = Boolean(data?.ledger?.readOnly);
 
+  /* One gate in front of every write.
+
+     The banner and the hidden buttons were the whole defence, and neither is
+     a defence: a mutator updates local state before it touches the database,
+     so a reader pressing something they were not meant to see watched it
+     work. It only came back on the next load.
+
+     This returns true and says so, before any state changes. Hiding a control
+     is courtesy; this is the rule. */
+  const blockedByReadOnly = () => {
+    if (!readOnly) return false;
+    addNotification(notify.error("You can read this ledger, not change it. Ask the owner if something needs an edit."));
+    return true;
+  };
+
   const dbTry = async (fn) => {
     if (readOnly) {
       /* The database refuses these anyway: the shared policy grants select and
@@ -1580,6 +1595,7 @@ function Ledger({ onSignOut }) {
   // Adding an entry moves the view to that entry's month, so the ledger line,
   // Overview, and P&L visibly reflect it the moment it's saved.
   const addTx = (tx) => {
+    if (blockedByReadOnly()) return;
     const rec = { ...tx, id: crypto.randomUUID(), recurrence: tx.recurrence === "recurring" ? "recurring" : "once" };
     setData((d) => ({ ...d, transactions: [rec, ...d.transactions] }));
     if (tx.date) setMonth(tx.date.slice(0, 7));
@@ -1598,6 +1614,7 @@ function Ledger({ onSignOut }) {
         : b));
 
   const delTx = async (id) => {
+    if (blockedByReadOnly()) return;
     const t = data.transactions.find((x) => x.id === id);
     if (t?.transferId) {
       const ok = await askConfirm({
@@ -1653,6 +1670,7 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.insertTransfer({ fromId: data.ledger.id, toId: toLedger.id, out, inn }));
   };
   const updateTx = (id, patch) => {
+    if (blockedByReadOnly()) return;
     setData((d) => ({
       ...d,
       transactions: d.transactions.map((t) => (t.id === id ? { ...t, ...patch } : t)),
@@ -1660,6 +1678,7 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.updateTransaction(id, patch));
   };
   const setTxAttachment = (id, attachmentId, attachmentName) => {
+    if (blockedByReadOnly()) return;
     setData((d) => ({
       ...d,
       transactions: d.transactions.map((t) => (t.id === id ? { ...t, attachmentId, attachmentName } : t)),
@@ -1667,6 +1686,7 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.updateTransaction(id, { attachmentId, attachmentName }));
   };
   const addSub = (type, catName, sub) => {
+    if (blockedByReadOnly()) return;
     const cat = data.categories[type].find((c) => c.name === catName);
     if (!cat || (cat.subs || []).includes(sub)) return;
     const next = [...(cat.subs || []), sub];
@@ -1677,6 +1697,7 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.updateSubcategories(type, catName, next));
   };
   const setPlanned = (type, name, planned) => {
+    if (blockedByReadOnly()) return;
     setData((d) => ({
       ...d,
       categories: { ...d.categories, [type]: d.categories[type].map((c) => (c.name === name ? { ...c, planned } : c)) },
@@ -1684,6 +1705,7 @@ function Ledger({ onSignOut }) {
     dbTry(() => db.setPlanned(type, name, planned));
   };
   const addAR = (kind, item) => {
+    if (blockedByReadOnly()) return;
     const rec = { ...item, id: crypto.randomUUID(), status: "open", recurrence: item.recurrence === "recurring" ? "recurring" : "once" };
     setData((d) => ({ ...d, [kind]: [rec, ...d[kind]] }));
     const label = kind === "receivables" ? "Invoice" : "Bill";
@@ -1698,6 +1720,7 @@ function Ledger({ onSignOut }) {
     return Object.assign(rec, { saved });
   };
   const settleAR = (kind, id, actual = {}) => {
+    if (blockedByReadOnly()) return;
     const item = data[kind].find((x) => x.id === id);
     if (!item || item.status !== "open") return;         // already settled: nothing to do
     if (inFlight.current.has(id)) return;                 // double-tap within the same tick
@@ -1761,10 +1784,12 @@ function Ledger({ onSignOut }) {
     });
   };
   const updateAR = (kind, id, patch) => {
+    if (blockedByReadOnly()) return;
     setData((d) => ({ ...d, [kind]: d[kind].map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
     dbTry(() => db.updateObligation(id, patch));
   };
   const addCredit = (name, initial) => {
+    if (blockedByReadOnly()) return;
     const rec = { id: crypto.randomUUID(), name, initial, usedAdjustment: 0 };
     setData((d) => ({ ...d, credits: [...(d.credits || []), rec] }));
     addNotification(notify.info(`Credit pool "${name}" created`));
@@ -1772,16 +1797,19 @@ function Ledger({ onSignOut }) {
     return rec.id;
   };
   const updateCredit = (id, patch) => {
+    if (blockedByReadOnly()) return;
     setData((d) => ({ ...d, credits: (d.credits || []).map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
     dbTry(() => db.updateCredit(id, patch));
   };
   const delCredit = (id) => {
+    if (blockedByReadOnly()) return;
     const credit = (data.credits || []).find((c) => c.id === id);
     setData((d) => ({ ...d, credits: (d.credits || []).filter((c) => c.id !== id) }));
     addNotification(notify.info(`Credit pool removed`));
     dbTry(() => db.deleteCredit(id));
   };
   const delAR = (kind, id) => {
+    if (blockedByReadOnly()) return;
     const item = data[kind].find((x) => x.id === id);
     // keep the file if it was settled, the transaction still points at it
     if (item?.attachmentId && item.status === "open") deleteAttachment(item.attachmentId);
@@ -1792,6 +1820,7 @@ function Ledger({ onSignOut }) {
   };
   // Undo a settlement: remove the settled obligation AND the transaction it created.
   const removeSettled = async (kind, item) => {
+    if (blockedByReadOnly()) return;
     if (inFlight.current.has(item.id)) return;
     const noun = kind === "receivables" ? "receivable" : "payable";
     const ok = await askConfirm({
@@ -1835,6 +1864,7 @@ function Ledger({ onSignOut }) {
      obligation and one transaction, linked, instead of an open payable sitting
      beside a duplicate entry. */
   const settleFromReceipt = ({ item, draft }, att) => {
+    if (blockedByReadOnly()) return;
     // Ledger cannot reach ARList's dialog state, so it asks rather than
     // reaching in: the request is put down here, AR/AP picks it up, opens the
     // confirm with the receipt already attached, and clears it.
@@ -1867,12 +1897,14 @@ function Ledger({ onSignOut }) {
   };
 
   const forgetFilingRule = async (id) => {
+    if (blockedByReadOnly()) return;
     const ok = await db.deleteImportRule(id);
     if (ok) await refreshRules();
     return ok;
   };
 
   const resetAll = async () => {
+    if (blockedByReadOnly()) return;
     const ok = await askConfirm({
       title: `Wipe "${data.ledger.name}" and start it fresh?`,
       body: "Every entry, receivable, and credit pool in this ledger will be removed. Your other ledgers are untouched. This cannot be undone.",
@@ -1931,6 +1963,7 @@ function Ledger({ onSignOut }) {
   };
 
   const unmatchBankTxn = (bankId) => {
+    if (blockedByReadOnly()) return;
     // reviewReason goes too: see the note in lib/bank.js. Undoing a pairing is
     // an answer to the review question, not a way of dodging it.
     patchBankTxn(bankId, { status: "unmatched", matchedTxId: null, matchSource: null, reviewReason: null });
@@ -1938,21 +1971,25 @@ function Ledger({ onSignOut }) {
   };
 
   const ignoreBankTxn = (bankId) => {
+    if (blockedByReadOnly()) return;
     patchBankTxn(bankId, { status: "ignored", matchedTxId: null, matchSource: null });
     dbTry(() => bank.setBankTxnStatus(bankId, "ignored"));
   };
 
   const unignoreBankTxn = (bankId) => {
+    if (blockedByReadOnly()) return;
     patchBankTxn(bankId, { status: "unmatched" });
     dbTry(() => bank.setBankTxnStatus(bankId, "unmatched"));
   };
 
   const dismissReviewFlag = (bankId) => {
+    if (blockedByReadOnly()) return;
     patchBankTxn(bankId, { reviewReason: null });
     dbTry(() => bank.clearReviewFlag(bankId));
   };
 
   const applyAutoMatches = (pairs) => {
+    if (blockedByReadOnly()) return;
     if (!pairs.length) return;
     setBankTxns((rows) => rows.map((b) => {
       const hit = pairs.find((p) => p.bankId === b.id);
@@ -1967,6 +2004,7 @@ function Ledger({ onSignOut }) {
   // Turn a bank line the books never recorded into a real entry, already linked
   // to the line that proves it happened.
   const createFromBankTxn = (bankTxn, { category, subcategory, account }) => {
+    if (blockedByReadOnly()) return;
     const tx = {
       id: crypto.randomUUID(),
       date: bankTxn.date,
@@ -1992,6 +2030,7 @@ function Ledger({ onSignOut }) {
   // Drops the extra copies of one group and keeps the entry the group named.
   // Returns what went, so the consolidation log can say what it removed.
   const removeDuplicateGroup = (group) => {
+    if (blockedByReadOnly()) return;
     const ids = group.extras.map((e) => e.id);
     if (!ids.length) return [];
     const gone = data.transactions.filter((t) => ids.includes(t.id));
@@ -2006,6 +2045,7 @@ function Ledger({ onSignOut }) {
   // it sent, and the next sync would only bring them back. Ignoring takes them
   // out of the gap and leaves the audit trail intact.
   const ignoreDuplicateBankLines = (group) => {
+    if (blockedByReadOnly()) return;
     const ids = group.extras.map((e) => e.id);
     if (!ids.length) return [];
     setBankTxns((rows) => rows.map((b) => (ids.includes(b.id) ? { ...b, status: "ignored", matchedTxId: null, matchSource: null } : b)));
@@ -2046,6 +2086,7 @@ function Ledger({ onSignOut }) {
   };
 
   const setAnchor = (amount, date, source = "manual") => {
+    if (blockedByReadOnly()) return;
     setData((d) => ({
       ...d,
       settings: { ...d.settings, startingBalance: amount, anchorDate: date },
@@ -2336,10 +2377,12 @@ function Ledger({ onSignOut }) {
           openBooks={openBooks}
           creditsLeft={(data.credits || []).length ? creditsTotalRemaining(data) : null}
           onCredits={() => setTab("credits")}
-          onReconcile={() => (balance.source === "bank" ? setMatchOpen(true) : setReconciling(true))}
+          onReconcile={readOnly ? null : () => (balance.source === "bank" ? setMatchOpen(true) : setReconciling(true))}
           needsConsolidation={balance.source === "bank" && balance.delta != null && Math.abs(balance.delta) >= 0.01}
           consolidationSettled={consolidation.settled}
-          onConsolidate={() => setMatchOpen(true)}
+          /* Consolidating is a write flow from the first tap, so a reader is
+             not offered it at all. The banner already says why. */
+          onConsolidate={readOnly ? null : () => setMatchOpen(true)}
         />
         )}
 
@@ -2355,7 +2398,7 @@ function Ledger({ onSignOut }) {
           />
         )}
         {/* subcategory-aware forms need addSub */}
-        {tab === "transactions" && <Transactions data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
+        {tab === "transactions" && <Transactions readOnly={readOnly} data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
         {tab === "arap" && (
           <ARAP
@@ -2368,7 +2411,7 @@ function Ledger({ onSignOut }) {
             onInboundChange={refreshInbound}
           />
         )}
-        {tab === "credits" && <CreditsCard data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
+        {tab === "credits" && <CreditsCard readOnly={readOnly} data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
         {tab === "integrations" && <IntegrationsTab data={data} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
           setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
@@ -4460,7 +4503,14 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
             <>
               <div className="flex items-center gap-1.5 mb-2.5">
                 <span style={{ color: P.text }} className="text-[15px]">{c.label}</span>
-                {c.warn && (
+                {/* The warning triangle opens Consolidate, so without a
+                    handler it is a button that throws. A reader sees the
+                    warning as plain text instead: the gap is still worth
+                    knowing about, it is just not theirs to close. */}
+                {c.warn && !onConsolidate && (
+                  <AlertTriangle size={13} style={{ color: P.debit }} aria-hidden />
+                )}
+                {c.warn && onConsolidate && (
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); onConsolidate(); }}
@@ -6556,9 +6606,9 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
         </section>
       </div>
 
-      {/* The checklist used to be a header icon with a dot. It is a card here,
-          which is where someone goes looking for "what have I not set up yet". */}
-      {setup}
+      {/* The checklist is about setting this ledger up, which is not a
+          visitor's job. */}
+      {!readOnly && setup}
 
       {/* Sharing and intake links belong to whoever owns the books. */}
       {!readOnly && (
@@ -8368,7 +8418,7 @@ function TxEditor({ tx, data, addSub, addCredit, onSave, onCancel }) {
   );
 }
 
-function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, openTransfer, addSub, addCredit, month, cleared }) {
+function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, openPreview, openImport, openTransfer, addSub, addCredit, month, cleared, readOnly = false }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("all");
   const [recOnly, setRecOnly] = useState(false);
@@ -8465,6 +8515,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
 
         <div className="flex-1" />
 
+        {!readOnly && <>
         {/* Transfer keeps its icon and loses its word below 640px, because the
             word is the part that does not fit. Add entry keeps a word at every
             width, because it is the primary action and an unlabelled plus is a
@@ -8487,6 +8538,7 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           <Plus size={17} />
           Add<span className="hidden sm:inline">&nbsp;entry</span>
         </button>
+        </>}
         </div>
       </div>
 
@@ -8503,9 +8555,11 @@ function Transactions({ data, monthTx, addTx, delTx, updateTx, setTxAttachment, 
           className="text-[14px] inline-flex items-center gap-1.5">
           <Repeat size={13} /> Recurring only
         </button>
-        <button onClick={openImport} style={{ color: P.faint }} className="text-[14px] inline-flex items-center gap-1.5">
+        {!readOnly && (
+          <button onClick={openImport} style={{ color: P.faint }} className="text-[14px] inline-flex items-center gap-1.5">
           <FileText size={13} /> Import a statement
         </button>
+        )}
         <span style={{ color: P.faint }} className="text-[14px] ml-auto">
           {list.length} {list.length === 1 ? "entry" : "entries"}{needle ? " matching" : ""}
         </span>
@@ -9649,7 +9703,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
 }
 
 /* ================= credit pools (AWS, compute, SR&ED, etc.) ================= */
-function CreditsCard({ data, addCredit, updateCredit, delCredit }) {
+function CreditsCard({ data, addCredit, updateCredit, delCredit, readOnly = false }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
