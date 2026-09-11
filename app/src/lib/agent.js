@@ -325,7 +325,7 @@ export const TOOLS = [
         note: { type: "string", description: "An optional line for them, such as what the invoice is for." },
         reason: { type: "string", description: "One line on why, shown on the card." },
       },
-      required: ["to"],
+      required: [],
     },
   },
 ];

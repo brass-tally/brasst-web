@@ -2555,7 +2555,27 @@ function Ledger({ onSignOut }) {
                    could do it by hand. The link is one row in a table. If
                    somebody has asked for an invitation to be sent, they have
                    already agreed to the thing the link is for. */
-                inviteSupplier: async ({ to, note }) => {
+                /* Resolve the address here, where the contacts are.
+
+                   Tally kept refusing to send because she could not find an
+                   email, and the email was in the contacts table. Whether she
+                   calls the lookup tool is not something I can guarantee, and
+                   a feature should not depend on a model choosing to check.
+                   So the card asks for a name and this finds the address. */
+                inviteSupplier: async ({ to, note, name }) => {
+                  let addr = String(to || "").trim();
+                  if (!addr && name) {
+                    const want = String(name).trim().toLowerCase();
+                    const list = contacts.length ? contacts : await contacts_list(data.ledger.id);
+                    const hit = list.find((c) => c.name.toLowerCase() === want)
+                      || list.find((c) => c.name.toLowerCase().includes(want) && c.email)
+                      || list.find((c) => want.includes(c.name.toLowerCase()) && c.email);
+                    if (hit?.email) addr = hit.email;
+                    else if (hit) return { ok: false, error: `${hit.name} is in your contacts but has no email address on file. Add one and try again.` };
+                    else return { ok: false, error: `No contact called ${name}. Add them in Contacts, or type the address here.` };
+                  }
+                  if (!addr) return { ok: false, error: "Who should this go to?" };
+                  to = addr;
                   let links = await share.listInvoiceLinks(data.ledger.id);
                   if (!links.length) {
                     const made = await share.createInvoiceLink(data.ledger.id, null);
@@ -8152,7 +8172,7 @@ function PlainProposalCard({ proposal, apply }) {
         })
       : isLink
         ? await apply.createInvoiceLink?.(v.label)
-        : await apply.inviteSupplier?.({ to: v.to, note: v.note });
+        : await apply.inviteSupplier?.({ to: v.to, note: v.note, name: v.name });
     if (!r?.ok) return setErr(r?.error || "That did not go through.");
     setState("applied");
   };
@@ -8228,7 +8248,16 @@ function PlainProposalCard({ proposal, apply }) {
         <>
           <div>
             <Label>To</Label>
-            <Input value={v.to || ""} onChange={(e) => set("to", e.target.value)} />
+            <Input
+              value={v.to || ""}
+              onChange={(e) => set("to", e.target.value)}
+              placeholder={v.name ? `Looked up from ${v.name}` : "their@email.ca"}
+            />
+            {!v.to && v.name && (
+              <p style={{ color: P.faint }} className="text-xs mt-1">
+                Left empty, this goes to the address on {v.name}'s contact record.
+              </p>
+            )}
           </div>
           <div>
             <Label>A line for them</Label>
@@ -8238,7 +8267,7 @@ function PlainProposalCard({ proposal, apply }) {
       )}
 
       <div className="flex items-center gap-2 pt-1">
-        <Btn onClick={run} disabled={isContact ? !v.name : isLink ? false : !v.to}>
+        <Btn onClick={run} disabled={isContact ? !v.name : isLink ? false : !(v.to || v.name)}>
           {isContact ? "Add them" : isLink ? "Create it" : "Send it"}
         </Btn>
         <Btn tone="ghost" onClick={() => setState("dismissed")}>Not now</Btn>
