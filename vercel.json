@@ -30,7 +30,17 @@
           ]
         }
       ],
-      "trailingSlash": false
+      "trailingSlash": false,
+      "rewrites": [
+        {
+          "source": "/i/:slug/:token",
+          "destination": "/i/index.html"
+        },
+        {
+          "source": "/i/:token",
+          "destination": "/i/index.html"
+        }
+      ]
     },
     "app": {
       "root": "app",

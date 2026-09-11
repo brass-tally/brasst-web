@@ -21,6 +21,8 @@
  *
  * Secrets, set with `supabase secrets set` or in the dashboard:
  *   SERVICE_ROLE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_URL
+ *   INVOICE_LINK_STYLE  optional, "short" (default) or "query". Set it to
+ *                       "query" if /i/<token> ever stops resolving.
  * SUPABASE_URL is provided by the platform.
  */
 
@@ -74,11 +76,29 @@ async function resolveLink(db: ReturnType<typeof admin>, token: unknown) {
   if (typeof token !== "string" || !token || token.length > 64) return null;
   const { data } = await db
     .from("invoice_links")
-    .select("id, ledger_id, label, active, ledgers(name, user_id)")
+    .select("id, ledger_id, label, slug, active, ledgers(name, user_id)")
     .eq("token", token)
     .eq("active", true)
     .maybeSingle();
   return data ?? null;
+}
+
+
+/* Where an intake link points.
+
+   `/i/<token>` is short and reads well, and it depends on a rewrite resolving
+   a path segment to a file. `/invoice?t=<token>` is uglier and is proven: it
+   is a plain file at a plain path and has worked since the day it shipped.
+
+   INVOICE_LINK_STYLE picks between them, so if the short form does not
+   resolve after a deploy this is a secret to change rather than a code
+   release. Given how many attempts the routing on this project has taken,
+   that switch is worth the four lines. */
+function linkFor(token: string, slug?: string | null) {
+  const base = Deno.env.get("APP_URL") || "https://brasstally.com";
+  const style = (Deno.env.get("INVOICE_LINK_STYLE") || "short").toLowerCase();
+  if (style === "query") return `${base}/invoice?t=${encodeURIComponent(token)}`;
+  return `${base}/i/${slug ? `${encodeURIComponent(slug)}/` : ""}${encodeURIComponent(token)}`;
 }
 
 Deno.serve(async (req) => {
@@ -229,7 +249,7 @@ Deno.serve(async (req) => {
           description: inv.description,
           invoiceNo: inv.invoice_no,
           reason: reason || null,
-          link: `${Deno.env.get("APP_URL") || "https://brasstally.com"}/i/${encodeURIComponent(String(token))}`,
+          link: linkFor(String(token), link.slug),
         }),
         caller.user.email ?? undefined,
       );
@@ -264,7 +284,7 @@ Deno.serve(async (req) => {
           business,
           fromName: caller.user.email ? caller.user.email.split("@")[0] : null,
           note: note || null,
-          link: `${Deno.env.get("APP_URL") || "https://brasstally.com"}/i/${encodeURIComponent(String(token))}`,
+          link: linkFor(String(token), link.slug),
         }),
         caller.user.email ?? undefined,
       );

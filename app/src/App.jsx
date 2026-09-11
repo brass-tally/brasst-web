@@ -5002,6 +5002,13 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
 
   const first = links[0];
 
+  /* An arrangement is shown separately only when it has nothing in the queue.
+     Otherwise the invoice in the queue is the arrangement, as far as anyone
+     looking at the screen is concerned. */
+  const pendingScheduleIds = new Set(pending.map((i) => i.scheduleId).filter(Boolean));
+  const quietSchedules = schedules.filter((sc) => !pendingScheduleIds.has(sc.id));
+  const scheduleFor = (inv) => schedules.find((sc) => sc.id === inv.scheduleId) || null;
+
   const accept = async (inv) => {
     setBusy(inv.id);
     setErr("");
@@ -5226,7 +5233,11 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
         {inv.taxAmount ? ` · ${fmt(inv.taxAmount)} tax` : ""}
         {inv.status !== "pending" ? ` · ${inv.status === "accepted" ? "added to what you owe" : "set aside"}` : ""}
       </div>
-      {inv.note && <p style={{ color: P.muted }} className="text-[14px] mt-1.5 leading-snug">{inv.note}</p>}
+      {/* The pill already says Monthly, so the sentence saying the same thing
+          is two labels for one fact. */}
+      {inv.note && inv.note !== "Raised automatically from a monthly arrangement" && (
+        <p style={{ color: P.muted }} className="text-[14px] mt-1.5 leading-snug">{inv.note}</p>
+      )}
       <div className="flex flex-wrap items-center gap-2 mt-2.5">
         {inv.filePath && (
           <button
@@ -5412,6 +5423,19 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                         >
                           Deny
                         </button>
+                        {scheduleFor(inv) && (
+                          /* Stopping the arrangement belongs on the invoice it
+                             produced, which is the thing you are looking at
+                             when you decide you no longer want it. */
+                          <button
+                            onClick={() => stopOne(scheduleFor(inv))}
+                            disabled={busy === scheduleFor(inv).id}
+                            style={{ color: P.faint }}
+                            className="h-11 px-2 text-[14px] press"
+                          >
+                            Stop repeating
+                          </button>
+                        )}
                       </>
                     }
                   />
@@ -5458,17 +5482,25 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                 </div>
               ))}
 
-              {/* What repeats, and how to stop it. Only shown when there is
-                  something to show, like everything else in this tray. */}
-              {schedules.length > 0 && !filed && (
+              {/* Arrangements with nothing currently waiting.
+
+                  This used to list every arrangement, which meant an invoice
+                  raised this month appeared twice: once in the queue as a
+                  thing to do, and again here as the rule that produced it.
+                  Three rows for one invoice, counting the accepted original in
+                  the history below.
+
+                  An arrangement whose invoice is already in the queue is
+                  represented by that invoice. Stopping it is on that row. */}
+              {quietSchedules.length > 0 && !filed && (
                 <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${P.line}` }}>
                   <div style={{ color: P.text }} className="text-[15.5px]">
-                    Repeating every month
+                    {quietSchedules.length === 1 ? "Also repeating" : "Also repeating"}
                   </div>
                   <p style={{ color: P.muted }} className="text-[14px] mb-1">
-                    Raised for them automatically. They still land above for you to accept.
+                    Nothing due from {quietSchedules.length === 1 ? "this one" : "these"} yet this month.
                   </p>
-                  {schedules.map((sc) => (
+                  {quietSchedules.map((sc) => (
                     <div
                       key={sc.id}
                       className="flex items-center gap-3 py-3"

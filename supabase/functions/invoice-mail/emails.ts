@@ -337,7 +337,7 @@ export function invoiceCorrectionEmail(
         <tr><td style="border-radius:999px;background:${fill};">
           <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
-            Send the corrected invoice
+            Correct invoice
           </a>
         </td></tr>
       </table>
