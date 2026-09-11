@@ -283,6 +283,18 @@ h1, h2, h3 {
 .dock-capture:active { transform: scale(.92); }
 @media (max-width: 480px) {
   .dock-btn { width: 38px; height: 38px; }
+}
+
+/* Seven sections plus Tally. At 390 the row needed 363px of 358, and at 320
+   it was over by 75, so the dock gets tighter as the screen narrows instead
+   of a section disappearing from the only navigation a phone has. */
+@media (max-width: 420px) {
+  .dock-btn { width: 36px; height: 36px; }
+  .dock-row { gap: 2px !important; padding-left: 7px !important; padding-right: 7px !important; }
+}
+@media (max-width: 360px) {
+  .dock-btn { width: 33px; height: 33px; }
+  .dock-row { gap: 1px !important; }
   .dock { gap: 0 !important; padding-left: 6px; padding-right: 6px; }
 }
 @media (max-width: 400px) {

@@ -18,6 +18,7 @@
  *   { action: "send-link", token, to, note }        owner only, needs a bearer
  *   { action: "decided",   token, id, outcome }     owner only, tells the supplier
  *   { action: "correct",   token, id, reason }      owner only, asks for a redo
+ *   { action: "share-invite", ledgerId, to, note }  owner only, no token needed
  *
  * Secrets, set with `supabase secrets set` or in the dashboard:
  *   SERVICE_ROLE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_URL
@@ -29,7 +30,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail, invoiceDecidedEmail,
-  invoiceCorrectionEmail,
+  invoiceCorrectionEmail, shareInviteEmail,
 } from "./emails.ts";
 
 const BUCKET = "invoices";   // the bucket the app reads from; "receipts" was a guess and nothing could open the file
@@ -114,6 +115,43 @@ Deno.serve(async (req) => {
 
   // health does not need a link, so it answers before the lookup
   if (action === "health") return json({ ok: true, at: new Date().toISOString() });
+
+  /* Sharing has nothing to do with an intake link, so it resolves its own
+     ledger and runs before the token lookup. Owner only: this tells somebody
+     they have been given access to a set of books, and only the person who
+     gave it should be able to say so. */
+  if (action === "share-invite") {
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    if (!bearer) return json({ ok: false, error: "Sign in first." }, 401);
+    const { data: caller } = await db.auth.getUser(bearer);
+    if (!caller?.user?.id) return json({ ok: false, error: "Sign in first." }, 401);
+
+    const { data: ledger } = await db
+      .from("ledgers").select("name, user_id").eq("id", body.ledgerId).maybeSingle();
+    if (!ledger || ledger.user_id !== caller.user.id) {
+      return json({ ok: false, error: "That is not your ledger." }, 403);
+    }
+
+    const to = String(body.to || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
+      return json({ ok: false, error: "That does not look like an email address." });
+    }
+    const note = String(body.note || "").slice(0, 400)
+      .replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]!));
+
+    const r = await sendMail(
+      to,
+      `You can read ${ledger.name} in Brasstally`,
+      shareInviteEmail({
+        business: ledger.name,
+        fromEmail: caller.user.email ?? null,
+        note: note || null,
+        appUrl: Deno.env.get("APP_URL") || "https://brasstally.com",
+      }),
+      caller.user.email ?? undefined,
+    );
+    return r.ok ? json({ ok: true, to }) : json({ ok: false, error: r.error });
+  }
 
   const link = await resolveLink(db, token);
   if (!link) return json({ ok: false, error: "This link is not active." });

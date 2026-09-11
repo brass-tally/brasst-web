@@ -350,3 +350,77 @@ export function invoiceCorrectionEmail(
 </td></tr></table>
 </body></html>`;
 }
+
+/**
+ * "You have been given read access to a set of books."
+ *
+ * Access was being granted silently: a row appeared in the database and the
+ * accountant was never told, so the feature only worked if the owner
+ * separately remembered to message them. An invitation nobody receives is not
+ * an invitation.
+ */
+export function shareInviteEmail(
+  { business, fromEmail, note, appUrl }: {
+    business: string; fromEmail?: string | null; note?: string | null; appUrl: string;
+  },
+) {
+  const brass = "#A9620A";
+  const fill = "#F59E0B";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>You can read ${business} in Brasstally</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:32px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <div style="font-size:15px;font-weight:600;color:${brass};margin-bottom:14px;">Brasstally</div>
+      <h1 style="margin:0 0 14px;font-size:23px;line-height:1.3;color:${ink};font-weight:600;">
+        You can read ${business}
+      </h1>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:${muted};">
+        ${fromEmail ? `${fromEmail} has given you` : "You have been given"} read access to their books in
+        Brasstally. Sign in with <strong style="color:${ink};">this address</strong> and the ledger appears
+        alongside any of your own.
+      </p>
+
+      ${note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+        style="background:#F5F3F0;border-radius:14px;padding:14px 16px;margin-bottom:18px;">
+        <tr><td style="font-size:15px;line-height:1.55;color:${ink};">${note}</td></tr>
+      </table>` : ""}
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;margin-bottom:20px;">
+        <tr><td style="font-size:15px;line-height:1.6;color:${muted};">
+          <strong style="color:${ink};display:block;margin-bottom:4px;">What you can do</strong>
+          Read every entry, invoice, statement and tax pack, and export any of it.<br/>
+          <strong style="color:${ink};display:block;margin:10px 0 4px;">What you cannot</strong>
+          Change or delete anything, and see their bank connection. You get the books, not the credential
+          that fetches them.
+        </td></tr>
+      </table>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+        <tr><td style="border-radius:999px;background:${fill};">
+          <a href="${appUrl}/app" style="display:inline-block;padding:14px 28px;font-size:16px;
+             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
+            Open the books
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#8A827B;">
+        Access is tied to this address and they can withdraw it at any time. If you were not expecting this,
+        you can ignore it: nothing opens until you sign in.
+      </p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

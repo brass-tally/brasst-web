@@ -250,10 +250,55 @@ export const TOOLS = [
       required: ["view"],
     },
   },
+  {
+    name: "propose_contact",
+    description:
+      "Draft a new contact for the user to confirm. Nothing is saved until they tap it. Use when the user " +
+      "mentions a person or business they deal with and it is not already in their contacts. Check the " +
+      "contacts list in the overview before proposing, so you do not offer to add somebody twice.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The person or business, cleaned up." },
+        role: {
+          type: "string",
+          enum: ["contractor", "vendor", "employee", "client", "accountant"],
+          description: "client for someone who pays them, vendor for suppliers, contractor for paid per job.",
+        },
+        email: { type: "string" },
+        phone: { type: "string" },
+        note: { type: "string", description: "One short line, what they do." },
+        reason: { type: "string", description: "One line on why, shown on the card." },
+      },
+      required: ["name", "role"],
+    },
+  },
+  {
+    name: "propose_invoice_invite",
+    description:
+      "Draft an email inviting a supplier to send their invoice through the intake link. Nothing is sent " +
+      "until the user taps it. Use when the user wants a contractor to bill them, or asks you to chase an " +
+      "invoice. Requires an intake link to exist; if there is none, say so instead of proposing.",
+    input_schema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Their email address." },
+        name: { type: "string", description: "Who it is going to, for the card." },
+        note: { type: "string", description: "An optional line for them, such as what the invoice is for." },
+        reason: { type: "string", description: "One line on why, shown on the card." },
+      },
+      required: ["to"],
+    },
+  },
 ];
 
 const PROPOSAL_TOOLS = new Set([
   "propose_transaction", "propose_obligation", "propose_settle", "propose_budget", "propose_anchor",
+  /* Both of these end in something leaving the building: a row in the
+     contacts list, or an email to a person. Neither happens until the card is
+     tapped, which is the same rule every other proposal follows and the
+     reason this list exists rather than the tools acting directly. */
+  "propose_contact", "propose_invoice_invite",
 ]);
 
 /* ================= system prompt ================= */
@@ -378,6 +423,26 @@ function validateProposal(name, input, ctx) {
   if (name === "propose_transaction") {
     const amount = Number(input.amount);
     if (!(amount > 0)) return "amount must be a positive number; direction comes from type, not the sign.";
+  }
+  if (name === "propose_contact") {
+    const clean = String(input.name || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const already = (ctx.contacts || []).find(
+      (c) => c.name.replace(/\s+/g, " ").trim().toLowerCase() === clean,
+    );
+    if (already) {
+      return `${already.name} is already a contact, filed as ${already.role}. Nothing to add.`;
+    }
+    if (input.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(input.email).trim())) {
+      return "That email address does not look valid.";
+    }
+  }
+  if (name === "propose_invoice_invite") {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(input.to || "").trim())) {
+      return "That email address does not look valid.";
+    }
+    if (!ctx.hasInvoiceLink) {
+      return "There is no intake link on this ledger yet. Tell the user to create one in AR / AP first.";
+    }
   }
   if (name === "propose_settle") {
     const list = ctx.data[input.kind] || [];

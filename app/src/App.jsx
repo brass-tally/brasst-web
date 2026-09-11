@@ -1048,9 +1048,18 @@ function Ledger({ onSignOut }) {
      one place: a field that fetched its own would be a field that disagrees
      with the one above it after you add somebody. */
   const [contacts, setContacts] = useState([]);
+  /* Whether an intake link exists at all. The invite tool refuses to propose
+     without one, because a supplier cannot be invited through a link that has
+     not been made. */
+  const [hasInvoiceLink, setHasInvoiceLink] = useState(false);
   const refreshContacts = async () => {
     if (!data?.ledger?.id) return;
-    setContacts(await contacts_list(data.ledger.id));
+    const [list, links] = await Promise.all([
+      contacts_list(data.ledger.id),
+      share.listInvoiceLinks(data.ledger.id),
+    ]);
+    setContacts(list);
+    setHasInvoiceLink(links.length > 0);
   };
   useEffect(() => { refreshContacts(); /* eslint-disable-next-line */ }, [data?.ledger?.id]);
   /* One refresh the section can call, so accepting an invoice clears the dot
@@ -1959,6 +1968,10 @@ function Ledger({ onSignOut }) {
   // Six sections on the rail and the dock. Connectors and Reports are places
   // you visit occasionally, not places you live, so they moved into the menu
   // and the dock got two fewer targets to divide 390px between.
+  /* Seven sections on the rail. The dock shows the same seven, and at 320px
+     seven icons plus Tally needed 363px of 288px, so the dock tightens on the
+     narrowest screens rather than dropping one of them: a section that is on
+     the rail and not on the dock is a section phone users cannot find. */
   const tabs = [
     ["overview", "Snapshot", LayoutGrid],
     ["transactions", "Transactions", Receipt],
@@ -1966,6 +1979,7 @@ function Ledger({ onSignOut }) {
     ["arap", "AR / AP", FileClock],
     ["credits", "Credits", Coins],
     ["calendar", "Calendar", CalendarDays],
+    ["contacts", "Contacts", Users],
   ];
   const TAB_TITLES = {
     overview: "Snapshot", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
@@ -2352,7 +2366,22 @@ function Ledger({ onSignOut }) {
               onNudgeUsed={() => setChatNudge(null)}
               brief={chatBrief}
               onBriefUsed={() => setChatBrief(null)}
-              apply={{ addTx, addAR, settleAR, setPlanned, setAnchor }}
+              contacts={contacts}
+              hasInvoiceLink={hasInvoiceLink}
+              apply={{
+                addTx, addAR, settleAR, setPlanned, setAnchor,
+                addContact: async (c) => {
+                  const r = await contacts_add(data.ledger.id, c);
+                  if (r.ok) refreshContacts();
+                  return r;
+                },
+                inviteSupplier: async ({ to, note }) => {
+                  const links = await share.listInvoiceLinks(data.ledger.id);
+                  const link = links[0];
+                  if (!link) return { ok: false, error: "There is no intake link on this ledger yet." };
+                  return share.emailInvoiceLink(link.token, to, note);
+                },
+              }}
               onGo={(view) => {
                 setChatOpen(false);
                 if (view === "reconcile") return setMatchOpen(true);
@@ -2417,7 +2446,7 @@ function Ledger({ onSignOut }) {
       {/* ===== floating dock: all sections, Tally lives on the right ===== */}
       <nav className="fixed z-40 left-1/2 bottom-4 lg:hidden" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 20px)" }}>
         <div
-          className="dock flex items-center gap-0.5 px-2 py-1.5 rounded-full"
+          className="dock dock-row flex items-center gap-0.5 px-2 py-1.5 rounded-full"
           style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: elev(3) }}
         >
           {tabs.map(([k, label, Icon]) => (
@@ -4474,8 +4503,6 @@ function MenuSheet({ onClose, onGo, tab, setupPending }) {
         </div>
 
         <div className="px-2 pb-2">
-          <Item icon={Users} label="Contacts" hint="Everyone this ledger deals with"
-            active={tab === "contacts"} onClick={() => onGo("contacts")} />
           <Item icon={Landmark} label="Tax pack" hint="A year's figures, and every receipt behind them"
             active={tab === "taxpack"} onClick={() => onGo("taxpack")} />
           <Item icon={BarChart3} label="Reports" hint="Statements and exports for any period"
@@ -5767,6 +5794,35 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   );
 }
 
+/* Defined here, not inside ContactsPage.
+
+   A component declared inside another is a new function on every render, so
+   React unmounts and remounts it rather than updating it, and an input inside
+   loses focus after every character typed. That is the bug where the cursor
+   jumped out of the field each letter.
+
+   This is the second time on this feature. The first was the correction form
+   inside Row, which the handler check happened to catch. Nothing catches it
+   here, so the rule is worth stating: if it renders an input, it does not get
+   declared inside another component. */
+function ContactField({ label, value, onChange, type, placeholder, id }) {
+  return (
+    <div>
+      <label htmlFor={id} style={{ color: P.muted }} className="text-[14px] block mb-1.5">{label}</label>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={type || "text"}
+        placeholder={placeholder}
+        autoComplete="off"
+        style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
+      />
+    </div>
+  );
+}
+
 /* The list itself. Reached from the menu, because it is a place you set up
    once and then mostly meet through the pickers elsewhere. */
 function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
@@ -5826,27 +5882,11 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
     onChanged?.();
   };
 
-  const Field = ({ label, k, type, placeholder }) => (
-    <div>
-      <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">{label}</label>
-      <input
-        value={form[k]}
-        onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
-        type={type || "text"}
-        placeholder={placeholder}
-        style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
-        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
-      />
-    </div>
-  );
 
   return (
     <div className="space-y-5 stagger">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <p style={{ color: P.muted }} className="text-[15px] max-w-xl">
-          The people and businesses this ledger deals with. Once someone is here, every party and email field
-          in the app offers them rather than asking you to type the name again.
-        </p>
+        <div />
         {!readOnly && (
           <button
             onClick={() => { setEditing(null); blank(); setAdding(!adding); setErr(""); }}
@@ -5864,7 +5904,8 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
             {editing ? `Edit ${editing.name}` : "New contact"}
           </h3>
           <div className="grid sm:grid-cols-2 gap-3">
-            <Field label="Name" k="name" placeholder="Acme Contracting" />
+            <ContactField id="c-name" label="Name" value={form.name}
+              onChange={(v) => setForm((f) => ({ ...f, name: v }))} placeholder="Acme Contracting" />
             <div>
               <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">Role</label>
               <div className="flex flex-wrap gap-1.5">
@@ -5885,11 +5926,14 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
                 ))}
               </div>
             </div>
-            <Field label="Email" k="email" type="email" placeholder="ap@acme.ca" />
-            <Field label="Phone" k="phone" placeholder="Optional" />
+            <ContactField id="c-email" label="Email" type="email" value={form.email}
+              onChange={(v) => setForm((f) => ({ ...f, email: v }))} placeholder="ap@acme.ca" />
+            <ContactField id="c-phone" label="Phone" value={form.phone}
+              onChange={(v) => setForm((f) => ({ ...f, phone: v }))} placeholder="Optional" />
           </div>
           <div className="mt-3">
-            <Field label="A note, if you want one" k="note" placeholder="Framing and drywall" />
+            <ContactField id="c-note" label="A note, if you want one" value={form.note}
+              onChange={(v) => setForm((f) => ({ ...f, note: v }))} placeholder="Framing and drywall" />
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
             <button
@@ -6116,6 +6160,10 @@ function AccessCard({ ledger, contacts = [] }) {
     const r = await share.inviteViewer(ledger.id, email);
     setBusy(false);
     if (!r.ok) return setErr(r.error || "That did not save.");
+    /* Access is granted either way. If the note did not reach them, say so
+       plainly rather than leaving you to discover it when they ask why they
+       cannot see anything. */
+    setErr(r.emailed ? "" : `Access granted, but the email did not send: ${r.emailError || "unknown reason"}. Tell them yourself.`);
     setEmail(""); refresh();
   };
 
@@ -6927,6 +6975,8 @@ const TOOL_LABEL = {
   cash_forecast: "projecting cash forward",
   data_quality: "checking for bookkeeping gaps",
   propose_transaction: "drafting an entry",
+  propose_contact: "drafting a contact",
+  propose_invoice_invite: "drafting an invitation",
   propose_obligation: "drafting a receivable / payable",
   propose_settle: "drafting a settlement",
   propose_budget: "drafting a budget",
@@ -6987,7 +7037,7 @@ function Capture({
   data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, consolidation, bankConns,
   insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, brief, onBriefUsed, apply, onGo,
   onSettleFromReceipt, taxPolicy = TAX_POLICY,
-}) {
+}, contacts = [], hasInvoiceLink = false ) {
   // A gap that's already been consolidated isn't news, opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
   const drift = balance?.source === "bank" && balance.delta != null
@@ -7047,7 +7097,14 @@ function Capture({
       const { text, messages } = await runAgent({
         history,
         // Rebuilt every turn from live state, so the agent reads what's on screen.
-        ctx: { data, balance, month, bankConns, recon, consolidation, guide: useGuide },
+        /* Rebuilt every turn from live state. Contacts and whether an intake link
+           exists are here because both new tools check before proposing: one so
+           it does not offer to add somebody twice, the other because inviting a
+           supplier through a link that does not exist is a dead end. */
+        ctx: {
+          data, balance, month, bankConns, recon, consolidation, guide: useGuide,
+          contacts, hasInvoiceLink,
+        },
         onEvent: (ev) => {
           if (ev.type === "tool") pushStep(ev.name);
           else if (ev.type === "text") push({ role: "assistant", text: ev.text });
@@ -7377,7 +7434,11 @@ function Capture({
                   <TaxLine draft={m.draft} policy={taxPolicy} />
                 </>
               )}
-              {m.proposal && <ProposalCard proposal={m.proposal} data={data} apply={apply} />}
+              {m.proposal && (
+                ["propose_contact", "propose_invoice_invite"].includes(m.proposal.kind)
+                  ? <PlainProposalCard proposal={m.proposal} apply={apply} />
+                  : <ProposalCard proposal={m.proposal} data={data} apply={apply} />
+              )}
               {m.link && (
                 <div className="mt-2">
                   <Btn tone="ghost" onClick={() => onGo?.(m.link.view)}>{m.link.label || "Open"}</Btn>
@@ -7580,6 +7641,108 @@ function DraftCard({ draft, att, data, addSub, onSave }) {
    The agent can't write. It draws one of these instead, and nothing reaches the
    ledger until it's tapped. The money fields stay editable, because the agent read
    your books to build this, but it didn't live them. */
+/* Proposals with no money in them.
+
+   ProposalCard is built around an amount: every one of its kinds has one, and
+   the layout starts from that. A contact and an invitation have none, so they
+   get their own small card rather than an amount field hidden behind a
+   condition in a component that works. Same shape, same rule that nothing
+   happens until the button is pressed. */
+function PlainProposalCard({ proposal, apply }) {
+  const { kind, input } = proposal;
+  const [v, setV] = useState(() => ({ ...input }));
+  const [state, setState] = useState("open");
+  const [err, setErr] = useState("");
+  const set = (k, val) => setV((p) => ({ ...p, [k]: val }));
+
+  const isContact = kind === "propose_contact";
+  const title = isContact ? "Add a contact" : "Invite them to invoice you";
+
+  const run = async () => {
+    setErr("");
+    const r = isContact
+      ? await apply.addContact?.({
+          name: v.name, role: v.role, email: v.email, phone: v.phone, note: v.note,
+        })
+      : await apply.inviteSupplier?.({ to: v.to, note: v.note });
+    if (!r?.ok) return setErr(r?.error || "That did not go through.");
+    setState("applied");
+  };
+
+  if (state === "dismissed") return null;
+  if (state === "applied") {
+    return (
+      <div style={{ color: P.credit }} className="text-[14px] mt-2 flex items-center gap-1.5">
+        <Check size={13} />
+        {isContact ? `${v.name} added to your contacts.` : `Invitation sent to ${v.to}.`}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{ background: P.bg, border: `1px solid ${P.brass}55` }}
+      className="rounded-lg p-3 mt-2 space-y-2 w-72 max-w-full"
+    >
+      <div style={{ color: P.brassText }} className="text-[14px] font-medium flex items-center gap-1.5">
+        <Sparkles size={11} /> {title}
+      </div>
+      {input.reason && <p style={{ color: P.faint }} className="text-xs">{input.reason}</p>}
+
+      {isContact ? (
+        <>
+          <div>
+            <Label>Name</Label>
+            <Input value={v.name || ""} onChange={(e) => set("name", e.target.value)} />
+          </div>
+          <div>
+            <Label>Role</Label>
+            <div className="flex flex-wrap gap-1">
+              {CONTACT_ROLES.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => set("role", r.id)}
+                  style={{
+                    background: v.role === r.id ? P.brass : P.surface2,
+                    color: v.role === r.id ? P.onbrass : P.muted,
+                    borderRadius: 999,
+                  }}
+                  className="px-2.5 py-1 text-[12.5px] font-medium"
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <Label>Email</Label>
+            <Input value={v.email || ""} onChange={(e) => set("email", e.target.value)} placeholder="Optional" />
+          </div>
+        </>
+      ) : (
+        <>
+          <div>
+            <Label>To</Label>
+            <Input value={v.to || ""} onChange={(e) => set("to", e.target.value)} />
+          </div>
+          <div>
+            <Label>A line for them</Label>
+            <Input value={v.note || ""} onChange={(e) => set("note", e.target.value)} placeholder="Optional" />
+          </div>
+        </>
+      )}
+
+      <div className="flex items-center gap-2 pt-1">
+        <Btn onClick={run} disabled={isContact ? !v.name : !v.to}>
+          {isContact ? "Add them" : "Send it"}
+        </Btn>
+        <Btn tone="ghost" onClick={() => setState("dismissed")}>Not now</Btn>
+      </div>
+      {err && <p style={{ color: P.debit }} className="text-xs">{err}</p>}
+    </div>
+  );
+}
+
 function ProposalCard({ proposal, data, apply }) {
   const { kind, input } = proposal;
   const [v, setV] = useState(() => ({

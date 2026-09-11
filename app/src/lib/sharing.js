@@ -81,7 +81,16 @@ export async function inviteViewer(ledgerId, email, note) {
       { onConflict: "ledger_id,email" },
     );
     if (error) throw error;
-    return { ok: true };
+
+    /* Tell them. Access was being granted silently: the row appeared and the
+       accountant was never told, so the feature only worked if you separately
+       remembered to message them.
+
+       The mail is not awaited for its outcome. Access is already granted and
+       correct; a mail failure is worth reporting but not worth pretending the
+       invitation did not happen. */
+    const sent = await callMail("share-invite", { ledgerId, to: clean, note });
+    return { ok: true, emailed: !!sent?.ok, emailError: sent?.ok ? undefined : sent?.error };
   } catch (e) {
     console.warn("invite failed:", e);
     return { ok: false, error: explain(e) };
