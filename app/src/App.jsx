@@ -7273,7 +7273,22 @@ function Capture({
   const [msgs, setMsgs] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(chatKey) || "null");
-      if (Array.isArray(saved?.msgs) && saved.msgs.length) return saved.msgs;
+      if (Array.isArray(saved?.msgs) && saved.msgs.length) {
+        /* Collapse anything already said twice.
+
+           A transcript written before this fix has the same warning in it
+           several times over, and nothing else would ever remove them. This
+           keeps the first of each repeated assistant line and drops the rest,
+           so an existing conversation tidies itself the next time it opens
+           rather than carrying the mess forever. */
+        const seen = new Set();
+        return saved.msgs.filter((m) => {
+          if (m.role !== "assistant" || !m.text) return true;
+          if (seen.has(m.text)) return false;
+          seen.add(m.text);
+          return true;
+        });
+      }
     } catch { /* corrupt or unavailable, start fresh */ }
     return [{ role: "assistant", text: opener }];
   });
@@ -7356,10 +7371,23 @@ function Capture({
     });
   };
 
-  // Balances that start agreeing and then disagree deserve a word, once. The
-  // opener already covers the case where they disagreed on arrival.
+  /* Balances that start agreeing and then disagree deserve a word, once.
+
+     "Once" was a ref, which lives for one mount. Every reload got a fresh one
+     and said the same thing again, so an unchanged gap of $121.69 produced a
+     new identical paragraph every time the app started. Seven reloads, seven
+     warnings.
+
+     It is remembered per ledger and per figure now. The same gap is silent
+     forever; a different gap is news and speaks. */
   useEffect(() => {
-    if (!drift || greetedDrift.current) return;
+    if (!drift) return;
+    const mark = `${chatKey}:drift:${balance?.delta}`;
+    if (greetedDrift.current) return;
+    try {
+      if (localStorage.getItem(mark)) { greetedDrift.current = true; return; }
+      localStorage.setItem(mark, "1");
+    } catch { /* private mode, the ref still covers this session */ }
     greetedDrift.current = true;
     if (msgs.length <= 1) return; // the opener said it
     pushOnce({
