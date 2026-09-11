@@ -7,6 +7,7 @@
    a ledger is useful without either of them. */
 
 import { supabase } from "./supabase";
+import { assertWritable } from "./access";
 
 const soft = async (label, fn, fallback) => {
   try {
@@ -61,6 +62,7 @@ export async function listShares(ledgerId) {
 }
 
 export async function inviteViewer(ledgerId, email, note) {
+  assertWritable();
   const clean = String(email || "").trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) {
     return { ok: false, error: "That does not look like an email address." };
@@ -98,6 +100,7 @@ export async function inviteViewer(ledgerId, email, note) {
 }
 
 export async function revokeShare(id) {
+  assertWritable();
   return soft("revoke", async () => {
     const { error } = await supabase
       .from("ledger_shares")
@@ -146,6 +149,7 @@ export async function listInvoiceLinks(ledgerId) {
 }
 
 export async function createInvoiceLink(ledgerId, label) {
+  assertWritable();
   try {
     const token = makeToken();
     const { error } = await supabase
@@ -160,6 +164,7 @@ export async function createInvoiceLink(ledgerId, label) {
 }
 
 export async function revokeInvoiceLink(id) {
+  assertWritable();
   return soft("revoke link", async () => {
     const { error } = await supabase
       .from("invoice_links").update({ active: false, revoked_at: new Date().toISOString() }).eq("id", id);
@@ -200,6 +205,7 @@ export async function listInbound(ledgerId, status = "pending") {
    leaving the queue is worth more than the link, so a failure retries without
    it rather than giving up. */
 export async function decideInbound(id, status, obligationId) {
+  assertWritable();
   const patch = { status, decided_at: new Date().toISOString() };
 
   if (obligationId) {
@@ -244,6 +250,7 @@ export const invoiceLinkUrl = (token, slug) =>
    even though the row is already gone, because losing the link and then being
    unable to clean up the payable is the worst of both. */
 export async function voidInbound(id) {
+  assertWritable();
   return soft("void", async () => {
     const { data: row } = await supabase
       .from("inbound_invoices").select("obligation_id").eq("id", id).maybeSingle();
@@ -354,6 +361,7 @@ export async function listSchedules(ledgerId) {
 /* Accepting a monthly submission starts the arrangement. Day of month comes
    from the due date they gave, capped at 28 so it exists in February. */
 export async function startSchedule(ledgerId, inv) {
+  assertWritable();
   return soft("start schedule", async () => {
     const day = inv.dueDate ? Math.min(28, Number(String(inv.dueDate).slice(8, 10)) || 1) : 1;
     const { data, error } = await supabase.from("invoice_schedules").insert({
@@ -374,6 +382,7 @@ export async function startSchedule(ledgerId, inv) {
 }
 
 export async function stopSchedule(id) {
+  assertWritable();
   return soft("stop schedule", async () => {
     const { error } = await supabase
       .from("invoice_schedules")

@@ -6,6 +6,7 @@
    behaves exactly as it did before, as free text. */
 
 import { supabase } from "./supabase";
+import { assertWritable } from "./access";
 
 /* The three you asked for, plus two the app already needs.
 
@@ -48,6 +49,7 @@ export async function listContacts(ledgerId) {
 }
 
 export async function addContact(ledgerId, { name, email, phone, role, note }) {
+  assertWritable();
   const clean = String(name || "").replace(/\s+/g, " ").trim();
   if (!clean) return { ok: false, error: "A name is needed." };
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
@@ -74,6 +76,7 @@ export async function addContact(ledgerId, { name, email, phone, role, note }) {
 }
 
 export async function updateContact(id, patch) {
+  assertWritable();
   return soft("update", async () => {
     const { error } = await supabase.from("contacts")
       .update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
@@ -83,6 +86,7 @@ export async function updateContact(id, patch) {
 }
 
 export async function deleteContact(id) {
+  assertWritable();
   return soft("delete", async () => {
     const { error } = await supabase.from("contacts").delete().eq("id", id);
     if (error) throw error;

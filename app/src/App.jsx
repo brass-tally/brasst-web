@@ -16,6 +16,7 @@ import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross
 import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
 import * as share from "./lib/sharing";
+import { isReadOnly } from "./lib/access";
 import {
   listContacts as contacts_list, addContact as contacts_add, updateContact as contacts_update,
   deleteContact as contacts_delete, matchContacts as contacts_matchContacts,
@@ -1394,7 +1395,8 @@ function Ledger({ onSignOut }) {
     }
     try { await fn(); } catch (e) {
       console.error("save failed:", e);
-      const denied = /row-level security|permission denied|violates/i.test(e?.message || "");
+      const denied = e?.code === "READ_ONLY"
+        || /row-level security|permission denied|violates/i.test(e?.message || "");
       addNotification(notify.error(denied
         ? "You can read this ledger, but not change it."
         : "Couldn't reach the server, your last change may not have saved. Check your connection."));

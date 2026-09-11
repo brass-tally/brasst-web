@@ -2,6 +2,7 @@
 // Multi-ledger: every row belongs to a ledger; setLedgerId() scopes all reads/writes.
 
 import { supabase } from "./supabase";
+import { assertWritable, setLedgerAccess } from "./access";
 
 let LID = null; // current ledger id, set before any data call
 export const setLedgerId = (id) => { LID = id; };
@@ -55,6 +56,7 @@ const PERSONAL_CATS = {
 };
 
 export async function createLedger({ name, kind, startingBalance = 0, anchorDate }) {
+  assertWritable();
   const { data, error } = await supabase
     .from("ledgers")
     .insert({
@@ -81,6 +83,7 @@ export async function createLedger({ name, kind, startingBalance = 0, anchorDate
 }
 
 export async function updateLedger(id, patch) {
+  assertWritable();
   const row = {};
   if ("name" in patch) row.name = patch.name;
   if ("fye" in patch) row.fye = patch.fye;
@@ -136,6 +139,13 @@ const obToRow = (kind, o) => ({
 /* ---------------- load everything for the current ledger ---------------- */
 
 export async function loadAll(ledger) {
+  /* The lock is set here, on the way in, because this is the one function
+     every ledger passes through. Setting it in the component that renders the
+     banner would mean a write fired before the first render is unguarded, and
+     the morning pass does exactly that. */
+  setLedgerAccess({ readOnly: Boolean(ledger?.readOnly), ledgerName: ledger?.name });
+
+  assertWritable();
   setLedgerId(ledger.id);
 
   // user-level prefs (theme) live in settings; create the row lazily
@@ -227,6 +237,7 @@ export async function listImportRules(ledgerId) {
 }
 
 export async function saveImportRule(ledgerId, { signature, direction, category, subcategory, learnedFrom }) {
+  assertWritable();
   try {
     const { data, error } = await supabase
       .from("import_rules")
@@ -252,6 +263,7 @@ export async function saveImportRule(ledgerId, { signature, direction, category,
 }
 
 export async function bumpImportRule(id, by = 1) {
+  assertWritable();
   try {
     const { data } = await supabase.from("import_rules").select("times_used").eq("id", id).single();
     await supabase
@@ -262,6 +274,7 @@ export async function bumpImportRule(id, by = 1) {
 }
 
 export async function deleteImportRule(id) {
+  assertWritable();
   try {
     await supabase.from("import_rules").delete().eq("id", id);
     return true;
@@ -310,6 +323,7 @@ export async function listConsolidations(ledgerId, limit = 30) {
 /** Write one finished run. Throws if the table isn't there, the caller says so,
  *  because a run nobody filed is a run the app will ask for again. */
 export async function logConsolidation(ledgerId, run) {
+  assertWritable();
   const { data, error } = await supabase.from("consolidations").insert({
     ledger_id: ledgerId,
     kind: run.kind || "reconcile",
@@ -336,17 +350,20 @@ export async function logConsolidation(ledgerId, run) {
 /* ---------------- mutations (all scoped to the current ledger) ---------------- */
 
 export async function insertTransaction(tx) {
+  assertWritable();
   const { error } = await supabase.from("transactions").insert(txToRow(tx));
   if (error) throw error;
 }
 
 export async function insertTransactions(txs) {
+  assertWritable();
   if (!txs.length) return;
   const { error } = await supabase.from("transactions").insert(txs.map(txToRow));
   if (error) throw error;
 }
 
 export async function updateTransaction(id, patch) {
+  assertWritable();
   const map = {
     date: "date", amount: "amount", type: "type", category: "category",
     description: "description", account: "account", recurrence: "recurrence", subcategory: "subcategory",
@@ -368,6 +385,7 @@ export async function fetchCategoryNames(ledgerId, type) {
 
 // inter-ledger transfer: two linked rows, written atomically enough for our purposes
 export async function insertTransfer({ fromId, toId, out, inn }) {
+  assertWritable();
   const outRow = { ...txToRow(out), ledger_id: fromId };
   const inRow = { ...txToRow(inn), ledger_id: toId };
   const { error } = await supabase.from("transactions").insert([outRow, inRow]);
@@ -376,11 +394,13 @@ export async function insertTransfer({ fromId, toId, out, inn }) {
 
 // removes BOTH sides of a transfer (RLS scopes it to this user's rows)
 export async function deleteTransfer(transferId) {
+  assertWritable();
   const { error } = await supabase.from("transactions").delete().eq("transfer_id", transferId);
   if (error) throw error;
 }
 
 export async function deleteTransaction(id) {
+  assertWritable();
   const { error } = await supabase.from("transactions").delete().eq("id", id);
   if (error) throw error;
 }
@@ -388,29 +408,34 @@ export async function deleteTransaction(id) {
 /** Duplicate cleanup: one statement for the whole group, so a half-deleted
  *  group can't be left behind if the connection drops mid-way. */
 export async function deleteTransactions(ids) {
+  assertWritable();
   if (!ids?.length) return;
   const { error } = await supabase.from("transactions").delete().in("id", ids);
   if (error) throw error;
 }
 
 export async function setPlanned(type, name, planned) {
+  assertWritable();
   const { error } = await supabase.from("categories").update({ planned })
     .eq("ledger_id", LID).eq("type", type).eq("name", name);
   if (error) throw error;
 }
 
 export async function updateSubcategories(type, name, subs) {
+  assertWritable();
   const { error } = await supabase.from("categories").update({ subcategories: subs })
     .eq("ledger_id", LID).eq("type", type).eq("name", name);
   if (error) throw error;
 }
 
 export async function insertObligation(kind, item) {
+  assertWritable();
   const { error } = await supabase.from("obligations").insert(obToRow(kind, item));
   if (error) throw error;
 }
 
 export async function updateObligation(id, patch) {
+  assertWritable();
   const map = {
     party: "party", description: "description", amount: "amount", dueDate: "due_date",
     status: "status", settledOn: "settled_on", settledTxId: "settled_tx_id", account: "account", recurrence: "recurrence",
@@ -425,11 +450,13 @@ export async function updateObligation(id, patch) {
 }
 
 export async function deleteObligation(id) {
+  assertWritable();
   const { error } = await supabase.from("obligations").delete().eq("id", id);
   if (error) throw error;
 }
 
 export async function insertCredit(credit) {
+  assertWritable();
   const { error } = await supabase.from("credits").insert({
     id: credit.id, ledger_id: LID, name: credit.name, initial: credit.initial, used_adjustment: credit.usedAdjustment || 0,
   });
@@ -437,6 +464,7 @@ export async function insertCredit(credit) {
 }
 
 export async function updateCredit(id, patch) {
+  assertWritable();
   const row = {};
   if ("name" in patch) row.name = patch.name;
   if ("initial" in patch) row.initial = patch.initial;
@@ -446,12 +474,14 @@ export async function updateCredit(id, patch) {
 }
 
 export async function deleteCredit(id) {
+  assertWritable();
   const { error } = await supabase.from("credits").delete().eq("id", id);
   if (error) throw error;
 }
 
 // Reconcile: anchors live on the ledger; history logged per ledger.
 export async function setAnchor(amount, date, source = "manual") {
+  assertWritable();
   const { error } = await supabase.from("ledgers").update({ starting_balance: amount, anchor_date: date }).eq("id", LID);
   if (error) throw error;
   try {
@@ -460,12 +490,14 @@ export async function setAnchor(amount, date, source = "manual") {
 }
 
 export async function setTheme(theme) {
+  assertWritable();
   const { data: { user } } = await supabase.auth.getUser();
   const { error } = await supabase.from("settings").upsert({ user_id: user.id, theme }, { onConflict: "user_id" });
   if (error) throw error;
 }
 
 export async function resetLedger(kind) {
+  assertWritable();
   // wipe the current ledger's rows and reseed its default categories
   await supabase.from("transactions").delete().eq("ledger_id", LID);
   await supabase.from("obligations").delete().eq("ledger_id", LID);
@@ -493,6 +525,7 @@ export async function getFiling(ledgerId, taxYear, form) {
 }
 
 export async function saveFiling(ledgerId, taxYear, form, patch) {
+  assertWritable();
   const row = { ledger_id: ledgerId, tax_year: taxYear, form, ...patch, updated_at: new Date().toISOString() };
   const { data, error } = await supabase.from("filings")
     .upsert(row, { onConflict: "ledger_id,tax_year,form" }).select().single();
@@ -503,6 +536,7 @@ export async function saveFiling(ledgerId, taxYear, form, patch) {
 /* ---------------- file storage (receipts & invoice PDFs) ---------------- */
 
 export async function uploadAttachment(file, name, contentType) {
+  assertWritable();
   const { data: { user } } = await supabase.auth.getUser();
   const safe = (name || "file").replace(/[^\w.\-]/g, "_");
   const path = `${user.id}/${crypto.randomUUID()}-${safe}`;
@@ -521,6 +555,7 @@ export async function signedUrl(path, { download = false } = {}) {
 }
 
 export async function removeAttachment(path) {
+  assertWritable();
   const { error } = await supabase.storage.from("invoices").remove([path]);
   if (error) throw error;
 }

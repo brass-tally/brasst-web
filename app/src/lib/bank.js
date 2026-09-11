@@ -2,6 +2,7 @@
 // Plaid Link renders as an embedded overlay inside the app.
 
 import { supabase } from "./supabase";
+import { assertWritable } from "./access";
 
 const LINK_SESSION_KEY = "plaid:link_session";
 
@@ -91,6 +92,7 @@ export async function listBankTransactions(ledgerId) {
 
 /** Link a bank line to the ledger entry that accounts for it. */
 export async function matchBankTxn(id, txId, source = "manual") {
+  assertWritable();
   const { error } = await supabase.from("bank_transactions").update({
     matched_tx_id: txId,
     status: "matched",
@@ -109,6 +111,7 @@ export async function matchMany(pairs, source = "auto") {
 }
 
 export async function unmatchBankTxn(id) {
+  assertWritable();
   const { error } = await supabase.from("bank_transactions").update({
     matched_tx_id: null,
     status: "unmatched",
@@ -130,6 +133,7 @@ export async function unmatchBankTxn(id) {
 /** "ignored" is for lines that will never have a ledger entry, internal
  *  transfers between two connected accounts, or a reversal pair that nets out. */
 export async function setBankTxnStatus(id, status) {
+  assertWritable();
   const patch = { status, updated_at: new Date().toISOString() };
   if (status !== "matched") { patch.matched_tx_id = null; patch.matched_at = null; patch.match_source = null; }
   const { error } = await supabase.from("bank_transactions").update(patch).eq("id", id);
@@ -137,6 +141,7 @@ export async function setBankTxnStatus(id, status) {
 }
 
 export async function clearReviewFlag(id) {
+  assertWritable();
   const { error } = await supabase.from("bank_transactions")
     .update({ review_reason: null, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw error;
