@@ -604,3 +604,9 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
    tooltip that fires on tap is a tooltip that covers the thing you tapped. */
 .hint-bubble { animation: filed-pop 120ms ease both; }
 @media (hover: none) { .hint-bubble { display: none; } }
+
+/* One turn per press, rather than a loop. A spinner that keeps going says
+   "still working"; this one says "done, and here is the result". */
+@keyframes spin-once { to { transform: rotate(360deg); } }
+.spin-once { animation: spin-once 500ms cubic-bezier(.4, 0, .2, 1); }
+@media (prefers-reduced-motion: reduce) { .spin-once { animation: none; } }

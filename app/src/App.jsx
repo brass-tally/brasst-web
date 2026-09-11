@@ -3,7 +3,7 @@ import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
-  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye, Inbox, Link2 as LinkIcon,
+  Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye, Inbox, Link2 as LinkIcon, RefreshCw,
   MessageCircle, BarChart3
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -1053,7 +1053,17 @@ function Ledger({ onSignOut }) {
       const rows = await share.listInbound(data.ledger.id, "pending");
       if (alive) setInbound(rows);
     };
-    load();
+
+    /* Raise anything a monthly arrangement owes, then look.
+       Generation runs in the database and is idempotent, so calling it on
+       every load is safe and means there is no scheduler to be down. A ledger
+       nobody opened for a quarter catches up on all three months rather than
+       quietly skipping two. */
+    (async () => {
+      const made = await share.generateDueInvoices(data.ledger.id);
+      await load();
+      if (made > 0) console.info(`raised ${made} invoice(s) from monthly arrangements`);
+    })();
 
     /* Three ways to find out, in order of how fast they are.
 
@@ -4892,6 +4902,16 @@ function TaxPack({ data, month, openPreview, ledgerName }) {
    Built narrow first. The sheet is full width on a phone and a panel on a
    desktop, and every control clears 44px, because this is the part of AR / AP
    most likely to be used standing up. */
+/* 1st, 2nd, 3rd. "on the 3 of each month" reads as a placeholder somebody
+   forgot to finish, and the teens are the reason this is not one line. */
+const ordinal = (n) => {
+  const v = Number(n) || 1;
+  const suffix = ["th", "st", "nd", "rd"][(v % 100 - 20) % 10]
+    || ["th", "st", "nd", "rd"][v % 100]
+    || "th";
+  return `${v}${suffix}`;
+};
+
 function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onConfirmVoid }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
@@ -4908,17 +4928,36 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   const [mailTo, setMailTo] = useState("");
   const [mailNote, setMailNote] = useState("");
   const [mailResult, setMailResult] = useState(null);
+  const [spinning, setSpinning] = useState(false);
+  const [schedules, setSchedules] = useState([]);
 
   const refresh = async () => {
-    const [p, h, l] = await Promise.all([
+    const [p, h, l, sc] = await Promise.all([
       share.listInbound(ledgerId, "pending"),
       share.listInbound(ledgerId, "all"),
       share.listInvoiceLinks(ledgerId),
+      share.listSchedules(ledgerId),
     ]);
-    setPending(p); setHistory(h); setLinks(l);
+    setPending(p); setHistory(h); setLinks(l); setSchedules(sc);
     onCount?.(p.length);
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
+
+  /* Faster while the tray is open, ordinary speed when it is not.
+     Ten seconds costs six requests a minute and only while someone is looking
+     at the thing those requests are about. Three seconds everywhere, which is
+     what a blanket poll means, is twelve hundred an hour per open tab and a
+     measurable amount of a phone's battery for a tray nobody is watching.
+
+     If invoices still take ten seconds to appear, migration 0025 has not been
+     run: that is what makes them arrive the instant they are submitted, and
+     everything here is the floor underneath it. */
+  useEffect(() => {
+    if (!open) return;
+    const t = setInterval(refresh, 10000);
+    return () => clearInterval(t);
+    /* eslint-disable-next-line */
+  }, [open, ledgerId]);
   /* Close the tray only when you just emptied it.
 
      This was keyed on "the tray is empty and something has arrived before",
@@ -4961,6 +5000,14 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     // Wait for the payable to reach the database before pointing at it.
     await created?.saved;
     const res = await share.decideInbound(inv.id, "accepted", created?.id);
+
+    /* A monthly submission becomes an arrangement. It starts from next month,
+       because the invoice in hand already covers this one. */
+    if (res.ok && inv.recurrence === "monthly" && !inv.scheduleId) {
+      await share.startSchedule(ledgerId, inv);
+    }
+    // Tell whoever sent it. Fired without waiting: the books are already right.
+    if (first?.token) share.notifySupplierDecision(first.token, inv.id, "accepted").catch(() => {});
     if (!res.ok) {
       setBusy("");
       setErr(`Added to what you owe, but the invoice could not be cleared from this list: ${res.error}`);
@@ -4983,6 +5030,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
 
   const decline = async (inv) => {
     setBusy(inv.id);
+    if (first?.token) share.notifySupplierDecision(first.token, inv.id, "declined").catch(() => {});
     await share.decideInbound(inv.id, "declined");
     setBusy("");
     if (pending.length <= 1) justCleared.current = true;
@@ -5010,6 +5058,14 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     }
 
     setBusy(inv.id);
+    /* Before the row is deleted, and carrying what we already have, because
+       after the delete there is nothing left to describe. */
+    if (first?.token) {
+      share.notifySupplierDecision(first.token, inv.id, "voided", {
+        party: inv.party, amount: inv.amount, description: inv.description,
+        invoiceNo: inv.invoiceNo, contactEmail: inv.contactEmail, recurrence: inv.recurrence,
+      }).catch(() => {});
+    }
     const r = await share.voidInbound(inv.id);
     if (r.obligationId) onDeletePayable?.(r.obligationId);
     setBusy("");
@@ -5020,12 +5076,32 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     refresh();
   };
 
+  const stopOne = async (sc) => {
+    setBusy(sc.id);
+    await share.stopSchedule(sc.id);
+    setBusy("");
+    setDone(`${sc.party} will not be raised again. Anything already in the tray is still there.`);
+    refresh();
+  };
+
   const createLink = async () => {
     setErr(""); setBusy("link");
     const r = await share.createInvoiceLink(ledgerId, null);
     setBusy("");
     if (!r.ok) return setErr(r.error || "That did not save.");
     refresh();
+  };
+
+  /* Checking by hand. The spin runs for a minimum of half a second whatever
+     the network does, because a refresh that returns in 60ms looks like a
+     button that ignored you. */
+  const manualRefresh = async () => {
+    setSpinning(true);
+    const started = Date.now();
+    await refresh();
+    const left = 500 - (Date.now() - started);
+    if (left > 0) await new Promise((r) => setTimeout(r, left));
+    setSpinning(false);
   };
 
   const sendLink = async () => {
@@ -5103,6 +5179,14 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
         <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
           {inv.party}
           {inv.description ? <span style={{ color: P.muted }}> &middot; {inv.description}</span> : null}
+          {inv.recurrence === "monthly" && (
+            <span
+              style={{ background: P.brass + "24", color: P.brassText, borderRadius: 999 }}
+              className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
+            >
+              Monthly
+            </span>
+          )}
         </span>
         <span style={{ fontFamily: MONO, color: P.debit }} className="text-[15.5px] tabular-nums shrink-0">
           {fmt(inv.amount)}
@@ -5140,6 +5224,39 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
             ? `${pending.length} ${pending.length === 1 ? "invoice" : "invoices"} waiting`
             : "Invoices sent to you"}
         </span>
+
+        {/* Pushed to the right, away from the two that open something. A
+            control that changes what you are looking at and controls that
+            change nothing should not sit in the same run of icons. */}
+        <span className="flex-1" />
+
+        <button
+          onClick={manualRefresh}
+          onMouseEnter={() => setHint("refresh")}
+          onMouseLeave={() => setHint(null)}
+          onFocus={() => setHint("refresh")}
+          onBlur={() => setHint(null)}
+          aria-label="Check for new invoices"
+          disabled={spinning}
+          style={{ background: P.surface, color: P.text, boxShadow: elev(1), borderRadius: 14 }}
+          className="relative w-11 h-11 flex items-center justify-center shrink-0 press"
+        >
+          <RefreshCw size={17} className={spinning ? "spin-once" : undefined} />
+          {hint === "refresh" && (
+            <span
+              role="tooltip"
+              className="hint-bubble"
+              style={{
+                position: "absolute", top: "calc(100% + 7px)", right: 0,
+                background: P.text, color: P.bg, borderRadius: 9, padding: "5px 9px",
+                fontSize: 12.5, whiteSpace: "nowrap", zIndex: 30, pointerEvents: "none",
+                boxShadow: elev(2),
+              }}
+            >
+              Check for new invoices
+            </span>
+          )}
+        </button>
       </div>
 
       {voided && (
@@ -5259,6 +5376,51 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                   }
                 />
               ))}
+
+              {/* What repeats, and how to stop it. Only shown when there is
+                  something to show, like everything else in this tray. */}
+              {schedules.length > 0 && !filed && (
+                <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${P.line}` }}>
+                  <div style={{ color: P.text }} className="text-[15.5px]">
+                    Repeating every month
+                  </div>
+                  <p style={{ color: P.muted }} className="text-[14px] mb-1">
+                    Raised for them automatically. They still land above for you to accept.
+                  </p>
+                  {schedules.map((sc) => (
+                    <div
+                      key={sc.id}
+                      className="flex items-center gap-3 py-3"
+                      style={{ borderTop: `1px solid ${P.line}` }}
+                    >
+                      <span
+                        aria-hidden
+                        style={{ background: P.brass + "24", color: P.brassText, borderRadius: 11 }}
+                        className="w-10 h-10 flex items-center justify-center shrink-0"
+                      >
+                        <Repeat size={16} />
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span style={{ color: P.text }} className="text-[15px] block truncate">
+                          {sc.party}
+                          {sc.description ? <span style={{ color: P.muted }}> &middot; {sc.description}</span> : null}
+                        </span>
+                        <span style={{ color: P.faint }} className="text-[13.5px]">
+                          {fmt(sc.amount)} on the {ordinal(sc.dayOfMonth)} of each month
+                        </span>
+                      </span>
+                      <button
+                        onClick={() => stopOne(sc)}
+                        disabled={busy === sc.id}
+                        style={{ color: P.debit }}
+                        className="text-[14px] shrink-0 press"
+                      >
+                        Stop
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {history.length > pending.length && (
                 <details className="mt-4">

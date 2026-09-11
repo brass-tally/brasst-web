@@ -172,6 +172,8 @@ export async function listInbound(ledgerId, status = "pending") {
       amount: Number(r.amount), taxAmount: r.tax_amount == null ? undefined : Number(r.tax_amount),
       issueDate: r.issue_date || undefined, dueDate: r.due_date || undefined,
       note: r.note || undefined, filePath: r.file_path || undefined,
+      recurrence: r.recurrence || "once", scheduleId: r.schedule_id || undefined,
+      period: r.period || undefined,
       submittedAt: r.submitted_at, decidedAt: r.decided_at || undefined,
       obligationId: r.obligation_id || undefined, status: r.status,
     }));
@@ -299,3 +301,65 @@ export const emailInvoiceLink = (token, to, note) =>
 export const notifyInvoiceArrived = (token, id) => callMail("notify", { token, id });
 
 export const testInvoiceMail = (token) => callMail("test", { token });
+
+/* ---------------- monthly arrangements ---------------- */
+
+export const notifySupplierDecision = (token, id, outcome, fallback) =>
+  callMail("decided", { token, id, outcome, fallback });
+
+/** Raise anything a monthly arrangement owes. Idempotent in the database. */
+export async function generateDueInvoices(ledgerId) {
+  return soft("generate", async () => {
+    const { data, error } = await supabase.rpc("generate_due_invoices", { p_ledger: ledgerId });
+    if (error) throw error;
+    return Number(data) || 0;
+  }, 0);
+}
+
+export async function listSchedules(ledgerId) {
+  return soft("invoice_schedules", async () => {
+    const { data, error } = await supabase
+      .from("invoice_schedules").select("*").eq("ledger_id", ledgerId).eq("active", true)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map((r) => ({
+      id: r.id, party: r.party, description: r.description || undefined,
+      amount: Number(r.amount), taxAmount: r.tax_amount == null ? undefined : Number(r.tax_amount),
+      dayOfMonth: r.day_of_month, contactEmail: r.contact_email || undefined,
+      createdAt: r.created_at, lastPeriod: r.last_period || undefined,
+    }));
+  }, []);
+}
+
+/* Accepting a monthly submission starts the arrangement. Day of month comes
+   from the due date they gave, capped at 28 so it exists in February. */
+export async function startSchedule(ledgerId, inv) {
+  return soft("start schedule", async () => {
+    const day = inv.dueDate ? Math.min(28, Number(String(inv.dueDate).slice(8, 10)) || 1) : 1;
+    const { data, error } = await supabase.from("invoice_schedules").insert({
+      ledger_id: ledgerId,
+      party: inv.party,
+      contact_email: inv.contactEmail || null,
+      description: inv.description || null,
+      amount: inv.amount,
+      tax_amount: inv.taxAmount ?? null,
+      day_of_month: day,
+      // The month it was accepted is already covered by the invoice in hand,
+      // so generation starts from the next one.
+      last_period: new Date().toISOString().slice(0, 8) + "01",
+    }).select("id").single();
+    if (error) throw error;
+    return { ok: true, id: data.id };
+  }, { ok: false });
+}
+
+export async function stopSchedule(id) {
+  return soft("stop schedule", async () => {
+    const { error } = await supabase
+      .from("invoice_schedules")
+      .update({ active: false, stopped_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) throw error;
+    return { ok: true };
+  }, { ok: false });
+}

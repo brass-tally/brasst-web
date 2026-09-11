@@ -16,6 +16,7 @@
  *   { action: "notify",    token, id }              public, mails both sides
  *   { action: "test",      token }                  public, proves the mail path
  *   { action: "send-link", token, to, note }        owner only, needs a bearer
+ *   { action: "decided",   token, id, outcome }     owner only, tells the supplier
  *
  * Secrets, set with `supabase secrets set` or in the dashboard:
  *   SERVICE_ROLE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_URL
@@ -23,7 +24,9 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail } from "./emails.ts";
+import {
+  invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail, invoiceDecidedEmail,
+} from "./emails.ts";
 
 const BUCKET = "receipts";
 
@@ -149,6 +152,51 @@ Deno.serve(async (req) => {
         }),
       );
       return r.ok ? json({ ok: true, to }) : json({ ok: false, error: r.error });
+    }
+
+    if (action === "decided") {
+      /* Tell the supplier what happened. Owner only, because it speaks on
+         their behalf and names their business. */
+      const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      const { data: caller } = bearer ? await db.auth.getUser(bearer) : { data: null };
+      if (!caller?.user?.id || caller.user.id !== ownerId) {
+        return json({ ok: false, error: "That is not your ledger." }, 403);
+      }
+
+      const outcome = String(body.outcome || "");
+      if (!["accepted", "declined", "voided"].includes(outcome)) {
+        return json({ ok: false, error: "Unknown outcome." });
+      }
+
+      const { data: inv } = await db.from("inbound_invoices")
+        .select("party, amount, description, invoice_no, contact_email, recurrence, ledger_id")
+        .eq("id", body.id).maybeSingle();
+
+      // A voided row is deleted before this runs, so the caller passes what it
+      // had. Falling back to that is the difference between a supplier being
+      // told and a supplier wondering.
+      const inv2 = inv ?? (body.fallback as Record<string, unknown> | undefined);
+      if (!inv2) return json({ ok: true, sent: false, why: "nothing to describe" });
+      if (inv && inv.ledger_id !== link.ledger_id) return json({ ok: false, error: "Not found." });
+
+      const to = (inv2.contact_email ?? inv2.contactEmail) as string | undefined;
+      if (!to) return json({ ok: true, sent: false, why: "no address was given" });
+
+      const r = await sendMail(
+        to,
+        outcome === "accepted" ? `${business} accepted your invoice` : `About your invoice to ${business}`,
+        invoiceDecidedEmail({
+          business,
+          party: String(inv2.party ?? ""),
+          amount: Number(inv2.amount ?? 0),
+          description: (inv2.description ?? null) as string | null,
+          invoiceNo: (inv2.invoice_no ?? inv2.invoiceNo ?? null) as string | null,
+          outcome: outcome as "accepted" | "declined" | "voided",
+          recurring: (inv2.recurrence ?? inv2.recurrence) === "monthly",
+        }),
+        caller.user.email ?? undefined,
+      );
+      return r.ok ? json({ ok: true, sent: true }) : json({ ok: false, error: r.error });
     }
 
     if (action === "send-link") {

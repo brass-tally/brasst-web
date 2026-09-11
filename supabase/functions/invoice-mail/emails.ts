@@ -194,3 +194,78 @@ export function invoiceInviteEmail({ business, fromName, note, link }) {
 </td></tr></table>
 </body></html>`;
 }
+
+/**
+ * What happened to an invoice, sent to whoever submitted it.
+ *
+ * A contractor who submits and then hears nothing has to chase, which is the
+ * work this feature exists to remove. "Accepted" is the one they want; "not
+ * accepted" is the one they need, because otherwise they invoice again.
+ */
+export function invoiceDecidedEmail(
+  { business, party, amount, description, invoiceNo, outcome, recurring }: {
+    business: string; party: string; amount: number;
+    description?: string | null; invoiceNo?: string | null;
+    outcome: "accepted" | "declined" | "voided"; recurring?: boolean;
+  },
+) {
+  const brass = "#A9620A";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+  const good = "#08805A";
+  const money = (n: number) =>
+    (Number(n) || 0).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
+
+  const head = outcome === "accepted"
+    ? `${business} accepted your invoice`
+    : `${business} did not accept your invoice`;
+
+  const lead = outcome === "accepted"
+    ? `It is on their books to pay. They will settle it their usual way, so there is nothing else for you to do.${
+      recurring ? " This one repeats monthly, so you do not need to send it again." : ""
+    }`
+    : outcome === "voided"
+    ? "It had been accepted and has since been withdrawn. If you think that is wrong, reply to whoever sent you the link."
+    : "It was not added to their books. If you think that is wrong, reply to whoever sent you the link rather than sending it again.";
+
+  const line = (label: string, value?: string | null) =>
+    value
+      ? `<tr><td style="padding:4px 0;font-size:15px;color:${muted}">${label}</td>
+           <td style="padding:4px 0;font-size:15px;color:${ink};text-align:right">${value}</td></tr>`
+      : "";
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>${head}</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:32px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <div style="font-size:15px;font-weight:600;color:${brass};margin-bottom:14px;">Brasstally</div>
+      <h1 style="margin:0 0 14px;font-size:23px;line-height:1.3;color:${
+    outcome === "accepted" ? good : ink
+  };font-weight:600;">${head}</h1>
+      <p style="margin:0 0 18px;font-size:16px;line-height:1.6;color:${muted};">${lead}</p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;margin-bottom:20px;">
+        <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          ${line("From", party)}
+          ${line("Amount", `<strong>${money(amount)}</strong>`)}
+          ${line("For", description)}
+          ${line("Invoice", invoiceNo)}
+        </table></td></tr>
+      </table>
+
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#8A827B;">
+        This is a record of what happened to what you sent. It is not a payment and nothing is charged.
+      </p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

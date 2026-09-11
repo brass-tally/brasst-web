@@ -31,6 +31,10 @@ p.lede{color:var(--muted);font-size:16.5px}
  box-shadow:0 1px 2px rgba(28,25,23,.05),0 10px 26px -14px rgba(28,25,23,.16)}
 label{display:block;font-size:14.5px;color:var(--muted);margin:14px 0 5px}
 label:first-child{margin-top:0}
+.seg{display:flex;gap:8px}
+.seg button{flex:1;min-height:48px;border:2px solid transparent;border-radius:13px;background:var(--sunk);
+ color:var(--muted);font:inherit;font-size:15px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
+.seg button.on{background:var(--accent);color:#241703;font-weight:600}
 input[type=file]{padding:11px 14px;font-size:15px;background:var(--sunk);border-radius:13px;width:100%}
 input,textarea{width:100%;background:var(--sunk);border:2px solid transparent;border-radius:13px;
  padding:12px 14px;font:inherit;font-size:16px;color:var(--text);outline:none;min-height:48px}
@@ -108,6 +112,13 @@ footer a{color:var(--accentText);text-decoration:none}
         </div>
       </div>
 
+      <label>How often</label>
+      <div class="seg" role="radiogroup" aria-label="How often">
+        <button type="button" class="on" data-rec="once" role="radio" aria-checked="true">Just this once</button>
+        <button type="button" data-rec="monthly" role="radio" aria-checked="false">Every month</button>
+      </div>
+      <div class="hint" id="recHint">A one off invoice.</div>
+
       <label for="description">What it is for</label>
       <input id="description" name="description" placeholder="Framing, unit 4"/>
 
@@ -175,6 +186,24 @@ footer a{color:var(--accentText);text-decoration:none}
     show("form");
   }
 
+  /* One tap, two words, and the hint changes underneath rather than a
+     paragraph appearing. A contractor deciding between "once" and "monthly"
+     wants to know what the second one commits them to, in one line. */
+  let recurrence = "once";
+  document.querySelectorAll("[data-rec]").forEach((b) => {
+    b.addEventListener("click", () => {
+      recurrence = b.dataset.rec;
+      document.querySelectorAll("[data-rec]").forEach((x) => {
+        const on = x === b;
+        x.classList.toggle("on", on);
+        x.setAttribute("aria-checked", String(on));
+      });
+      el("recHint").textContent = recurrence === "monthly"
+        ? "Raised for you every month, so you do not have to send it again. They can stop it at any time."
+        : "A one off invoice.";
+    });
+  });
+
   el("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = el("send");
@@ -224,6 +253,7 @@ footer a{color:var(--accentText);text-decoration:none}
       p_contact: el("contact").value.trim() || null,
       p_note: el("note").value.trim() || null,
       p_file_path: filePath,
+      p_recurrence: recurrence,
     });
 
     if (error) return fail("That did not go through. Please try again in a moment.");
@@ -236,8 +266,9 @@ footer a{color:var(--accentText);text-decoration:none}
       .catch(() => {});
 
     hide("form");
-    el("doneSub").textContent =
-      `${info.business} has it. They will review it and it will appear in their payables.`;
+    el("doneSub").textContent = recurrence === "monthly"
+      ? `${info.business} has it, and it will be raised for you every month. You do not need to send it again.`
+      : `${info.business} has it. They will review it and you will hear what they decided.`;
     show("done");
   });
 </script>
