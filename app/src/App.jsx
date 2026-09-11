@@ -2375,11 +2375,29 @@ function Ledger({ onSignOut }) {
                   if (r.ok) refreshContacts();
                   return r;
                 },
+                /* Make the link if there is not one, then send.
+
+                   This used to refuse without a link, so Tally explained she
+                   could not help and offered a button to the page where you
+                   could do it by hand. The link is one row in a table. If
+                   somebody has asked for an invitation to be sent, they have
+                   already agreed to the thing the link is for. */
                 inviteSupplier: async ({ to, note }) => {
-                  const links = await share.listInvoiceLinks(data.ledger.id);
+                  let links = await share.listInvoiceLinks(data.ledger.id);
+                  if (!links.length) {
+                    const made = await share.createInvoiceLink(data.ledger.id, null);
+                    if (!made.ok) return made;
+                    links = await share.listInvoiceLinks(data.ledger.id);
+                    refreshContacts();
+                  }
                   const link = links[0];
-                  if (!link) return { ok: false, error: "There is no intake link on this ledger yet." };
+                  if (!link) return { ok: false, error: "The link could not be created." };
                   return share.emailInvoiceLink(link.token, to, note);
+                },
+                createInvoiceLink: async (label) => {
+                  const r = await share.createInvoiceLink(data.ledger.id, label || null);
+                  if (r.ok) refreshContacts();
+                  return r;
                 },
               }}
               onGo={(view) => {
@@ -6977,6 +6995,7 @@ const TOOL_LABEL = {
   propose_transaction: "drafting an entry",
   propose_contact: "drafting a contact",
   propose_invoice_invite: "drafting an invitation",
+  propose_invoice_link: "drafting an intake link",
   propose_obligation: "drafting a receivable / payable",
   propose_settle: "drafting a settlement",
   propose_budget: "drafting a budget",
@@ -7435,7 +7454,7 @@ function Capture({
                 </>
               )}
               {m.proposal && (
-                ["propose_contact", "propose_invoice_invite"].includes(m.proposal.kind)
+                ["propose_contact", "propose_invoice_invite", "propose_invoice_link"].includes(m.proposal.kind)
                   ? <PlainProposalCard proposal={m.proposal} apply={apply} />
                   : <ProposalCard proposal={m.proposal} data={data} apply={apply} />
               )}
@@ -7656,7 +7675,10 @@ function PlainProposalCard({ proposal, apply }) {
   const set = (k, val) => setV((p) => ({ ...p, [k]: val }));
 
   const isContact = kind === "propose_contact";
-  const title = isContact ? "Add a contact" : "Invite them to invoice you";
+  const isLink = kind === "propose_invoice_link";
+  const title = isContact ? "Add a contact"
+    : isLink ? "Create an intake link"
+    : "Invite them to invoice you";
 
   const run = async () => {
     setErr("");
@@ -7664,7 +7686,9 @@ function PlainProposalCard({ proposal, apply }) {
       ? await apply.addContact?.({
           name: v.name, role: v.role, email: v.email, phone: v.phone, note: v.note,
         })
-      : await apply.inviteSupplier?.({ to: v.to, note: v.note });
+      : isLink
+        ? await apply.createInvoiceLink?.(v.label)
+        : await apply.inviteSupplier?.({ to: v.to, note: v.note });
     if (!r?.ok) return setErr(r?.error || "That did not go through.");
     setState("applied");
   };
@@ -7674,7 +7698,9 @@ function PlainProposalCard({ proposal, apply }) {
     return (
       <div style={{ color: P.credit }} className="text-[14px] mt-2 flex items-center gap-1.5">
         <Check size={13} />
-        {isContact ? `${v.name} added to your contacts.` : `Invitation sent to ${v.to}.`}
+        {isContact ? `${v.name} added to your contacts.`
+          : isLink ? "Intake link created. It is in AR / AP."
+          : `Invitation sent to ${v.to}.`}
       </div>
     );
   }
@@ -7689,7 +7715,22 @@ function PlainProposalCard({ proposal, apply }) {
       </div>
       {input.reason && <p style={{ color: P.faint }} className="text-xs">{input.reason}</p>}
 
-      {isContact ? (
+      {isLink ? (
+        <>
+          <div>
+            <Label>What it is for</Label>
+            <Input
+              value={v.label || ""}
+              onChange={(e) => set("label", e.target.value)}
+              placeholder="Optional, such as a supplier name"
+            />
+          </div>
+          <p style={{ color: P.faint }} className="text-xs">
+            Anyone holding the link can send you an invoice, and nothing reaches your books until you accept
+            it.
+          </p>
+        </>
+      ) : isContact ? (
         <>
           <div>
             <Label>Name</Label>
@@ -7733,8 +7774,8 @@ function PlainProposalCard({ proposal, apply }) {
       )}
 
       <div className="flex items-center gap-2 pt-1">
-        <Btn onClick={run} disabled={isContact ? !v.name : !v.to}>
-          {isContact ? "Add them" : "Send it"}
+        <Btn onClick={run} disabled={isContact ? !v.name : isLink ? false : !v.to}>
+          {isContact ? "Add them" : isLink ? "Create it" : "Send it"}
         </Btn>
         <Btn tone="ghost" onClick={() => setState("dismissed")}>Not now</Btn>
       </div>

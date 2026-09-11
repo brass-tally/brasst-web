@@ -251,6 +251,22 @@ export const TOOLS = [
     },
   },
   {
+    name: "propose_invoice_link",
+    description:
+      "Draft an intake link for this ledger, which suppliers use to send invoices in. Nothing is created " +
+      "until the user taps the card. Use when they ask for a link, or ask how a contractor should invoice " +
+      "them. If they want to invite somebody specific, use propose_invoice_invite instead, which creates " +
+      "the link as part of sending.",
+    input_schema: {
+      type: "object",
+      properties: {
+        label: { type: "string", description: "Optional, what this link is for, such as a supplier name." },
+        reason: { type: "string", description: "One line on why, shown on the card." },
+      },
+      required: [],
+    },
+  },
+  {
     name: "propose_contact",
     description:
       "Draft a new contact for the user to confirm. Nothing is saved until they tap it. Use when the user " +
@@ -278,7 +294,8 @@ export const TOOLS = [
     description:
       "Draft an email inviting a supplier to send their invoice through the intake link. Nothing is sent " +
       "until the user taps it. Use when the user wants a contractor to bill them, or asks you to chase an " +
-      "invoice. Requires an intake link to exist; if there is none, say so instead of proposing.",
+      "invoice. If the ledger has no intake link yet, propose this anyway: the card creates one and then " +
+      "sends, in a single confirmation. Never tell the user to go and make a link first.",
     input_schema: {
       type: "object",
       properties: {
@@ -298,7 +315,7 @@ const PROPOSAL_TOOLS = new Set([
      contacts list, or an email to a person. Neither happens until the card is
      tapped, which is the same rule every other proposal follows and the
      reason this list exists rather than the tools acting directly. */
-  "propose_contact", "propose_invoice_invite",
+  "propose_contact", "propose_invoice_invite", "propose_invoice_link",
 ]);
 
 /* ================= system prompt ================= */
@@ -335,6 +352,12 @@ WHAT YOU KNOW ABOUT THIS LEDGER
 CHANGING THINGS
 - You cannot write to the ledger. The propose_* tools draw a confirmation card the user must tap. After calling one, say what the card does and that it's waiting on them. Never say you saved, logged, added, or updated anything.
 - Propose one thing at a time unless the user asked for a batch.
+- If there is a propose_* tool for what they asked, use it. Do not explain that
+  something has to be set up elsewhere and offer a button to the page where they
+  could do it by hand. A card that does the work is the answer; a tour of the
+  interface is not. The only honest "you will have to do that yourself" is for
+  something no tool here covers, and then say which part is missing rather than
+  which screen to visit.
 - Before proposing a transaction, check the category exists. Before proposing a settlement, get the real id from the obligations tool.
 - Re-anchoring erases a discrepancy from view. Explain the drift first; propose the anchor only once the user has decided the remainder is genuinely untraceable.
 
@@ -440,9 +463,11 @@ function validateProposal(name, input, ctx) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(input.to || "").trim())) {
       return "That email address does not look valid.";
     }
-    if (!ctx.hasInvoiceLink) {
-      return "There is no intake link on this ledger yet. Tell the user to create one in AR / AP first.";
-    }
+    /* No link is no longer a refusal.
+       It used to be, and the result was Tally explaining that she could not
+       do the thing, offering a button to the page where the user could do it
+       by hand. That is a dead end dressed as help: the link is one row in a
+       table and the card can make it. */
   }
   if (name === "propose_settle") {
     const list = ctx.data[input.kind] || [];
