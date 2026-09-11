@@ -2538,6 +2538,9 @@ function Ledger({ onSignOut }) {
               contacts={contacts}
               hasInvoiceLink={hasInvoiceLink}
               resetAt={chatReset}
+              /* Something wanted to speak and had already said it. Light the
+                 badge rather than repeat the sentence. */
+              onRemind={() => setChatUnread(true)}
               apply={{
                 addTx, addAR, settleAR, setPlanned, setAnchor,
                 addContact: async (c) => {
@@ -7242,7 +7245,7 @@ function Capture({
      A prop silently defaulting is the quietest failure in React: nothing
      throws, nothing warns, the feature just behaves as if the data does not
      exist. */
-  contacts = [], hasInvoiceLink = false, resetAt = 0,
+  contacts = [], hasInvoiceLink = false, resetAt = 0, onRemind,
 }) {
   // A gap that's already been consolidated isn't news, opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
@@ -7330,13 +7333,36 @@ function Capture({
 
   const push = (m) => setMsgs((prev) => [...prev, m]);
 
+  /* Say a thing once.
+
+     The transcript survives a reload now, and everything that speaks
+     unprompted speaks on mount, so the same unanswered sentence stacked up:
+     three identical drift warnings, each with its own button, none of them
+     newer than the last.
+
+     If it is already in the transcript and nothing has been said since, this
+     does not repeat it. The badge still lights, because the point is to
+     remind you it is there, not to say it again. */
+  const pushOnce = (m) => {
+    const said = String(m.text || "");
+    if (!said) return push(m);
+    setMsgs((prev) => {
+      if (prev.some((p) => p.role === "assistant" && p.text === said)) {
+        // Already on the page. Nudge rather than repeat.
+        onRemind?.();
+        return prev;
+      }
+      return [...prev, m];
+    });
+  };
+
   // Balances that start agreeing and then disagree deserve a word, once. The
   // opener already covers the case where they disagreed on arrival.
   useEffect(() => {
     if (!drift || greetedDrift.current) return;
     greetedDrift.current = true;
     if (msgs.length <= 1) return; // the opener said it
-    push({
+    pushOnce({
       role: "assistant",
       text: `Your bank and your books just stopped agreeing: ${fmt(balance.bank)} against ${fmt(balance.book)}, a gap of ${fmt(balance.delta)}. Want me to walk it?`,
       followUp: "Walk me through the gap between my bank balance and my books, line by line.",
@@ -7419,7 +7445,7 @@ function Capture({
          would type next about that message. Tally answers it from the ledger,
          which is more use than a link to the page they were already told
          about. */
-      push({
+      pushOnce({
         role: "assistant",
         text: seed.said,
         followUp: seed.followUp || undefined,
@@ -7480,7 +7506,7 @@ function Capture({
     const more = nudge.paired.length > rows.length
       ? `\n\n${nudge.paired.length - rows.length} more paired the same way.`
       : "";
-    push({
+    pushOnce({
       role: "assistant",
       text:
         `**Paired ${nudge.paired.length} bank ${nudge.paired.length === 1 ? "line" : "lines"} this morning, ${fmt(nudge.total)}.**\n\n` +
