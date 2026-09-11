@@ -2346,7 +2346,19 @@ function Ledger({ onSignOut }) {
           why the ledger was shared. */}
       <TallyPeek
         peek={chatOpen || readOnly ? null : nudges.peek}
-        onOpen={() => { setChatOpen(true); setChatUnread(false); nudges.clear(); }}
+        /* Open on the thing that spoke, not on a greeting.
+
+           Tapping a nudge used to clear it and open the panel cold, so the
+           message that made you tap was gone and Tally introduced herself
+           instead. The peek is the start of a conversation; throwing it away
+           is the one thing not to do with it. */
+        onOpen={() => {
+          const said = nudges.peek;
+          setChatOpen(true);
+          setChatUnread(false);
+          if (said?.text) setChatSeed({ said: said.text, followUp: said.followUp, at: Date.now() });
+          nudges.clear();
+        }}
         onDismiss={nudges.dismiss}
       />
 
@@ -4930,6 +4942,8 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   const [mailResult, setMailResult] = useState(null);
   const [spinning, setSpinning] = useState(false);
   const [schedules, setSchedules] = useState([]);
+  const [correcting, setCorrecting] = useState(null);
+  const [reason, setReason] = useState("");
 
   const refresh = async () => {
     const [p, h, l, sc] = await Promise.all([
@@ -4958,23 +4972,26 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     return () => clearInterval(t);
     /* eslint-disable-next-line */
   }, [open, ledgerId]);
-  /* Close the tray only when you just emptied it.
+  /* The panel closes when you close it, and not otherwise.
 
-     This was keyed on "the tray is empty and something has arrived before",
-     which is true every time you open it afterwards to read the history. So
-     the panel closed itself two seconds after you opened it, every time, and
-     the history was unreadable.
+     It used to close itself two seconds after the queue emptied, which is a
+     panel deciding it knows better than the person reading it. You accept an
+     invoice and the thing you were looking at leaves while you are still
+     looking at it.
 
-     A flag set by the action that cleared the last one is the difference
-     between finishing and merely looking. It is cleared as soon as it fires,
-     so the close happens once and never again on its own. */
-  const justCleared = useRef(false);
+     Clicking outside closes it, Escape closes it, pressing the icon again
+     closes it. That is three ways, all of them yours. */
+  const shell = useRef(null);
   useEffect(() => {
-    if (open !== "inbox" || filed || pending.length) return;
-    if (!justCleared.current) return;
-    const t = setTimeout(() => { justCleared.current = false; setOpen(null); }, 1900);
-    return () => clearTimeout(t);
-  }, [open, filed, pending.length]);
+    if (!open) return;
+    const away = (e) => {
+      if (shell.current && !shell.current.contains(e.target)) setOpen(null);
+    };
+    // pointerdown, not click: closing should happen the moment you commit to
+    // the gesture, not when you release somewhere else entirely.
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -5020,7 +5037,6 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
        having been deleted rather than filed. Now it turns into its own
        receipt for a moment, then goes, so the eye follows the thing it acted
        on instead of hunting for what changed. */
-    if (pending.length <= 1) justCleared.current = true;
     setFiled({ id: inv.id, party: inv.party, amount: inv.amount, dueDate: inv.dueDate });
     setTimeout(() => {
       setFiled(null);
@@ -5033,7 +5049,6 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     if (first?.token) share.notifySupplierDecision(first.token, inv.id, "declined").catch(() => {});
     await share.decideInbound(inv.id, "declined");
     setBusy("");
-    if (pending.length <= 1) justCleared.current = true;
     setDone(`${inv.party} set aside. Nothing was added to your books.`);
     refresh();
   };
@@ -5076,6 +5091,19 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     refresh();
   };
 
+  /* Send it back with a reason. The invoice stays pending, because it is
+     still an open question rather than a closed one, and the corrected
+     version arrives as a new submission. */
+  const requestCorrection = async (inv) => {
+    if (!first?.token) return setErr("Create an intake link first.");
+    setBusy(inv.id); setErr("");
+    const r = await share.askForCorrection(first.token, inv.id, reason.trim());
+    setBusy("");
+    if (!r.ok) return setErr(r.error || "That did not send.");
+    setCorrecting(null); setReason("");
+    setDone(`Sent back to ${inv.party}. It stays here until the corrected one arrives.`);
+  };
+
   const stopOne = async (sc) => {
     setBusy(sc.id);
     await share.stopSchedule(sc.id);
@@ -5114,7 +5142,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(share.invoiceLinkUrl(first.token));
+      await navigator.clipboard.writeText(share.invoiceLinkUrl(first.token, first.slug));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch { /* the link is on screen anyway */ }
@@ -5206,7 +5234,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
             style={{ color: P.brassText }}
             className="text-[14px] inline-flex items-center gap-1.5 press"
           >
-            <Paperclip size={14} /> See it
+            <Paperclip size={14} /> See the invoice
           </button>
         )}
         {actions}
@@ -5215,7 +5243,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   );
 
   return (
-    <>
+    <div ref={shell}>
       <div className="flex items-center gap-2">
         <Tool id="inbox" icon={Inbox} label="Invoices sent to you" count={pending.length} />
         <Tool id="link" icon={LinkIcon} label="Your intake link" />
@@ -5351,30 +5379,83 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
               )}
 
               {!filed && pending.map((inv) => (
-                <Row
-                  key={inv.id}
-                  inv={inv}
-                  actions={
-                    <>
-                      <button
-                        onClick={() => accept(inv)}
-                        disabled={busy === inv.id}
-                        style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-                        className="h-11 px-4 text-[15px] font-medium press"
-                      >
-                        {busy === inv.id ? "Adding" : "Add to what I owe"}
-                      </button>
-                      <button
-                        onClick={() => decline(inv)}
-                        disabled={busy === inv.id}
-                        style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-                        className="h-11 px-4 text-[15px] font-medium press"
-                      >
-                        Not mine
-                      </button>
-                    </>
-                  }
-                />
+                /* The correction form sits here, beside the row, not inside
+                   it. Row is defined within this component, so React sees a
+                   new function on every render and remounts the subtree: an
+                   input in there loses focus after every character typed. */
+                <div key={inv.id}>
+                  <Row
+                    inv={inv}
+                    actions={
+                      <>
+                        <button
+                          onClick={() => accept(inv)}
+                          disabled={busy === inv.id}
+                          style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                          className="h-11 px-4 text-[15px] font-medium press"
+                        >
+                          {busy === inv.id ? "Adding" : "Add to what I owe"}
+                        </button>
+                        <button
+                          onClick={() => { setCorrecting(correcting?.id === inv.id ? null : inv); setReason(""); }}
+                          disabled={busy === inv.id}
+                          style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                          className="h-11 px-4 text-[15px] font-medium press"
+                        >
+                          Needs correction
+                        </button>
+                        <button
+                          onClick={() => decline(inv)}
+                          disabled={busy === inv.id}
+                          style={{ color: P.debit }}
+                          className="h-11 px-3 text-[15px] font-medium press"
+                        >
+                          Deny
+                        </button>
+                      </>
+                    }
+                  />
+
+                  {correcting?.id === inv.id && (
+                    <div style={{ background: P.surface2, borderRadius: 14 }} className="p-3.5 mb-3">
+                      <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">
+                        What needs changing
+                      </label>
+                      <input
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        placeholder="The amount is short by the GST"
+                        style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+                        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
+                      />
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        <button
+                          onClick={() => requestCorrection(inv)}
+                          disabled={busy === inv.id || !inv.contactEmail}
+                          style={{
+                            background: P.brass, color: P.onbrass, borderRadius: R.pill,
+                            opacity: inv.contactEmail ? 1 : 0.5,
+                          }}
+                          className="h-11 px-4 text-[15px] font-medium press"
+                        >
+                          {busy === inv.id ? "Sending" : "Send it back"}
+                        </button>
+                        <button
+                          onClick={() => { setCorrecting(null); setReason(""); }}
+                          style={{ color: P.muted }}
+                          className="h-11 px-2 text-[15px] press"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {!inv.contactEmail && (
+                        <p style={{ color: P.debit }} className="text-[14px] mt-2 leading-snug">
+                          They left no email address, so there is nobody to send this to. Deny it instead.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               ))}
 
               {/* What repeats, and how to stop it. Only shown when there is
@@ -5463,7 +5544,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                     style={{ background: P.surface2, borderRadius: 14, fontFamily: MONO }}
                     className="p-3 text-[13px] break-all"
                   >
-                    {share.invoiceLinkUrl(first.token)}
+                    {share.invoiceLinkUrl(first.token, first.slug)}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 mt-3">
                     <button
@@ -5541,7 +5622,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                           className="text-[14.5px] mt-3 leading-snug"
                         >
                           {mailResult.ok
-                            ? `Sent to ${mailResult.to}. Replies come to you, not to us.`
+                            ? `Sent to ${mailResult.to}. If they reply, it goes to your inbox.`
                             : mailResult.error}
                         </p>
                       )}
@@ -5563,7 +5644,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
           )}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -5682,7 +5763,7 @@ function AccessCard({ ledger }) {
                 style={{ color: P.text, fontFamily: MONO }}
                 className="text-[13px] w-full break-all"
               >
-                {share.invoiceLinkUrl(l.token)}
+                {share.invoiceLinkUrl(l.token, l.slug)}
               </span>
               <button onClick={() => copy(l.token)} style={{ color: P.brassText }} className="text-[14.5px] shrink-0 press">
                 {copied === l.token ? "Copied" : "Copy"}
@@ -6554,9 +6635,35 @@ function Capture({
     runTurn(question, withGuide === undefined ? guideId : withGuide);
   };
 
-  // A question handed over from an insight card on the Overview tab.
+  /* Something handed over from outside the panel.
+
+     Two shapes. A question from an insight card, which is asked. And a line
+     Tally already said in the peek bubble, which is not: it is repeated as
+     the first thing in the transcript, with whatever it offered to do.
+
+     Opening on a greeting after tapping a message is the thing this fixes.
+     The peek is the opening line of a conversation, and the panel used to
+     throw it away and start again with "I keep your books. What do you
+     need?", which reads as not having been listening. */
   useEffect(() => {
-    if (!seed?.question) return;
+    if (!seed) return;
+
+    if (seed.said) {
+      onSeedUsed?.();
+      /* followUp is a question, not an action. The peek carries a place to go
+         rather than something to ask, so the question is the one a person
+         would type next about that message. Tally answers it from the ledger,
+         which is more use than a link to the page they were already told
+         about. */
+      push({
+        role: "assistant",
+        text: seed.said,
+        followUp: seed.followUp || undefined,
+      });
+      return;
+    }
+
+    if (!seed.question) return;
     onSeedUsed?.();
     if (busy) return;
     ask(seed.question);

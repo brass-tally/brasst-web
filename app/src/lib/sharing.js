@@ -130,7 +130,7 @@ export async function listInvoiceLinks(ledgerId) {
       .order("created_at", { ascending: false });
     if (error) throw error;
     return (data || []).map((r) => ({
-      id: r.id, token: r.token, label: r.label || undefined,
+      id: r.id, token: r.token, label: r.label || undefined, slug: r.slug || undefined,
       createdAt: r.created_at, submissions: r.submissions || 0,
     }));
   }, []);
@@ -214,8 +214,16 @@ export async function decideInbound(id, status, obligationId) {
   }
 }
 
-export const invoiceLinkUrl = (token) =>
-  `${window.location.origin}/invoice?t=${encodeURIComponent(token)}`;
+/* Short, and it says who it is for.
+
+   brasstally.com/i/cr7va67h3she9 is an unfamiliar domain and a random string,
+   which is what a phishing link looks like. brasstally.com/i/genie-ai/cr7va...
+   answers the contractor's first question before they click.
+
+   The slug is decoration and the token does all the work, so a link without
+   one still resolves. */
+export const invoiceLinkUrl = (token, slug) =>
+  `${window.location.origin}/i/${slug ? `${encodeURIComponent(slug)}/` : ""}${encodeURIComponent(token)}`;
 
 /* Void removes the submission outright.
    Not a status change: the row goes. "Void" should leave nothing behind in the
@@ -306,6 +314,9 @@ export const testInvoiceMail = (token) => callMail("test", { token });
 
 export const notifySupplierDecision = (token, id, outcome, fallback) =>
   callMail("decided", { token, id, outcome, fallback });
+
+export const askForCorrection = (token, id, reason) =>
+  callMail("correct", { token, id, reason });
 
 /** Raise anything a monthly arrangement owes. Idempotent in the database. */
 export async function generateDueInvoices(ledgerId) {

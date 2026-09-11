@@ -17,6 +17,7 @@
  *   { action: "test",      token }                  public, proves the mail path
  *   { action: "send-link", token, to, note }        owner only, needs a bearer
  *   { action: "decided",   token, id, outcome }     owner only, tells the supplier
+ *   { action: "correct",   token, id, reason }      owner only, asks for a redo
  *
  * Secrets, set with `supabase secrets set` or in the dashboard:
  *   SERVICE_ROLE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_URL
@@ -26,9 +27,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail, invoiceDecidedEmail,
+  invoiceCorrectionEmail,
 } from "./emails.ts";
 
-const BUCKET = "receipts";
+const BUCKET = "invoices";   // the bucket the app reads from; "receipts" was a guess and nothing could open the file
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -199,6 +201,41 @@ Deno.serve(async (req) => {
       return r.ok ? json({ ok: true, sent: true }) : json({ ok: false, error: r.error });
     }
 
+    if (action === "correct") {
+      const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      const { data: caller } = bearer ? await db.auth.getUser(bearer) : { data: null };
+      if (!caller?.user?.id || caller.user.id !== ownerId) {
+        return json({ ok: false, error: "That is not your ledger." }, 403);
+      }
+
+      const { data: inv } = await db.from("inbound_invoices")
+        .select("party, amount, description, invoice_no, contact_email, ledger_id")
+        .eq("id", body.id).maybeSingle();
+      if (!inv || inv.ledger_id !== link.ledger_id) return json({ ok: false, error: "Not found." });
+      if (!inv.contact_email) {
+        return json({ ok: false, error: "They did not leave an email address, so there is nobody to ask." });
+      }
+
+      const reason = String(body.reason || "").slice(0, 400)
+        .replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]!));
+
+      const r = await sendMail(
+        inv.contact_email,
+        `${business} needs a correction to your invoice`,
+        invoiceCorrectionEmail({
+          business,
+          party: inv.party,
+          amount: Number(inv.amount),
+          description: inv.description,
+          invoiceNo: inv.invoice_no,
+          reason: reason || null,
+          link: `${Deno.env.get("APP_URL") || "https://brasstally.com"}/i/${encodeURIComponent(String(token))}`,
+        }),
+        caller.user.email ?? undefined,
+      );
+      return r.ok ? json({ ok: true, to: inv.contact_email }) : json({ ok: false, error: r.error });
+    }
+
     if (action === "send-link") {
       /* The one action that mails an address the caller chooses, which is a
          spam relay if an intake token is the only guard, and an intake token is
@@ -227,7 +264,7 @@ Deno.serve(async (req) => {
           business,
           fromName: caller.user.email ? caller.user.email.split("@")[0] : null,
           note: note || null,
-          link: `${Deno.env.get("APP_URL") || "https://brasstally.com"}/invoice?t=${encodeURIComponent(String(token))}`,
+          link: `${Deno.env.get("APP_URL") || "https://brasstally.com"}/i/${encodeURIComponent(String(token))}`,
         }),
         caller.user.email ?? undefined,
       );

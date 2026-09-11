@@ -155,6 +155,18 @@
       }
     },
     {
+      "source": "/i/:token",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/i/:slug/:token",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "landing"

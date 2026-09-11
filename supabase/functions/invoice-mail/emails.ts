@@ -269,3 +269,84 @@ export function invoiceDecidedEmail(
 </td></tr></table>
 </body></html>`;
 }
+
+/**
+ * "Something is wrong with this one, please send it again."
+ *
+ * The useful part is the reason and the link together. A rejection without a
+ * reason makes the contractor guess, and a reason without a link makes them
+ * hunt for the email from three weeks ago.
+ */
+export function invoiceCorrectionEmail(
+  { business, party, amount, description, invoiceNo, reason, link }: {
+    business: string; party: string; amount: number;
+    description?: string | null; invoiceNo?: string | null;
+    reason?: string | null; link: string;
+  },
+) {
+  const brass = "#A9620A";
+  const fill = "#F59E0B";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+  const money = (n: number) =>
+    (Number(n) || 0).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
+
+  const line = (label: string, value?: string | null) =>
+    value
+      ? `<tr><td style="padding:4px 0;font-size:15px;color:${muted}">${label}</td>
+           <td style="padding:4px 0;font-size:15px;color:${ink};text-align:right">${value}</td></tr>`
+      : "";
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>${business} needs a correction</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:32px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <div style="font-size:15px;font-weight:600;color:${brass};margin-bottom:14px;">Brasstally</div>
+      <h1 style="margin:0 0 14px;font-size:23px;line-height:1.3;color:${ink};font-weight:600;">
+        ${business} needs a correction
+      </h1>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:${muted};">
+        Your invoice has not been added to their books yet. Send it again with the change below and it will
+        replace what you sent.
+      </p>
+
+      ${reason ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+        style="background:#FBBF2418;border-radius:14px;padding:14px 16px;margin-bottom:18px;">
+        <tr><td style="font-size:15.5px;line-height:1.55;color:${ink};">
+          <strong style="display:block;margin-bottom:3px;">What needs changing</strong>${reason}
+        </td></tr></table>` : ""}
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;margin-bottom:20px;">
+        <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          ${line("You sent", party)}
+          ${line("Amount", money(amount))}
+          ${line("For", description)}
+          ${line("Invoice", invoiceNo)}
+        </table></td></tr>
+      </table>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+        <tr><td style="border-radius:999px;background:${fill};">
+          <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
+             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
+            Send the corrected invoice
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:0;font-size:13.5px;line-height:1.5;color:#8A827B;word-break:break-all;">
+        Or paste this into your browser:<br/><span style="color:${muted}">${link}</span>
+      </p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

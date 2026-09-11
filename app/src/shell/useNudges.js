@@ -49,6 +49,11 @@ export function buildNudges({ insights = [], balance, consolidation, obligations
         ? `${inbound[0].party} sent you an invoice for ${fmt(inbound[0].amount)}.`
         : `${inbound.length} invoices came in, ${fmt(total)} between them.`,
       action: { view: "arap", label: "Take a look" },
+      /* What a person would ask next about this, so opening the message leads
+         somewhere instead of ending. */
+      followUp: inbound.length === 1
+        ? `What else do I owe ${inbound[0].party}?`
+        : "What do I owe in total right now?",
     });
   }
 
