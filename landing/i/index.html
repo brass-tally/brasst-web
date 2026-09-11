@@ -35,6 +35,10 @@ label:first-child{margin-top:0}
 .seg button{flex:1;min-height:48px;border:2px solid transparent;border-radius:13px;background:var(--sunk);
  color:var(--muted);font:inherit;font-size:15px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
 .seg button.on{background:var(--accent);color:#241703;font-weight:600}
+select{width:100%;min-height:48px;padding:0 14px;border:none;border-radius:13px;background:var(--sunk);
+ color:var(--ink);font:inherit;font-size:16px;appearance:none;cursor:pointer;
+ background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235A534E' stroke-width='2.5' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");
+ background-repeat:no-repeat;background-position:right 14px center}
 input[type=file]{padding:11px 14px;font-size:15px;background:var(--sunk);border-radius:13px;width:100%}
 input,textarea{width:100%;background:var(--sunk);border:2px solid transparent;border-radius:13px;
  padding:12px 14px;font:inherit;font-size:16px;color:var(--text);outline:none;min-height:48px}
@@ -111,6 +115,21 @@ footer a{color:var(--accentText);text-decoration:none}
           <input id="due" name="due" type="date"/>
         </div>
       </div>
+
+      <label for="currency">Currency</label>
+      <select id="currency">
+        <option value="CAD">CAD, Canadian dollar</option>
+        <option value="USD">USD, US dollar</option>
+        <option value="EUR">EUR, Euro</option>
+        <option value="GBP">GBP, Pound sterling</option>
+        <option value="AUD">AUD, Australian dollar</option>
+        <option value="INR">INR, Indian rupee</option>
+        <option value="PKR">PKR, Pakistani rupee</option>
+        <option value="AED">AED, UAE dirham</option>
+        <option value="JPY">JPY, Japanese yen</option>
+        <option value="CHF">CHF, Swiss franc</option>
+      </select>
+      <div class="hint" id="curHint">The currency you are invoicing in.</div>
 
       <label>How often</label>
       <div class="seg" role="radiogroup" aria-label="How often">
@@ -199,6 +218,19 @@ footer a{color:var(--accentText);text-decoration:none}
   /* One tap, two words, and the hint changes underneath rather than a
      paragraph appearing. A contractor deciding between "once" and "monthly"
      wants to know what the second one commits them to, in one line. */
+  /* Default to whatever the recipient keeps their books in, because that is
+     the common case and a supplier should not have to think about it. They can
+     change it, and the figure travels with the currency either way. */
+  if (info.currency) {
+    const sel = el("currency");
+    if ([...sel.options].some((o) => o.value === info.currency)) sel.value = info.currency;
+  }
+  el("currency").addEventListener("change", () => {
+    el("curHint").textContent = el("currency").value === (info.currency || "CAD")
+      ? "The currency you are invoicing in."
+      : `${el("currency").value}, which is not what ${info.business} keeps their books in. They will convert it.`;
+  });
+
   let recurrence = "once";
   document.querySelectorAll("[data-rec]").forEach((b) => {
     b.addEventListener("click", () => {
@@ -264,6 +296,7 @@ footer a{color:var(--accentText);text-decoration:none}
       p_note: el("note").value.trim() || null,
       p_file_path: filePath,
       p_recurrence: recurrence,
+      p_currency: el("currency").value,
     });
 
     if (error) return fail("That did not go through. Please try again in a moment.");

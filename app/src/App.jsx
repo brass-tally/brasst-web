@@ -183,8 +183,24 @@ const askConfirm = (opts) =>
     confirmHandler({ ...opts, resolve });
   });
 
+/* The same dialog, with a number in it.
+
+   Used where a decision needs a figure rather than a yes: accepting an
+   invoice in a currency the books are not kept in. Resolves to a number, or
+   null if they backed out, so a caller reads the same way as askConfirm. */
+const askAmount = (opts) =>
+  new Promise((resolve) => {
+    if (!confirmHandler) {
+      const typed = window.prompt(opts.body || opts.title, opts.placeholder || "");
+      const n = Number(String(typed ?? "").replace(/[^0-9.-]/g, ""));
+      return resolve(typed == null || !Number.isFinite(n) || n <= 0 ? null : n);
+    }
+    confirmHandler({ ...opts, amount: true, resolve });
+  });
+
 function ConfirmHost() {
   const [req, setReq] = useState(null);
+  const [value, setValue] = useState("");
   const confirmRef = useRef(null);
 
   useEffect(() => {
@@ -197,8 +213,23 @@ function ConfirmHost() {
   }, [req]);
 
   if (!req) return null;
-  const settle = (answer) => { req.resolve(answer); setReq(null); };
-  const danger = req.tone !== "normal"; // destructive is the common case here
+
+  /* One settle for both kinds of dialog. A yes/no resolves true or false; one
+     that asked for a figure resolves the number, or null when they backed out,
+     so a caller can tell "they said no" from "they said nothing". */
+  const settle = (answer) => {
+    if (req.amount) {
+      const n = Number(String(value).replace(/[^0-9.-]/g, ""));
+      req.resolve(answer && Number.isFinite(n) && n > 0 ? n : null);
+    } else {
+      req.resolve(answer);
+    }
+    setValue("");
+    setReq(null);
+  };
+  // Destructive is the common case here, but a dialog asking for a figure is
+  // a question rather than a warning, so it does not wear the red triangle.
+  const danger = req.tone !== "normal" && !req.amount;
 
   return (
     <Modal
@@ -209,7 +240,12 @@ function ConfirmHost() {
       footer={
         <>
           <Btn tone="ghost" onClick={() => settle(false)}>{req.cancelLabel || "Cancel"}</Btn>
-          <Btn ref={confirmRef} tone={danger ? "debit" : "brass"} onClick={() => settle(true)}>
+          <Btn
+            ref={confirmRef}
+            tone={danger ? "debit" : "brass"}
+            onClick={() => settle(true)}
+            disabled={req.amount && !(Number(String(value).replace(/[^0-9.-]/g, "")) > 0)}
+          >
             {req.confirmLabel || "Confirm"}
           </Btn>
         </>
@@ -234,6 +270,26 @@ function ConfirmHost() {
             <p style={{ color: P.muted, maxWidth: "58ch" }} className="text-sm text-pretty">
               {req.body}
             </p>
+          )}
+
+          {/* A figure, when the decision needs one. Focused on open, and
+              Enter commits, because a dialog asking for one number should not
+              need the mouse. */}
+          {req.amount && (
+            <input
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                const n = Number(String(value).replace(/[^0-9.-]/g, ""));
+                if (Number.isFinite(n) && n > 0) { req.resolve(n); setValue(""); setReq(null); }
+              }}
+              inputMode="decimal"
+              placeholder={req.placeholder || "0.00"}
+              style={{ background: P.surface2, color: P.text, borderRadius: 13, fontFamily: MONO }}
+              className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-3"
+            />
           )}
         </div>
       </ModalBody>
@@ -5275,6 +5331,30 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   const everReceived = links.some((l) => l.submissions > 0) || history.length > 0 || schedules.length > 0;
 
   const accept = async (inv) => {
+    /* A figure in another currency cannot go into the books at face value.
+
+       The ledger has one currency and no exchange rates, so recording 1,250
+       USD as 1,250 in a Canadian ledger overstates nothing visibly and
+       misstates everything quietly, and it would be found at year end by an
+       accountant rather than here.
+
+       So it asks, prefilled with the invoiced figure, and whatever you enter
+       is recorded with the original kept in the description. */
+    if (foreign(inv)) {
+      const converted = await askAmount({
+        title: `${inv.party} invoiced ${inv.currency} ${fmt(inv.amount)}`,
+        body: `Your books are in ${ledgerCcy}. What is this worth in ${ledgerCcy}? The original stays on the record either way.`,
+        placeholder: fmt(inv.amount),
+        confirmLabel: "Add it",
+      });
+      if (converted == null) return;
+      inv = {
+        ...inv,
+        amount: converted,
+        description: `${inv.description || "Invoice"} (${inv.currency} ${fmt(inv.amount)})`,
+      };
+    }
+
     setBusy(inv.id);
     setErr("");
     const created = await onAccept({
@@ -5491,6 +5571,14 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     </button>
   );
 
+  /* The ledger's own currency needs no label; anything else does.
+     Writing "CAD" beside every figure on a Canadian ledger is noise, and
+     writing nothing beside a figure that is not in dollars is a mistake
+     waiting to be made at year end. */
+  const ledgerCcy = data?.ledger?.currency || "CAD";
+  const foreign = (inv) => inv.currency && inv.currency !== ledgerCcy;
+  const withCcy = (inv) => (foreign(inv) ? `${inv.currency} ${fmt(inv.amount)}` : fmt(inv.amount));
+
   const Row = ({ inv, actions }) => (
     <div className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
       <div className="flex items-baseline justify-between gap-3">
@@ -5506,8 +5594,11 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
             </span>
           )}
         </span>
-        <span style={{ fontFamily: MONO, color: P.debit }} className="text-[15.5px] tabular-nums shrink-0">
-          {fmt(inv.amount)}
+        <span
+          style={{ fontFamily: MONO, color: P.debit }}
+          className="text-[15.5px] tabular-nums shrink-0 whitespace-nowrap"
+        >
+          {withCcy(inv)}
         </span>
       </div>
       <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">

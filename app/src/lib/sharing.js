@@ -187,6 +187,7 @@ export async function listInbound(ledgerId, status = "pending") {
       issueDate: r.issue_date || undefined, dueDate: r.due_date || undefined,
       note: r.note || undefined, filePath: r.file_path || undefined,
       recurrence: r.recurrence || "once", scheduleId: r.schedule_id || undefined,
+      currency: r.currency || undefined,
       period: r.period || undefined,
       submittedAt: r.submitted_at, decidedAt: r.decided_at || undefined,
       obligationId: r.obligation_id || undefined, status: r.status,
@@ -352,7 +353,7 @@ export async function listSchedules(ledgerId) {
     return (data || []).map((r) => ({
       id: r.id, party: r.party, description: r.description || undefined,
       amount: Number(r.amount), taxAmount: r.tax_amount == null ? undefined : Number(r.tax_amount),
-      dayOfMonth: r.day_of_month, contactEmail: r.contact_email || undefined,
+      currency: r.currency || undefined, dayOfMonth: r.day_of_month, contactEmail: r.contact_email || undefined,
       createdAt: r.created_at, lastPeriod: r.last_period || undefined,
     }));
   }, []);
@@ -369,6 +370,7 @@ export async function startSchedule(ledgerId, inv) {
       party: inv.party,
       contact_email: inv.contactEmail || null,
       description: inv.description || null,
+      currency: inv.currency || null,
       amount: inv.amount,
       tax_amount: inv.taxAmount ?? null,
       day_of_month: day,
