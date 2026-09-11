@@ -113,12 +113,6 @@
   },
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": {
-        "service": "app"
-      }
-    },
-    {
       "source": "/app",
       "destination": {
         "service": "app"

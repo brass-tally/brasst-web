@@ -263,35 +263,39 @@ export function watchInbound(ledgerId, onChange) {
   }
 }
 
-/* Email the intake link to a supplier.
+/* Calls to the invoice-mail edge function.
 
-   Goes through our own API rather than a mailto, because a mailto opens the
-   sender's mail client with a link in it and no way to know whether it was
-   ever sent, and because the message should look like the product rather than
-   like a URL pasted into a blank email.
+   Not /api/... any more. Vercel's services config, which is what puts the
+   landing site and the app on one domain, does not host serverless functions:
+   three placements of the same file all resolved to the app's own catch-all
+   rather than to a function. An edge function has its own URL and needs no
+   routing, so the whole class of problem is gone.
 
-   The session token travels with it: this endpoint sends mail to an address
-   the caller names, so the server checks the caller owns the link rather than
-   trusting whoever holds it. */
-export async function emailInvoiceLink(token, to, note) {
+   supabase.functions.invoke attaches the session automatically, which
+   send-link needs and the public actions ignore. */
+async function callMail(action, payload = {}) {
   try {
-    const { data: sess } = await supabase.auth.getSession();
-    const jwt = sess?.session?.access_token;
-    if (!jwt) return { ok: false, error: "Sign in again and try that once more." };
-
-    const r = await fetch("/api/invoice-received", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-      body: JSON.stringify({ action: "send-link", token, to, note }),
+    const { data, error } = await supabase.functions.invoke("invoice-mail", {
+      body: { action, ...payload },
     });
-
-    if (r.status === 404) {
-      return { ok: false, error: "The mail service is not deployed yet. Check /api/health." };
+    if (error) {
+      const msg = String(error.message || error);
+      if (/not found|404/i.test(msg)) {
+        return { ok: false, error: "The invoice-mail function is not deployed yet." };
+      }
+      return { ok: false, error: msg };
     }
-    const body = await r.json().catch(() => null);
-    if (!body) return { ok: false, error: "No answer from the mail service." };
-    return body;
+    return data || { ok: false, error: "No answer from the mail service." };
   } catch (e) {
     return { ok: false, error: e?.message || "That did not send." };
   }
 }
+
+export const mailHealth = () => callMail("health");
+
+export const emailInvoiceLink = (token, to, note) =>
+  callMail("send-link", { token, to, note });
+
+export const notifyInvoiceArrived = (token, id) => callMail("notify", { token, id });
+
+export const testInvoiceMail = (token) => callMail("test", { token });

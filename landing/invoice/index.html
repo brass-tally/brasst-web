@@ -160,6 +160,10 @@ footer a{color:var(--accentText);text-decoration:none}
   /* Ask what this link is before showing a form. A page that asks a contractor
      for invoice details without naming who is receiving them is a page that
      deserves to be closed. */
+  /* The link's own details still come from a database function, because that
+     one only reads and RPC is the shortest path to it. Everything that sends
+     mail or signs an upload goes through the edge function instead, which is
+     the part that used to be a Vercel route and never resolved. */
   const { data: info } = await sb.rpc("invoice_link_info", { p_token: token });
   hide("loading");
   if (!token || !info || !info.ok) { show("dead"); }
@@ -197,11 +201,9 @@ footer a{color:var(--accentText);text-decoration:none}
       if (file.size > 15 * 1024 * 1024) return fail("That file is over 15 MB. Try a smaller one.");
       btn.textContent = "Uploading";
       try {
-        const r = await fetch("/api/invoice-received", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "upload", token, filename: file.name }),
-        }).then((x) => x.json());
+        const { data: r } = await sb.functions.invoke("invoice-mail", {
+          body: { action: "upload", token, filename: file.name },
+        });
         if (r?.ok) {
           const put = await fetch(r.signedUrl, { method: "PUT", body: file });
           if (put.ok) filePath = r.path;
@@ -230,11 +232,8 @@ footer a{color:var(--accentText);text-decoration:none}
     /* Tell them it arrived. Fired and not awaited for the outcome: the invoice
        is already stored, and a mail failure is our problem rather than a
        reason to show the supplier an error. */
-    fetch("/api/invoice-received", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "notify", token, id: data.id }),
-    }).catch(() => {});
+    sb.functions.invoke("invoice-mail", { body: { action: "notify", token, id: data.id } })
+      .catch(() => {});
 
     hide("form");
     el("doneSub").textContent =
