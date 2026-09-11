@@ -7234,7 +7234,16 @@ function Capture({
   data, addTx, addAR, addSub, month, embedded, balance, openBooks, recon, consolidation, bankConns,
   insights = [], seed, onSeedUsed, guide, onGuideUsed, nudge, onNudgeUsed, brief, onBriefUsed, apply, onGo,
   onSettleFromReceipt, taxPolicy = TAX_POLICY,
-}, contacts = [], hasInvoiceLink = false, resetAt = 0 ) {
+  /* These were outside the brace, as a second and third argument. React calls
+     a component with one object, so they were never passed and `contacts` was
+     always the empty default. The tool ran, found nothing, and Tally said
+     there was no address on file for a man whose address was on the screen.
+
+     A prop silently defaulting is the quietest failure in React: nothing
+     throws, nothing warns, the feature just behaves as if the data does not
+     exist. */
+  contacts = [], hasInvoiceLink = false, resetAt = 0,
+}) {
   // A gap that's already been consolidated isn't news, opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
   const drift = balance?.source === "bank" && balance.delta != null
