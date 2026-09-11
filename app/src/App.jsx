@@ -16,6 +16,7 @@ import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross
 import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
 import * as share from "./lib/sharing";
+import * as chat from "./lib/chat";
 import { isReadOnly } from "./lib/access";
 import {
   listContacts as contacts_list, addContact as contacts_add, updateContact as contacts_update,
@@ -1042,9 +1043,6 @@ function Ledger({ onSignOut }) {
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
-  /* Clearing the transcript. A conversation that persists needs a way to end
-     it, or the only way to start fresh is to stop using the feature. */
-  const [chatReset, setChatReset] = useState(0);
   const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
   const [chatNudge, setChatNudge] = useState(null); // { at, received, total } money landed, say so
   const [chatBrief, setChatBrief] = useState(null); // { at, insight } Tally opening the conversation unprompted
@@ -2501,15 +2499,6 @@ function Ledger({ onSignOut }) {
                   {data.ledger.name} · your bookkeeper
                 </div>
               </div>
-              <button
-                  onClick={() => setChatReset(Date.now())}
-                  aria-label="Start a new conversation"
-                  title="Start again"
-                  style={{ color: P.muted }}
-                  className="p-1.5 press"
-                >
-                  <RefreshCw size={15} />
-                </button>
                 <button onClick={() => setChatOpen(false)} aria-label="Close" style={{ color: P.muted }} className="p-1.5"><X size={17} /></button>
             </div>
             <Capture
@@ -2537,7 +2526,6 @@ function Ledger({ onSignOut }) {
               onBriefUsed={() => setChatBrief(null)}
               contacts={contacts}
               hasInvoiceLink={hasInvoiceLink}
-              resetAt={chatReset}
               /* Something wanted to speak and had already said it. Light the
                  badge rather than repeat the sentence. */
               onRemind={() => setChatUnread(true)}
@@ -7271,7 +7259,7 @@ function Capture({
      A prop silently defaulting is the quietest failure in React: nothing
      throws, nothing warns, the feature just behaves as if the data does not
      exist. */
-  contacts = [], hasInvoiceLink = false, resetAt = 0, onRemind,
+  contacts = [], hasInvoiceLink = false, onRemind,
 }) {
   // A gap that's already been consolidated isn't news, opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
@@ -7285,39 +7273,19 @@ function Capture({
   const opener = drift
     ? `The bank and the books disagree by ${fmt(balance.delta)}. Want me to walk it?`
     : "I keep your books. What do you need?";
-  /* The transcript survives a reload.
+  /* One conversation, wherever you opened it.
 
-     It was in memory only, so every refresh and every time an installed app
-     was evicted from the background started the conversation again. On a
-     phone that is constant, and losing what Tally worked out about your
-     books thirty seconds ago is the most annoying possible way to lose it.
+     It used to live in this browser's storage, so the phone and the desktop
+     held two different conversations with the same bookkeeper, and a card
+     drawn on one was invisible on the other while the message beside it said
+     "the card is above".
 
-     Kept per ledger, so switching between business and personal does not
-     mix two conversations. */
-  const chatKey = `bt-chat:${data.ledger.id}`;
+     It is a table now, scoped to you and this ledger. An accountant reading
+     shared books gets their own thread. */
+  const [msgs, setMsgs] = useState([{ role: "assistant", text: opener }]);
+  const [threadReady, setThreadReady] = useState(false);
+  const seenIds = useRef(new Set());
 
-  const [msgs, setMsgs] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(chatKey) || "null");
-      if (Array.isArray(saved?.msgs) && saved.msgs.length) {
-        /* Collapse anything already said twice.
-
-           A transcript written before this fix has the same warning in it
-           several times over, and nothing else would ever remove them. This
-           keeps the first of each repeated assistant line and drops the rest,
-           so an existing conversation tidies itself the next time it opens
-           rather than carrying the mess forever. */
-        const seen = new Set();
-        return saved.msgs.filter((m) => {
-          if (m.role !== "assistant" || !m.text) return true;
-          if (seen.has(m.text)) return false;
-          seen.add(m.text);
-          return true;
-        });
-      }
-    } catch { /* corrupt or unavailable, start fresh */ }
-    return [{ role: "assistant", text: opener }];
-  });
   const [input, setInput] = useState("");
   // Empty when idle, otherwise the line shown under the transcript. One piece
   // of state instead of a boolean plus a mode to phrase it with.
@@ -7330,49 +7298,45 @@ function Capture({
   const greetedDrift = useRef(false);
   // The agent's own message history, in Anthropic shape. Separate from `msgs`,
   // which is what the panel draws, tool traffic belongs in one and not the other.
-  const convo = useRef((() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(chatKey) || "null");
-      if (Array.isArray(saved?.convo)) return saved.convo;
-    } catch { /* as above */ }
-    return [];
-  })());
-
-  /* What gets written, and what deliberately does not.
-
-     `att` and `image` hold a File and a blob URL. Neither survives a reload,
-     and a restored message pointing at a dead blob renders a broken image, so
-     those are dropped and the text around them stays. A card that was never
-     tapped is dropped too: a proposal restored days later is an offer to act
-     on figures nobody has looked at since.
-
-     Fifty messages, which is a long conversation and a small amount of
-     storage. */
-  /* Start again. Clears what is on screen, what the model has been told, and
-     what is stored, so "again" means again rather than "hidden". */
-  useEffect(() => {
-    if (!resetAt) return;
-    convo.current = [];
-    setMsgs([{ role: "assistant", text: opener }]);
-    try { localStorage.removeItem(chatKey); } catch { /* nothing to clear */ }
-  }, [resetAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  const convo = useRef([]);
 
   useEffect(() => {
-    const keep = msgs.slice(-50).map((m) => {
-      const { att, image, proposal, draft, ...rest } = m;
-      return rest;
+    let alive = true;
+    (async () => {
+      const rows = await chat.loadThread(data.ledger.id);
+      if (!alive) return;
+      if (Array.isArray(rows) && rows.length) {
+        rows.forEach((m) => m._id && seenIds.current.add(m._id));
+        setMsgs(rows);
+      }
+      // null means the load failed rather than the thread being empty, so the
+      // opener stays and nothing is overwritten.
+      setThreadReady(true);
+    })();
+
+    const stop = chat.watchThread(data.ledger.id, (m) => {
+      // From another device. Ours are already on screen and carry the same id.
+      if (!m._id || seenIds.current.has(m._id)) return;
+      seenIds.current.add(m._id);
+      setMsgs((prev) => [...prev, m]);
     });
-    try {
-      localStorage.setItem(chatKey, JSON.stringify({
-        msgs: keep,
-        convo: convo.current.slice(-24),
-        at: Date.now(),
-      }));
-    } catch { /* private mode, or full. The conversation still works. */ }
-  }, [msgs, chatKey]);
+
+    return () => { alive = false; stop(); };
+    /* eslint-disable-next-line */
+  }, [data.ledger.id]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
 
-  const push = (m) => setMsgs((prev) => [...prev, m]);
+  /* On screen straight away, and on the way to the other device.
+
+     The insert is not awaited: a message should appear as it is typed, not
+     after a round trip. The returned id is remembered so the realtime echo of
+     our own message is ignored rather than drawn twice. */
+  const push = (m) => {
+    setMsgs((prev) => [...prev, m]);
+    if (threadReady) {
+      chat.appendMessage(data.ledger.id, m).then((id) => { if (id) seenIds.current.add(id); });
+    }
+  };
 
   /* Say a thing once.
 
@@ -7393,6 +7357,9 @@ function Capture({
         onRemind?.();
         return prev;
       }
+      if (threadReady) {
+        chat.appendMessage(data.ledger.id, m).then((id) => { if (id) seenIds.current.add(id); });
+      }
       return [...prev, m];
     });
   };
@@ -7408,7 +7375,11 @@ function Capture({
      forever; a different gap is news and speaks. */
   useEffect(() => {
     if (!drift) return;
-    const mark = `${chatKey}:drift:${balance?.delta}`;
+    /* Keyed on the ledger and the figure, not on a storage key that no
+         longer exists. The same gap stays quiet across every device, because
+         a warning already sitting in the shared transcript does not need
+         saying again on the phone. */
+    const mark = `bt-drift:${data.ledger.id}:${balance?.delta}`;
     if (greetedDrift.current) return;
     try {
       if (localStorage.getItem(mark)) { greetedDrift.current = true; return; }

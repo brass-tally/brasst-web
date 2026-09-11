@@ -1,0 +1,209 @@
+{
+  "services": {
+    "landing": {
+      "root": "landing",
+      "headers": [
+        {
+          "source": "/sw.js",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=0, must-revalidate"
+            },
+            {
+              "key": "Service-Worker-Allowed",
+              "value": "/"
+            }
+          ]
+        },
+        {
+          "source": "/manifest.webmanifest",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/manifest+json"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=0, must-revalidate"
+            }
+          ]
+        }
+      ],
+      "trailingSlash": false,
+      "rewrites": [
+        {
+          "source": "/i/:slug/:token",
+          "destination": "/i/index.html"
+        },
+        {
+          "source": "/i/:token",
+          "destination": "/i/index.html"
+        }
+      ]
+    },
+    "app": {
+      "root": "app",
+      "framework": "vite",
+      "headers": [
+        {
+          "source": "/sw.js",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=0, must-revalidate"
+            }
+          ]
+        },
+        {
+          "source": "/manifest.webmanifest",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/manifest+json"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=0, must-revalidate"
+            }
+          ]
+        }
+      ],
+      "rewrites": [
+        {
+          "source": "/app/assets/:path*",
+          "destination": "/assets/:path*"
+        },
+        {
+          "source": "/app/favicon.ico",
+          "destination": "/favicon.ico"
+        },
+        {
+          "source": "/app/favicon.svg",
+          "destination": "/favicon.svg"
+        },
+        {
+          "source": "/app/favicon-32.png",
+          "destination": "/favicon-32.png"
+        },
+        {
+          "source": "/app/icon-:size.png",
+          "destination": "/icon-:size.png"
+        },
+        {
+          "source": "/app/icon-maskable-:size.png",
+          "destination": "/icon-maskable-:size.png"
+        },
+        {
+          "source": "/app/apple-touch-icon.png",
+          "destination": "/apple-touch-icon.png"
+        },
+        {
+          "source": "/app/manifest.webmanifest",
+          "destination": "/manifest.webmanifest"
+        },
+        {
+          "source": "/app/sw.js",
+          "destination": "/sw.js"
+        },
+        {
+          "source": "/app",
+          "destination": "/index.html"
+        },
+        {
+          "source": "/app/",
+          "destination": "/index.html"
+        },
+        {
+          "source": "/app/:path*",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/app",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/app/",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/app/:path*",
+      "destination": {
+        "service": "app"
+      }
+    },
+    {
+      "source": "/privacy",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/terms",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/data",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/invoice",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/i/:token",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/i/:slug/:token",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "landing"
+      }
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/send-beta-approvals",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/privacy.html",
+      "destination": "/privacy",
+      "permanent": true
+    },
+    {
+      "source": "/terms.html",
+      "destination": "/terms",
+      "permanent": true
+    },
+    {
+      "source": "/data.html",
+      "destination": "/data",
+      "permanent": true
+    }
+  ]
+}
