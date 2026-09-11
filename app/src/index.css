@@ -599,3 +599,8 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
 }
 .filed-pop { animation: filed-pop 260ms cubic-bezier(.2, .9, .3, 1) both; }
 @media (prefers-reduced-motion: reduce) { .filed-pop { animation: none; } }
+
+/* An icon's name, on hover. Hidden where there is no hover to speak of: a
+   tooltip that fires on tap is a tooltip that covers the thing you tapped. */
+.hint-bubble { animation: filed-pop 120ms ease both; }
+@media (hover: none) { .hint-bubble { display: none; } }

@@ -1054,13 +1054,24 @@ function Ledger({ onSignOut }) {
       if (alive) setInbound(rows);
     };
     load();
-    /* Every two minutes, and again whenever the tab comes back. An invoice
-       arrives while the app is open in another window, so a load-time fetch
-       alone would only ever find it on the next refresh. */
-    const timer = setInterval(load, 120000);
+
+    /* Three ways to find out, in order of how fast they are.
+
+       The socket is the one that makes it feel live. The other two are not
+       redundancy for its own sake: a websocket is the first thing a captive
+       portal drops and the last thing a sleeping phone restores, and an
+       invoice that arrives during either is one nobody is told about. */
+    const stop = share.watchInbound(data.ledger.id, load);
+    const timer = setInterval(load, 45000);
     const onFocus = () => document.visibilityState === "visible" && load();
     document.addEventListener("visibilitychange", onFocus);
-    return () => { alive = false; clearInterval(timer); document.removeEventListener("visibilitychange", onFocus); };
+
+    return () => {
+      alive = false;
+      stop();
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [data?.ledger?.id, data?.ledger?.readOnly]);
   const [menuOpen, setMenuOpen] = useState(false);
   // The same arithmetic the checklist does, so the dot on the icon and the
@@ -4892,6 +4903,11 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
   const [done, setDone] = useState(null);            // what the last action did
   const [filed, setFiled] = useState(null);          // the row mid-flight, being filed
   const [voided, setVoided] = useState(null);        // the last one removed
+  const [hint, setHint] = useState(null);            // which icon is naming itself
+  const [mailing, setMailing] = useState(false);
+  const [mailTo, setMailTo] = useState("");
+  const [mailNote, setMailNote] = useState("");
+  const [mailResult, setMailResult] = useState(null);
 
   const refresh = async () => {
     const [p, h, l] = await Promise.all([
@@ -4903,15 +4919,23 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     onCount?.(p.length);
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
-  /* Close the tray once it is empty. Not instantly: the "all caught up" line
-     needs a moment to be read, and a panel that vanishes the instant you press
-     a button feels like a crash rather than a finish. */
+  /* Close the tray only when you just emptied it.
+
+     This was keyed on "the tray is empty and something has arrived before",
+     which is true every time you open it afterwards to read the history. So
+     the panel closed itself two seconds after you opened it, every time, and
+     the history was unreadable.
+
+     A flag set by the action that cleared the last one is the difference
+     between finishing and merely looking. It is cleared as soon as it fires,
+     so the close happens once and never again on its own. */
+  const justCleared = useRef(false);
   useEffect(() => {
     if (open !== "inbox" || filed || pending.length) return;
-    if (!history.length) return;   // never opened on an empty tray, leave it
-    const t = setTimeout(() => setOpen(null), 1900);
+    if (!justCleared.current) return;
+    const t = setTimeout(() => { justCleared.current = false; setOpen(null); }, 1900);
     return () => clearTimeout(t);
-  }, [open, filed, pending.length, history.length]);
+  }, [open, filed, pending.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -4949,6 +4973,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
        having been deleted rather than filed. Now it turns into its own
        receipt for a moment, then goes, so the eye follows the thing it acted
        on instead of hunting for what changed. */
+    if (pending.length <= 1) justCleared.current = true;
     setFiled({ id: inv.id, party: inv.party, amount: inv.amount, dueDate: inv.dueDate });
     setTimeout(() => {
       setFiled(null);
@@ -4960,6 +4985,7 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     setBusy(inv.id);
     await share.decideInbound(inv.id, "declined");
     setBusy("");
+    if (pending.length <= 1) justCleared.current = true;
     setDone(`${inv.party} set aside. Nothing was added to your books.`);
     refresh();
   };
@@ -5002,6 +5028,14 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     refresh();
   };
 
+  const sendLink = async () => {
+    setBusy("mail"); setMailResult(null);
+    const r = await share.emailInvoiceLink(first.token, mailTo.trim(), mailNote.trim());
+    setBusy("");
+    setMailResult(r);
+    if (r.ok) { setMailTo(""); setMailNote(""); }
+  };
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(share.invoiceLinkUrl(first.token));
@@ -5010,12 +5044,21 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
     } catch { /* the link is on screen anyway */ }
   };
 
+  /* An icon with its name underneath it on hover.
+     `title` alone was doing this, badly: the browser tooltip takes a second to
+     appear, renders in the operating system's font, and never appears at all
+     on a phone. This one is instant and looks like the app. It is hidden on
+     coarse pointers, where hovering is not a thing and the label beside the
+     icons already says what the tray is. */
   const Tool = ({ id, icon: Icon, label, count }) => (
     <button
       onClick={() => { setOpen(open === id ? null : id); setDone(null); }}
+      onMouseEnter={() => setHint(id)}
+      onMouseLeave={() => setHint(null)}
+      onFocus={() => setHint(id)}
+      onBlur={() => setHint(null)}
       aria-label={label}
       aria-expanded={open === id}
-      title={label}
       style={{
         background: open === id ? P.brass : P.surface,
         color: open === id ? P.onbrass : P.text,
@@ -5025,6 +5068,20 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
       className="relative w-11 h-11 flex items-center justify-center shrink-0 press"
     >
       <Icon size={18} />
+      {hint === id && (
+        <span
+          role="tooltip"
+          className="hint-bubble"
+          style={{
+            position: "absolute", top: "calc(100% + 7px)", left: "50%", transform: "translateX(-50%)",
+            background: P.text, color: P.bg, borderRadius: 9, padding: "5px 9px",
+            fontSize: 12.5, whiteSpace: "nowrap", zIndex: 30, pointerEvents: "none",
+            boxShadow: elev(2),
+          }}
+        >
+          {label}
+        </span>
+      )}
       {count > 0 && (
         <span
           style={{
@@ -5254,11 +5311,80 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
                     >
                       {copied ? "Copied" : "Copy the link"}
                     </button>
+                    <button
+                      onClick={() => { setMailing(!mailing); setMailResult(null); }}
+                      style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                      className="h-11 px-4 text-[15px] font-medium inline-flex items-center gap-2 press"
+                    >
+                      <Mail size={16} /> Email it
+                    </button>
                     <span style={{ color: P.faint }} className="text-[14px]">
                       {first.submissions} received
                       {links.length > 1 ? ` · ${links.length} links, the rest are in Settings` : ""}
                     </span>
                   </div>
+
+                  {/* Sending it, rather than copying it somewhere else to send.
+                      A link that has to be pasted into another app is a link
+                      that gets pasted with no context, and the supplier then
+                      has to guess what it is. */}
+                  {mailing && (
+                    <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mt-3">
+                      <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">
+                        Their email
+                      </label>
+                      <input
+                        value={mailTo}
+                        onChange={(e) => setMailTo(e.target.value)}
+                        type="email"
+                        inputMode="email"
+                        autoComplete="off"
+                        placeholder="accounts@contractor.ca"
+                        style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+                        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
+                      />
+                      <label style={{ color: P.muted }} className="text-[14px] block mt-3 mb-1.5">
+                        A line for them, if you want one
+                      </label>
+                      <input
+                        value={mailNote}
+                        onChange={(e) => setMailNote(e.target.value)}
+                        placeholder="For the September work"
+                        style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+                        className="w-full h-11 px-3.5 text-[15px] outline-none border-none"
+                      />
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        <button
+                          onClick={sendLink}
+                          disabled={busy === "mail" || !mailTo.trim()}
+                          style={{
+                            background: P.brass, color: P.onbrass, borderRadius: R.pill,
+                            opacity: busy === "mail" || !mailTo.trim() ? 0.5 : 1,
+                          }}
+                          className="h-11 px-4 text-[15px] font-medium press"
+                        >
+                          {busy === "mail" ? "Sending" : "Send it"}
+                        </button>
+                        <button
+                          onClick={() => { setMailing(false); setMailResult(null); }}
+                          style={{ color: P.muted }}
+                          className="h-11 px-2 text-[15px] press"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {mailResult && (
+                        <p
+                          style={{ color: mailResult.ok ? P.credit : P.debit }}
+                          className="text-[14.5px] mt-3 leading-snug"
+                        >
+                          {mailResult.ok
+                            ? `Sent to ${mailResult.to}. Replies come to you, not to us.`
+                            : mailResult.error}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </>
               ) : (
                 <button
@@ -5323,7 +5449,13 @@ function AccessCard({ ledger }) {
 
   return (
     <>
-      <section style={cardStyle()} className="p-5">
+      {/* min-w-0 on a grid child is the whole fix.
+          A grid track sizes to its content by default, and this card holds an
+          intake URL in a monospace face with nothing to break on. That one
+          unbreakable string set the track's minimum width, the card grew past
+          the screen, and every paragraph in it was cut off on the right.
+          Nothing was wrong with the text. */}
+      <section style={cardStyle()} className="p-5 min-w-0">
         <h3 style={{ fontFamily: SERIF }} className="text-xl">Who can read this ledger</h3>
         <p style={{ color: P.muted }} className="text-[15px] mb-4">
           Give your accountant the books without giving them the keys. They can read everything except your
@@ -5374,7 +5506,7 @@ function AccessCard({ ledger }) {
         {err && <p style={{ color: P.debit }} className="text-[14px] mt-2">{err}</p>}
       </section>
 
-      <section style={cardStyle()} className="p-5">
+      <section style={cardStyle()} className="p-5 min-w-0">
         <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices sent to you</h3>
         <p style={{ color: P.muted }} className="text-[15px] mb-4">
           Send a contractor this link and their invoice arrives in your books. Nothing becomes a payable until
@@ -5383,8 +5515,11 @@ function AccessCard({ ledger }) {
 
         {links.map((l) => (
           <div key={l.id} className="py-3" style={{ borderTop: `1px solid ${P.line}` }}>
-            <div className="flex items-center gap-3">
-              <span style={{ color: P.text, fontFamily: MONO }} className="text-[13.5px] flex-1 min-w-0 truncate">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span
+                style={{ color: P.text, fontFamily: MONO }}
+                className="text-[13px] w-full break-all"
+              >
                 {share.invoiceLinkUrl(l.token)}
               </span>
               <button onClick={() => copy(l.token)} style={{ color: P.brassText }} className="text-[14.5px] shrink-0 press">

@@ -1,68 +1,31 @@
-# API routes
+# The API service
 
-Vercel serverless functions. Verified live: `/api/health` answers 200 with every
-environment variable set.
+Vercel serves functions from `<project root>/api`. This service's root is the
+`api/` folder, so the functions live at `api/api/*.js`. That doubling looks
+wrong and is what the platform expects: `api/api/health.js` is served at
+`/api/health`.
 
-```
-send-beta-approvals.js   the cron target. Approves waiting signups and emails a way in
-lib/email.js             the approval email
-health.js                which environment variables are present
-```
+They were at `api/*.js`, one level too high, which is why every route returned
+the landing site's 404 page and why the beta approval cron has never fired.
 
-## The gap this filled
+## Check it after deploying
 
-`vercel.json` has scheduled `/api/send-beta-approvals` since it was written, but
-the file did not exist. The endpoint returned 404 on every run, so **no signup
-was ever approved automatically**. Anything sitting in `beta_signups` with
-status `pending` has been waiting the whole time.
-
-After deploying, check what is queued:
-
-```sql
-select email, status, created_at, approved_at
-from public.beta_signups order by created_at;
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://www.brasstally.com/api/health
 ```
 
-Anything older than seven minutes goes out on the next run.
+**200** means the service is live. **404** means it is not, and the next thing
+to look at is whether the Vercel project shows three services rather than two.
+
+## Routes
+
+| Path | What it does |
+|---|---|
+| `/api/health` | Returns ok. The cheapest way to tell whether this service exists. |
+| `/api/invoice-received` | Signs a supplier's upload, emails both sides, and sends a test on request. |
+| `/api/send-beta-approvals` | Cron, every five minutes. Approves waiting signups and emails them in. |
 
 ## Environment
 
-Set in Vercel project settings. `/api/health` reports which are present.
-
-```
-SUPABASE_URL
-SUPABASE_SERVICE_ROLE_KEY     admin. This route mints sign-in links
-RESEND_API_KEY
-RESEND_FROM_EMAIL             a verified sender in Resend
-APP_URL                       https://brasstally.com
-CRON_SECRET                   required, and not currently reported by health.js
-```
-
-**`CRON_SECRET` is not optional here**, whatever the older notes say. The route
-mints authentication links and sends them, so without a secret anyone could
-call it, drain the Resend quota, and approve every pending signup at will. It
-fails closed: no secret configured means it refuses to run. Vercel attaches
-`Authorization: Bearer $CRON_SECRET` automatically once the variable is set.
-
-## Behaviour worth knowing
-
-- **The row is marked approved only after the email is accepted.** Marking first
-  and sending second produces people who are approved and never hear from us,
-  and the next run cannot find them again.
-- **A failed send stays pending** and is retried on the next run, so a transient
-  Resend hiccup does not cost someone their invitation.
-- **The update is conditional on still being pending**, so two overlapping runs
-  cannot both send.
-- **Fifty per run.** Bounds the email bill if the table ever fills quickly.
-- **The email carries a six digit code as well as a link**, because the app's
-  sign-in screen accepts one, and mail clients that rewrite links or open on
-  another device would otherwise strand people.
-
-## Testing
-
-```bash
-curl -X POST https://brasstally.com/api/send-beta-approvals \
-  -H "Authorization: Bearer $CRON_SECRET"
-```
-
-Expect `{"approved":n,"checked":n}`. Without the header, `401`.
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`,
+`RESEND_FROM_EMAIL`, `APP_URL`, `CRON_SECRET`.

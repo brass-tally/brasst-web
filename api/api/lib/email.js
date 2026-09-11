@@ -189,3 +189,64 @@ export function invoiceSubmittedEmail({ business, party, amount, description, in
 </td></tr></table>
 </body></html>`;
 }
+
+/**
+ * The invitation a supplier receives: "send me your invoice, here is where".
+ *
+ * The link is the whole message, so it is a button and a plain URL underneath
+ * it. Contractors read mail in clients that strip buttons, and one that
+ * cannot be clicked has to still be readable enough to type.
+ */
+export function invoiceInviteEmail({ business, fromName, note, link }) {
+  const brass = "#A9620A";
+  const fill = "#F59E0B";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>Send your invoice to ${business}</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:32px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <div style="font-size:15px;font-weight:600;color:${brass};margin-bottom:14px;">Brasstally</div>
+      <h1 style="margin:0 0 14px;font-size:23px;line-height:1.3;color:${ink};font-weight:600;">
+        Send your invoice to ${business}
+      </h1>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:${muted};">
+        ${fromName ? `${fromName} at ${business}` : business} asked you to send invoices through this link. It
+        takes a minute, you can attach the PDF, and you get a copy of what you sent.
+      </p>
+
+      ${note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F5F3F0;border-radius:14px;padding:14px 16px;margin-bottom:20px;">
+        <tr><td style="font-size:15px;line-height:1.55;color:${ink};">${note}</td></tr>
+      </table>` : ""}
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+        <tr><td style="border-radius:999px;background:${fill};">
+          <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
+             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
+            Send your invoice
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:0 0 18px;font-size:13.5px;line-height:1.5;color:#8A827B;word-break:break-all;">
+        Or paste this into your browser:<br/><span style="color:${muted}">${link}</span>
+      </p>
+
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#8A827B;">
+        This is not a payment page and nothing is charged. It sends the details to their bookkeeping so the
+        invoice does not sit in an inbox.
+      </p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

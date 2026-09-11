@@ -233,3 +233,65 @@ export async function voidInbound(id) {
     return { ok: true, obligationId: row?.obligation_id || null };
   }, { ok: false });
 }
+
+/* Tell me when an invoice arrives, without asking every two minutes.
+
+   Postgres changes are pushed over a websocket, so a submission shows up in
+   the tray about as fast as the supplier sees their own confirmation. The
+   poll stays as a floor: a socket can be dropped by a proxy, a phone that has
+   been asleep reconnects on its own schedule, and a feature whose only
+   delivery path is a live connection is a feature that quietly stops working
+   on hotel wifi.
+
+   Returns an unsubscribe. Realtime has to be enabled for the table in the
+   Supabase dashboard; without it this is inert and the poll carries it. */
+export function watchInbound(ledgerId, onChange) {
+  if (!ledgerId) return () => {};
+  try {
+    const channel = supabase
+      .channel(`inbound:${ledgerId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "inbound_invoices", filter: `ledger_id=eq.${ledgerId}` },
+        (payload) => onChange?.(payload),
+      )
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch { /* already gone */ } };
+  } catch (e) {
+    console.warn("realtime unavailable, falling back to polling:", e?.message || e);
+    return () => {};
+  }
+}
+
+/* Email the intake link to a supplier.
+
+   Goes through our own API rather than a mailto, because a mailto opens the
+   sender's mail client with a link in it and no way to know whether it was
+   ever sent, and because the message should look like the product rather than
+   like a URL pasted into a blank email.
+
+   The session token travels with it: this endpoint sends mail to an address
+   the caller names, so the server checks the caller owns the link rather than
+   trusting whoever holds it. */
+export async function emailInvoiceLink(token, to, note) {
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const jwt = sess?.session?.access_token;
+    if (!jwt) return { ok: false, error: "Sign in again and try that once more." };
+
+    const r = await fetch("/api/invoice-received", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ action: "send-link", token, to, note }),
+    });
+
+    if (r.status === 404) {
+      return { ok: false, error: "The mail service is not deployed yet. Check /api/health." };
+    }
+    const body = await r.json().catch(() => null);
+    if (!body) return { ok: false, error: "No answer from the mail service." };
+    return body;
+  } catch (e) {
+    return { ok: false, error: e?.message || "That did not send." };
+  }
+}

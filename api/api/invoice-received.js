@@ -19,11 +19,12 @@
  *   { action: "upload", token, filename }   -> { ok, path, signedUrl }
  *   { action: "notify", token, id }         -> { ok }
  *   { action: "test", token }               -> { ok, to } or the reason not
+ *   { action: "send-link", token, to, note } -> { ok }  owner only, needs a bearer
  */
 
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
-import { invoiceReceivedEmail, invoiceSubmittedEmail } from "./lib/email.js";
+import { invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail } from "./lib/email.js";
 
 const BUCKET = "receipts";
 
@@ -131,6 +132,61 @@ export default async function handler(req, res) {
         }),
       });
       return res.status(200).json({ ok: true, sent: true });
+    }
+
+    if (action === "send-link") {
+      /* This action is different from every other one here, and the difference
+         is the point.
+
+         The others are called by an anonymous supplier and are safe because
+         the most they can do is put data into one ledger. This one sends mail
+         from our domain to an address the caller chooses, which is a spam
+         relay if an intake token is the only thing guarding it, and an intake
+         token is meant to be handed around.
+
+         So it requires the owner's own session and checks that they own the
+         ledger the token belongs to. Holding the link is not enough. */
+      const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      if (!bearer) return res.status(401).json({ ok: false, error: "Sign in first." });
+
+      const { data: caller } = await db.auth.getUser(bearer);
+      const uid = caller?.user?.id;
+      if (!uid || uid !== link.ledgers.user_id) {
+        return res.status(403).json({ ok: false, error: "That is not your link." });
+      }
+
+      const to = String(req.body.to || "").trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
+        return res.status(200).json({ ok: false, error: "That does not look like an email address." });
+      }
+
+      const missing = ["RESEND_API_KEY", "RESEND_FROM_EMAIL"].filter((k) => !process.env[k]);
+      if (missing.length) {
+        return res.status(200).json({ ok: false, error: `Not set in Vercel: ${missing.join(", ")}` });
+      }
+
+      // The note is shown to the supplier, so it is text and never markup.
+      const note = String(req.body.note || "").slice(0, 400)
+        .replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      const sent = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL,
+        to,
+        // A supplier replying goes to the person who invited them, not to us.
+        replyTo: caller.user.email || undefined,
+        subject: `Send your invoice to ${link.ledgers.name}`,
+        html: invoiceInviteEmail({
+          business: link.ledgers.name,
+          fromName: caller.user.email ? caller.user.email.split("@")[0] : null,
+          note: note || null,
+          link: `${process.env.APP_URL || "https://brasstally.com"}/invoice?t=${encodeURIComponent(token)}`,
+        }),
+      });
+      if (sent?.error) {
+        return res.status(200).json({ ok: false, error: `Resend refused it: ${sent.error.message || sent.error}` });
+      }
+      return res.status(200).json({ ok: true, to });
     }
 
     if (action === "test") {
