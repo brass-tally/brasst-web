@@ -591,6 +591,22 @@ function partyLooksRight(bankText, party) {
   return b.split(" ").filter((w) => w.length >= 4).some((w) => a.includes(w));
 }
 
+/* How far off an arriving payment can be and still be that invoice.
+
+   To the cent was wrong. A client pays through a processor and the fee comes
+   out first, a bank takes a wire charge, somebody rounds, somebody applies a
+   discount you agreed on the phone. $6,055.20 against a $6,207.30 invoice is
+   not a different payment, it is that payment with $152.10 taken out of it.
+
+   Two and a half percent or ten dollars, whichever is larger, and never more
+   than five hundred: a percentage alone lets a six figure invoice match
+   something thousands away. Short only, because money arriving over the
+   invoice is a different conversation. */
+export function arrivalTolerance(invoiceAmount) {
+  const amt = Math.abs(Number(invoiceAmount) || 0);
+  return Math.min(500, Math.max(10, amt * 0.025));
+}
+
 export function incomingSettlements(bankTxns = [], receivables = [], { windowDays = 45 } = {}) {
   const open = receivables.filter((o) => o.status === "open");
   const credits = bankTxns.filter(
@@ -607,7 +623,10 @@ export function incomingSettlements(bankTxns = [], receivables = [], { windowDay
 
     const near = open.filter((o) => {
       if (used.has(o.id)) return false;
-      if (Math.abs(Math.abs(Number(o.amount) || 0) - amount) > 0.005) return false;
+      const owed = Math.abs(Number(o.amount) || 0);
+      const short = owed - amount;
+      // Exact, or short by a plausible fee. Never over.
+      if (short < -0.005 || short > arrivalTolerance(owed)) return false;
       if (!o.dueDate || !b.date) return true;
       const gap = Math.abs(new Date(b.date) - new Date(o.dueDate)) / 864e5;
       return gap <= windowDays;
@@ -624,9 +643,11 @@ export function incomingSettlements(bankTxns = [], receivables = [], { windowDay
     if (!pick) continue;
 
     used.add(pick.id);
+    const shortfall = Math.abs(Number(pick.amount) || 0) - amount;
     out.push({
       bank: b,
       obligation: pick,
+      shortfall: shortfall > 0.005 ? Number(shortfall.toFixed(2)) : 0,
       why: named.length === 1
         ? `${pick.party} appears on the bank line`
         : "the only open invoice for that amount",

@@ -25,7 +25,7 @@ import {
 } from "./lib/contacts";
 import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
-  proposeMatches, incomingSettlements, explainDelta, clearedIndex, consolidationPlan,
+  proposeMatches, incomingSettlements, arrivalTolerance, explainDelta, clearedIndex, consolidationPlan,
   findDuplicateEntries, findDuplicateBankLines, likelyAlreadyInBooks, signatureOf,
 } from "./lib/reconcile";
 import { runAgent, trimHistory } from "./lib/agent";
@@ -1895,7 +1895,21 @@ function Ledger({ onSignOut }) {
     const receiptId = actual.attachmentId || undefined;
     const receiptName = receiptId ? actual.attachmentName : undefined;
     const obDoc = receiptId && !item.attachmentId ? { attachmentId: receiptId, attachmentName: receiptName } : null;
-    const tx = {
+    /* The money may already be in the books.
+
+       A wire lands, the bank feed records it, consolidation files it as
+       Client revenue, and then somebody marks the invoice received. Settling
+       always wrote a second entry, so the same money was counted twice and
+       income was overstated by the amount of every invoice settled this way.
+
+       When the caller has found the entry that already accounts for it, that
+       entry is adopted: the obligation points at it, and nothing new is
+       written. */
+    const adopted = actual.existingTxId
+      ? (data.transactions || []).find((t) => t.id === actual.existingTxId)
+      : null;
+
+    const tx = adopted || {
       id: crypto.randomUUID(),
       date: settledOn,
       amount,
@@ -1927,7 +1941,8 @@ function Ledger({ onSignOut }) {
           ...(next ? [next] : []),
           ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId, ...(obDoc || {}) } : x)),
         ],
-        transactions: [tx, ...d.transactions],
+        // Adopted entries are already in the list, so adding would duplicate.
+        transactions: adopted ? d.transactions : [tx, ...d.transactions],
       };
     });
     setMonth(settledOn.slice(0, 7));
@@ -1936,7 +1951,7 @@ function Ledger({ onSignOut }) {
     addNotification(notify.success(`${label}${recurring}`));
     dbTry(async () => {
       await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId: creditId || null, ...(obDoc || {}) });
-      await db.insertTransaction(tx);
+      if (!adopted) await db.insertTransaction(tx);
       if (next) await db.insertObligation(kind, next);
     });
 
@@ -5447,6 +5462,16 @@ function ArrivedCard({ items, onApprove, onDismiss, busyId }) {
           <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
             {h.bank.date} &middot; {(h.bank.description || "bank line").slice(0, 40)} &middot; {h.why}
           </div>
+          {h.shortfall > 0 && (
+            /* Named, not smoothed over. A payment that arrives short is
+               usually a processor fee and occasionally a client deciding to
+               pay less, and only you know which. Approving records what
+               actually arrived. */
+            <div style={{ color: P.debit }} className="text-[13.5px] mt-0.5">
+              {fmt(h.shortfall)} less than the {fmt(Math.abs(h.obligation.amount))} invoiced, probably a
+              fee. Approving records what arrived.
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2 mt-2.5">
             <button
               onClick={() => onApprove(h)}
@@ -10368,19 +10393,59 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
      Amount to the cent, within a fortnight of the date being entered, and
      only unmatched credits, so a line already explained by something else is
      never claimed twice. */
+  /* An entry that already accounts for this money.
+
+     Looked for before the bank, because it is the stronger finding: a bank
+     line means the money arrived, an entry means it arrived and somebody has
+     already written it down. Settling without noticing it writes a second
+     one and overstates income.
+
+     Not already spoken for: an entry another invoice has been settled against
+     belongs to that invoice. */
+  const claimedTxIds = useMemo(() => {
+    const all = [...(data?.receivables || []), ...(data?.payables || [])];
+    return new Set(all.map((o) => o.settledTxId).filter(Boolean));
+  }, [data?.receivables, data?.payables]);
+
+  const alreadyInBooks = useMemo(() => {
+    const owed = Math.abs(Number(item?.amount) || 0);
+    const want = Math.abs(Number(parsed) || 0);
+    if (!owed && !want) return null;
+    const tol = arrivalTolerance(owed || want);
+    const wantType = kind === "receivables" ? "income" : "expense";
+
+    return (data?.transactions || []).find((t) => {
+      if (t.type !== wantType) return false;
+      if (claimedTxIds.has(t.id)) return false;
+      const got = Math.abs(Number(t.amount) || 0);
+      const matchesEntered = want && Math.abs(got - want) <= 0.005;
+      const matchesInvoice = owed && owed - got >= -0.005 && owed - got <= tol;
+      if (!matchesEntered && !matchesInvoice) return false;
+      if (!t.date || !date) return true;
+      return Math.abs(new Date(t.date) - new Date(date)) <= 14 * 864e5;
+    }) || null;
+  }, [data?.transactions, claimedTxIds, item?.amount, parsed, date, kind]);
+
   const bankProof = useMemo(() => {
     if (kind !== "receivables") return null;
     const want = Math.abs(Number(parsed) || 0);
     if (!want) return null;
+    /* The invoice, not the amount in the box, is what a fee comes off. Match
+       against what is owed and let the arriving figure be smaller. */
+    const owed = Math.abs(Number(item?.amount) || want);
+    const tol = arrivalTolerance(owed);
     return (bankTxns || []).find((b) => {
       if (b.direction !== "credit" || b.status === "matched" || b.status === "ignored") return false;
-      if (Math.abs(Math.abs(Number(b.amount) || 0) - want) > 0.005) return false;
+      const got = Math.abs(Number(b.amount) || 0);
+      const shortOfEntered = Math.abs(got - want) <= 0.005;
+      const shortOfInvoice = owed - got >= -0.005 && owed - got <= tol;
+      if (!shortOfEntered && !shortOfInvoice) return false;
       if (!b.date || !date) return true;
       return Math.abs(new Date(b.date) - new Date(date)) <= 14 * 864e5;
     }) || null;
   }, [kind, parsed, date, bankTxns]);
 
-  const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName || bankProof);
+  const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName || bankProof || alreadyInBooks);
 
   const pickDoc = (file) => {
     if (!file) return;
@@ -10397,7 +10462,11 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
     setSaving(true);
     setDocErr("");
     try {
-      await onConfirm({ amount: parsed, date, payMethod, creditId, att: doc, bankId: bankProof?.id });
+      await onConfirm({
+      amount: parsed, date, payMethod, creditId, att: doc,
+      bankId: bankProof?.id,
+      existingTxId: alreadyInBooks?.id,
+    });
     } catch (e) {
       setDocErr(e?.message || "Something went wrong filing that. Try again.");
       setSaving(false);
@@ -10454,7 +10523,42 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
               through without a receipt" is a fair question and the answer is a
               good one: a statement entry is stronger evidence than a
               photograph of a screen. */}
-          {bankProof && (
+          {/* Already written down, so nothing new will be. */}
+        {alreadyInBooks && (
+          <div
+            style={{ background: P.credit + "14", borderRadius: 14 }}
+            className="flex items-start gap-3 p-3.5 mt-2"
+          >
+            <span
+              aria-hidden
+              style={{ background: P.credit + "22", color: P.credit, borderRadius: 10 }}
+              className="w-8 h-8 flex items-center justify-center shrink-0"
+            >
+              <Check size={15} />
+            </span>
+            <span className="min-w-0">
+              <span style={{ color: P.text }} className="text-[15px] block">
+                This is already in your books
+              </span>
+              <span style={{ color: P.muted }} className="text-[14px]">
+                {alreadyInBooks.description || alreadyInBooks.category} on {alreadyInBooks.date},{" "}
+                {fmt(Math.abs(alreadyInBooks.amount))}. Marking received will point this invoice at that
+                entry rather than adding a second one.
+              </span>
+              {Math.abs(Math.abs(alreadyInBooks.amount) - parsed) > 0.005 && (
+                <button
+                  onClick={() => setAmount(String(Math.abs(alreadyInBooks.amount)))}
+                  style={{ color: P.brassText }}
+                  className="text-[14px] underline decoration-dotted underline-offset-2 mt-1 block"
+                >
+                  Use {fmt(Math.abs(alreadyInBooks.amount))} instead of {fmt(parsed)}
+                </button>
+              )}
+            </span>
+          </div>
+        )}
+
+        {!alreadyInBooks && bankProof && (
             <div
               style={{ background: P.credit + "14", borderRadius: 14 }}
               className="flex items-start gap-3 p-3.5 mt-2"
@@ -10470,6 +10574,15 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
                 <span style={{ color: P.text }} className="text-[15px] block">
                   The bank shows {fmt(Math.abs(bankProof.amount))} arriving on {bankProof.date}
                 </span>
+                {Math.abs(Math.abs(bankProof.amount) - parsed) > 0.005 && (
+                  <button
+                    onClick={() => setAmount(String(Math.abs(bankProof.amount)))}
+                    style={{ color: P.brassText }}
+                    className="text-[14px] underline decoration-dotted underline-offset-2"
+                  >
+                    Use {fmt(Math.abs(bankProof.amount))} instead of {fmt(parsed)}
+                  </button>
+                )}
                 <span style={{ color: P.muted }} className="text-[14px]">
                   {(bankProof.description || "bank line").slice(0, 46)}. That is the evidence, so no receipt
                   is needed, and the two will be paired.
@@ -12667,7 +12780,16 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
               <div className="flex-1 min-w-0">
                 <div className="text-[16px] truncate" style={{ color: P.text }}>{c.institution || "Bank"}</div>
                 <div style={{ color: P.faint }} className="text-[14px] mt-0.5">
-                  {c.last_synced ? `Last synced ${stamp(c.last_synced)}` : "Never synced"}
+                  {/* Whether it is current, not only when it ran.
+
+                      "Today at 7:02 a.m." is a fact and leaves the actual
+                      question unanswered: is this figure the one I should be
+                      looking at? A sync at 6am today is before the morning
+                      boundary and therefore yesterday's picture, and the
+                      timestamp alone makes it look fresh. */}
+                  {c.last_synced
+                    ? `${bank.isStale({ lastSyncedAt: c.last_synced }) ? "Last synced" : "Up to date, synced"} ${stamp(c.last_synced)}`
+                    : "Never synced"}
                   {Array.isArray(c.accounts) && c.accounts.length
                     ? ` · ${c.accounts.length} ${c.accounts.length === 1 ? "account" : "accounts"}`
                     : ""}
