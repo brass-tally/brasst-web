@@ -407,13 +407,36 @@ export async function listLinkInvites(ledgerId) {
       .eq("ledger_id", ledgerId)
       .order("sent_at", { ascending: false });
     if (error) throw error;
-    return (data || []).map((r) => ({
+    const rows = (data || []).map((r) => ({
       id: r.id, linkId: r.link_id, email: r.email,
       note: r.note || undefined, sentAt: r.sent_at,
       active: r.invoice_links?.active ?? true,
       submissions: r.invoice_links?.submissions ?? 0,
       token: r.invoice_links?.token,
     }));
+
+    /* Links whose label is an address but which have no invite row.
+
+       Migration 0037 backfills these, and this covers the case where it has
+       not been run: a personal link carries the recipient in its label, so
+       the list can be right without waiting for a migration. Derived entries
+       are marked so the interface does not claim a send date it invented. */
+    const known = new Set(rows.map((r) => r.linkId));
+    const { data: links } = await supabase
+      .from("invoice_links")
+      .select("id, label, active, submissions, created_at")
+      .eq("ledger_id", ledgerId);
+    for (const l of links || []) {
+      if (known.has(l.id)) continue;
+      if (!l.label || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(l.label)) continue;
+      rows.push({
+        id: `derived:${l.id}`, linkId: l.id, email: l.label,
+        sentAt: l.created_at, active: l.active, submissions: l.submissions || 0,
+        derived: true,
+      });
+    }
+    rows.sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)));
+    return rows;
   }, []);
 }
 

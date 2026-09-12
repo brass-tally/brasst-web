@@ -32,12 +32,33 @@ const strip = (m) => {
   return rest;
 };
 
-export async function loadThread(ledgerId, limit = 80) {
+/* Which conversation today is.
+
+   A date in Eastern time, rolling at 7am rather than midnight. Something
+   asked at 11pm belongs to that day's conversation, not to the one starting
+   while you sleep. Eastern because the business is in Ontario and a
+   bookkeeper's day should not move when you travel. */
+export function currentThread(at = new Date()) {
+  const est = new Date(at.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  est.setHours(est.getHours() - 7);
+  return `${est.getFullYear()}-${String(est.getMonth() + 1).padStart(2, "0")}-${String(est.getDate()).padStart(2, "0")}`;
+}
+
+export async function listThreads(ledgerId) {
+  return soft("threads", async () => {
+    const { data, error } = await supabase.rpc("chat_threads", { p_ledger: ledgerId, p_limit: 30 });
+    if (error) throw error;
+    return (data || []).map((r) => ({ thread: r.thread, messages: Number(r.messages), lastAt: r.last_at }));
+  }, []);
+}
+
+export async function loadThread(ledgerId, limit = 80, thread = null) {
   return soft("load", async () => {
     const { data, error } = await supabase
       .from("chat_messages")
       .select("id, payload")
       .eq("ledger_id", ledgerId)
+      .eq("thread", thread || currentThread())
       .order("id", { ascending: false })
       .limit(limit);
     if (error) throw error;
@@ -49,7 +70,7 @@ export async function appendMessage(ledgerId, message) {
   return soft("append", async () => {
     const { data, error } = await supabase
       .from("chat_messages")
-      .insert({ ledger_id: ledgerId, payload: strip(message) })
+      .insert({ ledger_id: ledgerId, thread: currentThread(), payload: strip(message) })
       .select("id")
       .single();
     if (error) throw error;

@@ -2585,6 +2585,7 @@ function Ledger({ onSignOut }) {
               /* Something wanted to speak and had already said it. Light the
                  badge rather than repeat the sentence. */
               onRemind={() => setChatUnread(true)}
+              waiting={inbound.length}
               apply={{
                 addTx, addAR, settleAR, setPlanned, setAnchor,
                 addContact: async (c) => {
@@ -5792,7 +5793,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   "Nothing waiting" is a card that appears the moment you clear
                   the last one, so the reward for finishing is a box telling you
                   the box is empty. */}
-              {pending.length > 0 && !filed && (
+              {(pending.length > 0 || quietSchedules.length > 0) && !filed && (
                 <>
                   <h3 style={{ fontFamily: SERIF }} className="text-xl">Waiting on you</h3>
                   <p style={{ color: P.muted }} className="text-[15px] mb-2">
@@ -5804,7 +5805,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
               {/* Cleared, and it says so once. The panel closes itself a beat
                   later, because the point of clearing a queue is not having to
                   look at it. */}
-              {pending.length === 0 && !filed && (
+              {pending.length === 0 && quietSchedules.length === 0 && !filed && (
                 <div className="py-2 text-center">
                   <div
                     style={{ background: P.credit + "18", color: P.credit }}
@@ -5848,6 +5849,51 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   </div>
                 </div>
               )}
+
+              {/* One list.
+
+                  Waiting invoices and quiet arrangements were two sections
+                  describing the same relationships, so GEN Work appeared twice
+                  and the eye had to work out that both were the same thing.
+                  An arrangement with nothing due is a row like any other,
+                  marked Monthly, saying when the next one lands. */}
+              {!filed && quietSchedules.map((sc) => (
+                <div
+                  key={`sched-${sc.id}`}
+                  className="flex items-center gap-3 py-3.5"
+                  style={{ borderTop: `1px solid ${P.line}` }}
+                >
+                  <span className="flex-1 min-w-0">
+                    <span style={{ color: P.text }} className="text-[15.5px] block truncate">
+                      {sc.party}
+                      {sc.description ? <span style={{ color: P.muted }}> &middot; {sc.description}</span> : null}
+                      <span
+                        style={{ background: P.brass + "24", color: P.brassText, borderRadius: 999 }}
+                        className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
+                      >
+                        Monthly
+                      </span>
+                    </span>
+                    <span style={{ color: P.faint }} className="text-[13.5px]">
+                      Nothing due. Next on the {ordinal(sc.dayOfMonth)}.
+                    </span>
+                  </span>
+                  <span
+                    style={{ fontFamily: MONO, color: P.faint }}
+                    className="text-[15px] tabular-nums shrink-0"
+                  >
+                    {fmt(sc.amount)}
+                  </span>
+                  <button
+                    onClick={() => stopOne(sc)}
+                    disabled={busy === sc.id}
+                    style={{ color: P.faint }}
+                    className="h-11 px-2 text-[14px] shrink-0 press"
+                  >
+                    Stop
+                  </button>
+                </div>
+              ))}
 
               {!filed && pending.map((inv) => (
                 /* The correction form sits here, beside the row, not inside
@@ -5941,64 +5987,6 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   )}
                 </div>
               ))}
-
-              {/* Arrangements with nothing currently waiting.
-
-                  This used to list every arrangement, which meant an invoice
-                  raised this month appeared twice: once in the queue as a
-                  thing to do, and again here as the rule that produced it.
-                  Three rows for one invoice, counting the accepted original in
-                  the history below.
-
-                  An arrangement whose invoice is already in the queue is
-                  represented by that invoice. Stopping it is on that row. */}
-              {quietSchedules.length > 0 && !filed && (
-                <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${P.line}` }}>
-                  <div style={{ color: P.text }} className="text-[15.5px]">
-                    {quietSchedules.length === 1 ? "Also repeating" : "Also repeating"}
-                  </div>
-                  {/* Not "nothing due yet this month": the month's invoice may
-                      have been raised and then voided, and telling someone
-                      nothing was due when they just deleted it is the same
-                      kind of wrong as the line above. */}
-                  <p style={{ color: P.muted }} className="text-[14px] mb-1">
-                    {quietSchedules.length === 1 ? "This one is not" : "These are not"} waiting on you right now.
-                    The next will be raised on the day it is due.
-                  </p>
-                  {quietSchedules.map((sc) => (
-                    <div
-                      key={sc.id}
-                      className="flex items-center gap-3 py-3"
-                      style={{ borderTop: `1px solid ${P.line}` }}
-                    >
-                      <span
-                        aria-hidden
-                        style={{ background: P.brass + "24", color: P.brassText, borderRadius: 11 }}
-                        className="w-10 h-10 flex items-center justify-center shrink-0"
-                      >
-                        <Repeat size={16} />
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <span style={{ color: P.text }} className="text-[15px] block truncate">
-                          {sc.party}
-                          {sc.description ? <span style={{ color: P.muted }}> &middot; {sc.description}</span> : null}
-                        </span>
-                        <span style={{ color: P.faint }} className="text-[13.5px]">
-                          {fmt(sc.amount)} on the {ordinal(sc.dayOfMonth)} of each month
-                        </span>
-                      </span>
-                      <button
-                        onClick={() => stopOne(sc)}
-                        disabled={busy === sc.id}
-                        style={{ color: P.debit }}
-                        className="text-[14px] shrink-0 press"
-                      >
-                        Stop
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
 
               {history.length > pending.length && (
                 <details className="mt-4">
@@ -7466,7 +7454,7 @@ function Capture({
      A prop silently defaulting is the quietest failure in React: nothing
      throws, nothing warns, the feature just behaves as if the data does not
      exist. */
-  contacts = [], hasInvoiceLink = false, onRemind,
+  contacts = [], hasInvoiceLink = false, onRemind, waiting = 0,
 }) {
   // A gap that's already been consolidated isn't news, opening the panel on a
   // ledger you reconciled yesterday should not greet you with it again.
@@ -7515,6 +7503,18 @@ function Capture({
       if (Array.isArray(rows) && rows.length) {
         rows.forEach((m) => m._id && seenIds.current.add(m._id));
         setMsgs(rows);
+      } else if (Array.isArray(rows)) {
+        /* A new day, and nothing said in it yet.
+
+           The opener is a summary rather than a greeting, because a
+           bookkeeper who has been through your books overnight should lead
+           with what she found. It is computed from the ledger, not asked of a
+           model: it has to be right and it has to be instant, and a sentence
+           about your own figures is not a thing worth waiting on a network
+           for. */
+          const brief = morningBrief();
+          setMsgs([brief]);
+          chat.appendMessage(data.ledger.id, brief).then((id) => { if (id) seenIds.current.add(id); });
       }
       // null means the load failed rather than the thread being empty, so the
       // opener stays and nothing is overwritten.
@@ -7538,6 +7538,53 @@ function Capture({
      The insert is not awaited: a message should appear as it is typed, not
      after a round trip. The returned id is remembered so the realtime echo of
      our own message is ignored rather than drawn twice. */
+  /* What she opens with, from the books.
+
+     Five things she might mention, in the order they cost you money, and at
+     most three of them. A summary that lists everything is a summary nobody
+     reads. */
+  const morningBrief = () => {
+    const bits = [];
+    const today = todayStr();
+
+    const payables = (data.payables || []).filter((o) => o.status === "open" && o.dueDate && o.dueDate < today);
+    const receivables = (data.receivables || []).filter((o) => o.status === "open" && o.dueDate && o.dueDate < today);
+    // A week out, without reaching for a helper that does not exist here.
+    const weekOut = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+    const dueSoon = (data.payables || []).filter(
+      (o) => o.status === "open" && o.dueDate && o.dueDate >= today && o.dueDate <= weekOut,
+    );
+
+    if (waiting > 0) {
+      bits.push(`**${waiting} ${waiting === 1 ? "invoice is" : "invoices are"} waiting on you** in AR / AP.`);
+    }
+    if (payables.length) {
+      const t = payables.reduce((n, o) => n + Math.abs(o.amount), 0);
+      bits.push(`**${fmt(t)} is overdue to pay**, across ${payables.length} ${payables.length === 1 ? "bill" : "bills"}.`);
+    }
+    if (receivables.length) {
+      const t = receivables.reduce((n, o) => n + Math.abs(o.amount), 0);
+      bits.push(`**${fmt(t)} is overdue to you**, across ${receivables.length}.`);
+    }
+    if (!payables.length && dueSoon.length) {
+      const t = dueSoon.reduce((n, o) => n + Math.abs(o.amount), 0);
+      bits.push(`${fmt(t)} falls due in the next week.`);
+    }
+    if (drift) {
+      bits.push(`The bank and the books disagree by ${fmt(balance?.delta)}.`);
+    }
+
+    const text = bits.length
+      ? `Morning. ${bits.slice(0, 3).join(" ")}`
+      : "Morning. Nothing is overdue, nothing is waiting, and the bank agrees with the books.";
+
+    return {
+      role: "assistant",
+      text,
+      followUp: bits.length ? "What should I deal with first?" : "How did last month compare?",
+    };
+  };
+
   const push = (m) => {
     setMsgs((prev) => [...prev, m]);
     if (threadReady) {
