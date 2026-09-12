@@ -6091,7 +6091,16 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
               {!filed && rows.map((row) => (
                 <div key={row.key}>
                   <Row row={row} />
-                  {correcting?.id === row.invoice?.id && (
+                  {/* Both have to exist.
+
+                      `correcting?.id === row.invoice?.id` is true when both
+                      are undefined, which is every arrangement row while
+                      nothing is being corrected. The form then rendered and
+                      read `row.invoice.id` off null.
+
+                      Optional chaining makes a missing value quiet, and two
+                      quiet values compare equal. That is the trap. */}
+                  {row.invoice && correcting?.id === row.invoice.id && (
                     <div style={{ background: P.surface2, borderRadius: 14 }} className="p-3.5 mb-3">
                       <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">
                         What needs changing

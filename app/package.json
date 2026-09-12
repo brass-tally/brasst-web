@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "npm run check && vite build",
     "preview": "vite preview",
-    "check": "node ../scripts/check-tdz.mjs src/App.jsx && node ../scripts/check-css.mjs && node ../scripts/check-handlers.mjs src/App.jsx && node ../scripts/check-inline-components.mjs src/App.jsx && node ../scripts/check-write-lock.mjs && node ../scripts/check-props.mjs && npm run lint",
+    "check": "node ../scripts/check-tdz.mjs src/App.jsx && node ../scripts/check-css.mjs && node ../scripts/check-handlers.mjs src/App.jsx && node ../scripts/check-inline-components.mjs src/App.jsx && node ../scripts/check-write-lock.mjs && node ../scripts/check-props.mjs && node ../scripts/check-optional-compare.mjs && npm run lint",
     "test": "node ../scripts/tests-tax.mjs && node ../scripts/tests-rules.mjs",
     "legal": "node ../scripts/build-legal.mjs",
     "lint": "eslint src --max-warnings 9999"
