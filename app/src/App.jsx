@@ -5435,17 +5435,39 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     const out = [];
     const claimed = new Set();
 
-    // An arrangement is one row, carrying whatever it has raised.
+    /* An arrangement claims its invoices by link, and by likeness.
+
+       The link is the right way and it is not always there: an invoice
+       accepted before the schedule existed carries no schedule id, and the
+       migration that backfills them may not have run. Depending on it meant
+       the same agreement drew two rows and the interface had no idea they
+       were related.
+
+       So likeness is the fallback. Same party, same description, same amount
+       is the same monthly agreement, because that is what a monthly
+       agreement is. */
+    const alike = (a, b) =>
+      String(a.party || "").trim().toLowerCase() === String(b.party || "").trim().toLowerCase() &&
+      String(a.description || "").trim().toLowerCase() === String(b.description || "").trim().toLowerCase() &&
+      Math.abs(Math.abs(Number(a.amount) || 0) - Math.abs(Number(b.amount) || 0)) < 0.005;
+
     for (const sc of schedules) {
-      const mine = history.filter((h) => h.scheduleId === sc.id);
+      const belongs = (h) => (h.scheduleId ? h.scheduleId === sc.id : alike(h, sc));
+      const mine = history.filter(belongs);
       mine.forEach((h) => claimed.add(h.id));
-      const waiting = pending.find((p) => p.scheduleId === sc.id);
+      const waiting = pending.find(belongs);
       if (waiting) claimed.add(waiting.id);
+      // The most recent one it raised, so merging loses nothing: the invoice
+      // number, the attachment and the ability to void it all stay reachable.
+      const last = mine
+        .filter((h) => h.status === "accepted")
+        .sort((a, b) => String(b.submittedAt || "").localeCompare(String(a.submittedAt || "")))[0] || null;
       out.push({
         key: `sc-${sc.id}`,
         kind: "monthly",
         schedule: sc,
         invoice: waiting || null,
+        last,
         accepted: mine.filter((h) => h.status === "accepted").length,
         party: sc.party,
         description: sc.description,
@@ -5807,10 +5829,18 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     const pendingHere = inv?.status === "pending";
     const foreignHere = inv ? foreign(inv) : false;
 
+    /* What this row has done, and what it will do next, in one line.
+       An arrangement that has raised something says so with the invoice
+       number, because "1 accepted" without naming it is a number you cannot
+       act on. */
+    const last = row.last;
     const state = pendingHere
       ? "waiting on you"
       : sc
-        ? `${row.accepted ? `${row.accepted} accepted` : "nothing yet"} · next on the ${ordinal(sc.dayOfMonth)}`
+        ? [
+            last ? `${last.invoiceNo || "last one"} added to what you owe` : "nothing yet",
+            `next on the ${ordinal(sc.dayOfMonth)}`,
+          ].join(" · ")
         : inv?.status === "accepted"
           ? "added to what you owe"
           : "set aside";
@@ -5865,9 +5895,12 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
         )}
 
         <div className="flex flex-wrap items-center gap-2 mt-2.5">
-          {inv?.filePath && (
+          {(inv || last)?.filePath && (
             <button
-              onClick={() => openPreview(inv.filePath, inv.invoiceNo || `${row.party} invoice`, inv)}
+              onClick={() => {
+                const f = inv || last;
+                openPreview(f.filePath, f.invoiceNo || `${row.party} invoice`, f);
+              }}
               style={{ color: P.brassText }}
               className="text-[14px] inline-flex items-center gap-1.5 press"
             >
@@ -5915,10 +5948,10 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
             </button>
           )}
 
-          {!pendingHere && inv && (
+          {!pendingHere && (inv || last) && (
             <button
-              onClick={() => voidOne(inv)}
-              disabled={busy === inv.id}
+              onClick={() => voidOne(inv || last)}
+              disabled={busy === (inv || last).id}
               style={{ color: P.debit }}
               className="h-11 px-2 text-[14px] press"
             >
