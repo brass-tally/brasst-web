@@ -188,6 +188,7 @@ export async function listInbound(ledgerId, status = "pending") {
       note: r.note || undefined, filePath: r.file_path || undefined,
       recurrence: r.recurrence || "once", scheduleId: r.schedule_id || undefined,
       currency: r.currency || undefined,
+      lines: Array.isArray(r.line_items) && r.line_items.length ? r.line_items : undefined,
       period: r.period || undefined,
       submittedAt: r.submitted_at, decidedAt: r.decided_at || undefined,
       obligationId: r.obligation_id || undefined, status: r.status,
@@ -390,6 +391,35 @@ export async function stopSchedule(id) {
       .from("invoice_schedules")
       .update({ active: false, stopped_at: new Date().toISOString() })
       .eq("id", id);
+    if (error) throw error;
+    return { ok: true };
+  }, { ok: false });
+}
+
+/** Who this link has been emailed to. Owner only, by policy. */
+export async function listLinkInvites(ledgerId) {
+  return soft("link invites", async () => {
+    const { data, error } = await supabase
+      .from("invoice_link_invites")
+      .select("id, link_id, email, note, sent_at")
+      .eq("ledger_id", ledgerId)
+      .order("sent_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map((r) => ({
+      id: r.id, linkId: r.link_id, email: r.email,
+      note: r.note || undefined, sentAt: r.sent_at,
+    }));
+  }, []);
+}
+
+/* Forget one, without pretending it was unsent.
+   Removing a name from this list does not take the link off anybody's
+   machine: they still hold the address. Only turning the link off does that,
+   and it does it for everyone who has it. The interface has to say so. */
+export async function forgetLinkInvite(id) {
+  assertWritable();
+  return soft("forget invite", async () => {
+    const { error } = await supabase.from("invoice_link_invites").delete().eq("id", id);
     if (error) throw error;
     return { ok: true };
   }, { ok: false });

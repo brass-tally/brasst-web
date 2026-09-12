@@ -141,13 +141,28 @@ export function invoiceSubmittedEmail({ business, party, amount, description, in
  * it. Contractors read mail in clients that strip buttons, and one that
  * cannot be clicked has to still be readable enough to type.
  */
-export function invoiceInviteEmail({ business, fromName, note, link }) {
+export function invoiceInviteEmail(
+  { business, fromName, note, link }: {
+    business: string; fromName?: string | null; note?: string | null; link: string;
+  },
+) {
   const brass = "#A9620A";
   const fill = "#F59E0B";
   const ink = "#1C1917";
   const muted = "#5A534E";
   const paper = "#FAF9F7";
 
+  /* The button goes first, above everything that repeats.
+
+     Gmail folds the part of a message that matches earlier ones behind a
+     "..." and calls it trimmed content. Our invitation is close to identical
+     every time it goes out, so the tail was being folded, and the button was
+     in the tail. A supplier opened an email with no button in it and no
+     indication that anything had been hidden.
+
+     Nothing above the action repeats enough to be trimmed, because the
+     business name and the link are in it. The explanation and the footer sit
+     below, where folding them costs nothing. */
   return `<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
 <title>Send your invoice to ${business}</title></head>
@@ -159,37 +174,11 @@ export function invoiceInviteEmail({ business, fromName, note, link }) {
            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
     <tr><td>
       <div style="font-size:15px;font-weight:600;color:${brass};margin-bottom:14px;">Brasstally</div>
-      <h1 style="margin:0 0 14px;font-size:23px;line-height:1.3;color:${ink};font-weight:600;">
+      <h1 style="margin:0 0 16px;font-size:23px;line-height:1.3;color:${ink};font-weight:600;">
         Send your invoice to ${business}
       </h1>
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:${muted};">
-        ${fromName ? `${fromName} at ${business}` : business} asked you to send invoices through this link. It
-        takes a minute, you can attach the PDF, and you get a copy of what you sent.
-      </p>
 
-      ${note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="background:#F5F3F0;border-radius:14px;padding:14px 16px;margin-bottom:20px;">
-        <tr><td style="font-size:15px;line-height:1.55;color:${ink};">${note}</td></tr>
-      </table>` : ""}
-
-      <!-- The plain link first, and underlined.
-
-           A styled button is a table cell with a background colour, and mail
-           clients treat those as decoration: some strip the background, some
-           invert it in dark mode until the label disappears into it, some
-           drop the table. A supplier then gets an email telling them to press
-           something that is not there.
-
-           So the address appears as an ordinary underlined link before the
-           button. If every style in this message is discarded, that line still
-           works, which is the only thing that has to be true. -->
-      <p style="margin:0 0 18px;font-size:16px;line-height:1.5;">
-        <a href="${link}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
-          ${link}
-        </a>
-      </p>
-
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:14px;">
         <tr><td style="border-radius:999px;background:${fill};">
           <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
@@ -198,9 +187,25 @@ export function invoiceInviteEmail({ business, fromName, note, link }) {
         </td></tr>
       </table>
 
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">
+        <a href="${link}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
+          ${link}
+        </a>
+      </p>
+
+      ${note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F5F3F0;border-radius:14px;padding:14px 16px;margin-bottom:18px;">
+        <tr><td style="font-size:15px;line-height:1.55;color:${ink};">${note}</td></tr>
+      </table>` : ""}
+
+      <p style="margin:0 0 14px;font-size:16px;line-height:1.6;color:${muted};">
+        ${fromName ? `${fromName} at ${business}` : business} asked you to send invoices through this link. It
+        takes a minute, you can attach the PDF, and you get a copy of what you sent.
+      </p>
+
       <p style="margin:0;font-size:14px;line-height:1.55;color:#8A827B;">
-        This is not a payment page and nothing is charged. It sends the details to their bookkeeping so the
-        invoice does not sit in an inbox.
+        This is not a payment page and nothing is charged. It sends the details straight to their bookkeeping
+        so the invoice does not sit in an inbox.
       </p>
     </td></tr>
   </table>
@@ -208,13 +213,6 @@ export function invoiceInviteEmail({ business, fromName, note, link }) {
 </body></html>`;
 }
 
-/**
- * What happened to an invoice, sent to whoever submitted it.
- *
- * A contractor who submits and then hears nothing has to chase, which is the
- * work this feature exists to remove. "Accepted" is the one they want; "not
- * accepted" is the one they need, because otherwise they invoice again.
- */
 export function invoiceDecidedEmail(
   { business, party, amount, description, invoiceNo, outcome, recurring }: {
     business: string; party: string; amount: number;
@@ -311,6 +309,12 @@ export function invoiceCorrectionEmail(
            <td style="padding:4px 0;font-size:15px;color:${ink};text-align:right">${value}</td></tr>`
       : "";
 
+  /* Reason, then action, then the rest.
+
+     The reason is the only thing here a supplier has to read, and the action
+     is the only thing they have to do. Both go above the fold and above the
+     boilerplate, because Gmail folds the repeating tail of similar messages
+     behind a "..." and anything down there may as well not exist. */
   return `<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
 <title>${business} needs a correction</title></head>
@@ -325,10 +329,6 @@ export function invoiceCorrectionEmail(
       <h1 style="margin:0 0 14px;font-size:23px;line-height:1.3;color:${ink};font-weight:600;">
         ${business} needs a correction
       </h1>
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:${muted};">
-        Your invoice has not been added to their books yet. Send it again with the change below and it will
-        replace what you sent.
-      </p>
 
       ${reason ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
         style="background:#FBBF2418;border-radius:14px;padding:14px 16px;margin-bottom:18px;">
@@ -336,23 +336,7 @@ export function invoiceCorrectionEmail(
           <strong style="display:block;margin-bottom:3px;">What needs changing</strong>${reason}
         </td></tr></table>` : ""}
 
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;margin-bottom:20px;">
-        <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-          ${line("You sent", party)}
-          ${line("Amount", money(amount))}
-          ${line("For", description)}
-          ${line("Invoice", invoiceNo)}
-        </table></td></tr>
-      </table>
-
-      <p style="margin:0 0 18px;font-size:16px;line-height:1.5;">
-        <a href="${link}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
-          ${link}
-        </a>
-      </p>
-
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:14px;">
         <tr><td style="border-radius:999px;background:${fill};">
           <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
@@ -360,20 +344,33 @@ export function invoiceCorrectionEmail(
           </a>
         </td></tr>
       </table>
+
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">
+        <a href="${link}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
+          ${link}
+        </a>
+      </p>
+
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:${muted};">
+        Your invoice has not been added to their books yet. Send it again with the change above and it will
+        replace what you sent.
+      </p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;">
+        <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          ${line("You sent", party)}
+          ${line("Amount", money(amount))}
+          ${line("For", description)}
+          ${line("Invoice", invoiceNo)}
+        </table></td></tr>
+      </table>
     </td></tr>
   </table>
 </td></tr></table>
 </body></html>`;
 }
 
-/**
- * "You have been given read access to a set of books."
- *
- * Access was being granted silently: a row appeared in the database and the
- * accountant was never told, so the feature only worked if the owner
- * separately remembered to message them. An invitation nobody receives is not
- * an invitation.
- */
 export function shareInviteEmail(
   { business, fromEmail, note, openUrl }: {
     business: string; fromEmail?: string | null; note?: string | null; openUrl: string;
@@ -385,6 +382,10 @@ export function shareInviteEmail(
   const muted = "#5A534E";
   const paper = "#FAF9F7";
 
+  /* Action first, explanation after. An accountant who has been told their
+     client shared a set of books does not need convincing, they need the
+     link, and the description of what they can and cannot do is exactly the
+     kind of repeating text Gmail folds away. */
   return `<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
 <title>You can read ${business} in Brasstally</title></head>
@@ -400,9 +401,23 @@ export function shareInviteEmail(
         You can read ${business}
       </h1>
       <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:${muted};">
-        ${fromEmail ? `${fromEmail} has given you` : "You have been given"} read access to their books in
-        Brasstally. Sign in with <strong style="color:${ink};">this address</strong> and the ledger appears
-        alongside any of your own.
+        ${fromEmail ? `${fromEmail} has given you` : "You have been given"} read access to their books. Open
+        it and we will send a six digit code to this address. No account to set up.
+      </p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:14px;">
+        <tr><td style="border-radius:999px;background:${fill};">
+          <a href="${openUrl}" style="display:inline-block;padding:14px 28px;font-size:16px;
+             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
+            Open ${business}
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">
+        <a href="${openUrl}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
+          ${openUrl}
+        </a>
       </p>
 
       ${note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
@@ -411,7 +426,7 @@ export function shareInviteEmail(
       </table>` : ""}
 
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;margin-bottom:20px;">
+             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;margin-bottom:16px;">
         <tr><td style="font-size:15px;line-height:1.6;color:${muted};">
           <strong style="color:${ink};display:block;margin-bottom:4px;">What you can do</strong>
           Read every entry, invoice, statement and tax pack, and export any of it.<br/>
@@ -421,21 +436,13 @@ export function shareInviteEmail(
         </td></tr>
       </table>
 
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
-        <tr><td style="border-radius:999px;background:${fill};">
-          <a href="${openUrl}" style="display:inline-block;padding:14px 28px;font-size:16px;
-             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
-            Open ${business}
-          </a>
-        </td></tr>
-      </table>
-
       <p style="margin:0;font-size:14px;line-height:1.55;color:#8A827B;">
         Access is tied to this address and they can withdraw it at any time. If you were not expecting this,
-        you can ignore it: nothing opens until you sign in.
+        ignore it: nothing opens until you sign in.
       </p>
     </td></tr>
   </table>
 </td></tr></table>
 </body></html>`;
 }
+

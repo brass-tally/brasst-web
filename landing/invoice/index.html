@@ -31,6 +31,27 @@ p.lede{color:var(--muted);font-size:16.5px}
  box-shadow:0 1px 2px rgba(28,25,23,.05),0 10px 26px -14px rgba(28,25,23,.16)}
 label{display:block;font-size:14.5px;color:var(--muted);margin:14px 0 5px}
 label:first-child{margin-top:0}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.line{display:grid;grid-template-columns:1fr 64px 92px 40px;gap:6px;margin-bottom:6px;align-items:center}
+.line input{margin:0}
+.line .qty,.line .rate{text-align:right}
+.line button{min-height:44px;width:40px;border:none;background:transparent;color:var(--muted);
+ font-size:20px;line-height:1;cursor:pointer;border-radius:11px}
+.line button:hover{background:var(--sunk);color:var(--debit)}
+@media (max-width:430px){
+  .line{grid-template-columns:1fr 56px 80px 36px;gap:4px}
+  .line input{font-size:15px;padding:0 9px}
+  .line button{width:36px}
+}
+.ghost{min-height:44px;padding:0 14px;border:none;border-radius:999px;background:var(--sunk);
+ color:var(--ink);font:inherit;font-size:15px;cursor:pointer;margin-bottom:4px}
+.lineTotal{display:flex;justify-content:space-between;align-items:baseline;
+ padding:12px 0 2px;border-top:1px solid var(--line);margin-top:8px;font-size:16px}
+.lineTotal b{font-family:ui-monospace,monospace}
+.drop{border:2px dashed var(--line);border-radius:14px;padding:20px 16px;text-align:center;
+ color:var(--muted);font-size:15px;cursor:pointer;transition:border-color .15s,background .15s}
+.drop.over{border-color:var(--accent);background:#FBBF2412}
+.drop b{color:var(--ink);font-weight:600}
 .seg{display:flex;gap:8px}
 .seg button{flex:1;min-height:48px;border:2px solid transparent;border-radius:13px;background:var(--sunk);
  color:var(--muted);font:inherit;font-size:15px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
@@ -138,7 +159,12 @@ footer a{color:var(--accentText);text-decoration:none}
       </div>
       <div class="hint" id="recHint">A one off invoice.</div>
 
-      <label for="description">What it is for</label>
+      <label>What it is for</label>
+      <div id="lines"></div>
+      <button type="button" id="addLine" class="ghost">Add a line</button>
+      <div class="hint" id="linesHint">Itemise it, or just write one line. The total adds itself up.</div>
+
+      <label for="description" class="sr-only">Summary</label>
       <input id="description" name="description" placeholder="Framing, unit 4"/>
 
       <label for="contact">Your email</label>
@@ -147,8 +173,13 @@ footer a{color:var(--accentText);text-decoration:none}
       <div class="hint">Only so they can reply about this invoice.</div>
 
       <label for="file">The invoice itself</label>
-      <input id="file" name="file" type="file" accept=".pdf,image/*"/>
-      <div class="hint">A PDF or a photo. Optional, but it saves them asking for it later.</div>
+      <div class="drop" id="drop" tabindex="0" role="button"
+           aria-label="Attach the invoice, or drop a file here">
+        <b>Drop a file here</b> or tap to choose<br/>
+        <span style="font-size:13.5px">PDF or a photo. Optional, the lines above are enough.</span>
+      </div>
+      <input id="file" name="file" type="file" accept=".pdf,image/*" class="sr-only"/>
+      <div class="hint" id="fileHint"></div>
 
       <label for="note">Anything else</label>
       <textarea id="note" name="note" placeholder="Optional"></textarea>
@@ -231,6 +262,110 @@ footer a{color:var(--accentText);text-decoration:none}
       : `${el("currency").value}, which is not what ${info.business} keeps their books in. They will convert it.`;
   });
 
+  /* Line items.
+
+     A contractor without invoicing software was being asked for one total and
+     a description, which is the moment they give up and make a PDF instead.
+     That is the thing this whole feature exists to avoid.
+
+     The total adds itself up and the server recomputes it from the same
+     lines, so what is claimed and what is itemised cannot disagree. */
+  const lines = [];
+  const money = (n) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  function lineTotal() {
+    return lines.reduce((t, l) => t + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
+  }
+
+  function drawLines() {
+    const host = el("lines");
+    host.innerHTML = "";
+    lines.forEach((l, i) => {
+      const row = document.createElement("div");
+      row.className = "line";
+
+      const d = document.createElement("input");
+      d.placeholder = i === 0 ? "Framing, second floor" : "Another line";
+      d.value = l.description || "";
+      d.addEventListener("input", () => { l.description = d.value; });
+
+      const q = document.createElement("input");
+      q.className = "qty"; q.inputMode = "decimal"; q.placeholder = "1";
+      q.value = l.quantity ?? "";
+      q.addEventListener("input", () => { l.quantity = q.value; drawTotal(); });
+
+      const r = document.createElement("input");
+      r.className = "rate"; r.inputMode = "decimal"; r.placeholder = "0.00";
+      r.value = l.rate ?? "";
+      r.addEventListener("input", () => { l.rate = r.value; drawTotal(); });
+
+      const x = document.createElement("button");
+      x.type = "button";
+      x.textContent = "\u00d7";
+      x.setAttribute("aria-label", "Remove this line");
+      // The last line is never removable, so the form cannot reach a state
+      // with nothing to type in.
+      x.disabled = lines.length === 1;
+      x.style.opacity = lines.length === 1 ? "0.3" : "1";
+      x.addEventListener("click", () => { lines.splice(i, 1); drawLines(); drawTotal(); });
+
+      row.append(d, q, r, x);
+      host.appendChild(row);
+    });
+  }
+
+  function drawTotal() {
+    const t = lineTotal();
+    let box = el("lineSum");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "lineSum";
+      box.className = "lineTotal";
+      el("lines").after(box);
+    }
+    box.innerHTML = t > 0
+      ? `<span>Total</span><b>${el("currency").value} ${money(t)}</b>`
+      : "";
+    if (t > 0) el("amount").value = t.toFixed(2);
+  }
+
+  el("addLine").addEventListener("click", () => {
+    lines.push({ description: "", quantity: "1", rate: "" });
+    drawLines();
+    el("lines").lastElementChild?.querySelector("input")?.focus();
+  });
+
+  lines.push({ description: "", quantity: "1", rate: "" });
+  drawLines();
+
+  /* Drag and drop, and the same box is the file picker.
+     One target for both gestures: a drop zone that is not clickable is a
+     trap on a phone, where dropping is not a thing. */
+  const drop = el("drop");
+  const fileInput = el("file");
+  const showFile = () => {
+    const f = fileInput.files && fileInput.files[0];
+    el("fileHint").textContent = f ? `${f.name}, ${(f.size / 1024 / 1024).toFixed(1)} MB` : "";
+    drop.querySelector("b").textContent = f ? "Attached" : "Drop a file here";
+  };
+  drop.addEventListener("click", () => fileInput.click());
+  drop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+  });
+  fileInput.addEventListener("change", showFile);
+  ["dragenter", "dragover"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    const dt = new DataTransfer();
+    dt.items.add(f);
+    fileInput.files = dt.files;
+    showFile();
+  });
+
   let recurrence = "once";
   document.querySelectorAll("[data-rec]").forEach((b) => {
     b.addEventListener("click", () => {
@@ -297,6 +432,13 @@ footer a{color:var(--accentText);text-decoration:none}
       p_file_path: filePath,
       p_recurrence: recurrence,
       p_currency: el("currency").value,
+      p_lines: lines
+        .filter((l) => (l.description || "").trim() && Number(l.rate))
+        .map((l) => ({
+          description: l.description.trim(),
+          quantity: Number(l.quantity) || 1,
+          rate: Number(l.rate) || 0,
+        })),
     });
 
     if (error) return fail("That did not go through. Please try again in a moment.");

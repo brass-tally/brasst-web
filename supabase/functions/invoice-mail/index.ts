@@ -398,6 +398,19 @@ Deno.serve(async (req) => {
         }),
         caller.user.email ?? undefined,
       );
+      if (r.ok) {
+        /* Remember who was sent it. A link handed to six people is one you
+           cannot reason about without a list, and the owner is the only
+           person who can decide it has gone far enough. Recorded after the
+           send, so a failed send leaves no phantom entry. */
+        try {
+          await db.from("invoice_link_invites").insert({
+            link_id: link.id, ledger_id: link.ledger_id, email: to, note: note || null,
+          });
+        } catch (e) {
+          console.warn("invite not recorded:", e);
+        }
+      }
       return r.ok ? json({ ok: true, to }) : json({ ok: false, error: r.error });
     }
 

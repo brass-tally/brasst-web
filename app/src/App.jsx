@@ -5258,17 +5258,20 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   const [mailResult, setMailResult] = useState(null);
   const [spinning, setSpinning] = useState(false);
   const [schedules, setSchedules] = useState([]);
+  const [invites, setInvites] = useState([]);
+  const [showAllSent, setShowAllSent] = useState(false);
   const [correcting, setCorrecting] = useState(null);
   const [reason, setReason] = useState("");
 
   const refresh = async () => {
-    const [p, h, l, sc] = await Promise.all([
+    const [p, h, l, sc, iv] = await Promise.all([
       share.listInbound(ledgerId, "pending"),
       share.listInbound(ledgerId, "all"),
       share.listInvoiceLinks(ledgerId),
       share.listSchedules(ledgerId),
+      share.listLinkInvites(ledgerId),
     ]);
-    setPending(p); setHistory(h); setLinks(l); setSchedules(sc);
+    setPending(p); setHistory(h); setLinks(l); setSchedules(sc); setInvites(iv);
     onCount?.(p.length);
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [ledgerId]);
@@ -5317,6 +5320,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   }, [open]);
 
   const first = links[0];
+  const sentTo = invites.filter((i) => !first || i.linkId === first.id);
 
   /* An arrangement is shown separately only when it has nothing in the queue.
      Otherwise the invoice in the queue is the arrangement, as far as anyone
@@ -5611,6 +5615,32 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
       </div>
       {/* The pill already says Monthly, so the sentence saying the same thing
           is two labels for one fact. */}
+      {/* What they itemised.
+
+          A supplier who typed four lines instead of attaching a PDF did all
+          that work into a field nobody displayed, and the owner saw one total
+          with no way to know it had been broken down. */}
+      {inv.lines?.length > 0 && (
+        <div style={{ background: P.surface2, borderRadius: 12 }} className="mt-2 px-3 py-2">
+          {inv.lines.map((l, i) => (
+            <div key={i} className="flex items-baseline justify-between gap-3 py-0.5">
+              <span style={{ color: P.muted }} className="text-[13.5px] min-w-0 truncate">
+                {l.description}
+                {Number(l.quantity) !== 1 && (
+                  <span style={{ color: P.faint }}> &times;{l.quantity}</span>
+                )}
+              </span>
+              <span
+                style={{ color: P.faint, fontFamily: MONO }}
+                className="text-[13px] tabular-nums shrink-0"
+              >
+                {fmt(l.amount ?? (Number(l.quantity) || 1) * (Number(l.rate) || 0))}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {inv.note && inv.note !== "Raised automatically from a monthly arrangement" && (
         <p style={{ color: P.muted }} className="text-[14px] mt-1.5 leading-snug">{inv.note}</p>
       )}
@@ -5993,6 +6023,49 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   >
                     {share.invoiceLinkUrl(first.token, first.slug)}
                   </div>
+                  {/* Who holds this link, and what to do about it.
+
+                      "6 received" counted submissions and said nothing about
+                      who was invited. A link that has gone to six people, one
+                      of whom you no longer work with, is a link you cannot
+                      reason about without a list. */}
+                  {sentTo.length > 0 && (
+                    <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
+                      <div style={{ color: P.text }} className="text-[14.5px] mb-1.5">
+                        Sent to {sentTo.length} {sentTo.length === 1 ? "person" : "people"}
+                      </div>
+                      {sentTo.slice(0, showAllSent ? 99 : 3).map((iv) => (
+                        <div key={iv.id} className="flex items-center gap-2 py-1.5">
+                          <span style={{ color: P.muted }} className="text-[14px] flex-1 min-w-0 truncate">
+                            {iv.email}
+                            <span style={{ color: P.faint }} className="ml-2">{String(iv.sentAt).slice(0, 10)}</span>
+                          </span>
+                          <button
+                            onClick={async () => { await share.forgetLinkInvite(iv.id); refresh(); }}
+                            style={{ color: P.faint }}
+                            className="text-[13.5px] shrink-0 press"
+                            title="Remove from this list. They still hold the link."
+                          >
+                            Forget
+                          </button>
+                        </div>
+                      ))}
+                      {sentTo.length > 3 && (
+                        <button
+                          onClick={() => setShowAllSent(!showAllSent)}
+                          style={{ color: P.brassText }}
+                          className="text-[14px] mt-1 press"
+                        >
+                          {showAllSent ? "Show fewer" : `Show all ${sentTo.length}`}
+                        </button>
+                      )}
+                      <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
+                        Forgetting a name only clears this list. Everyone above still holds the address, so
+                        turn the link off if you want it to stop working.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap items-center gap-2 mt-3">
                     <button
                       onClick={copy}
