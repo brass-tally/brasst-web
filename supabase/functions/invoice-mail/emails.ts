@@ -172,7 +172,24 @@ export function invoiceInviteEmail({ business, fromName, note, link }) {
         <tr><td style="font-size:15px;line-height:1.55;color:${ink};">${note}</td></tr>
       </table>` : ""}
 
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+      <!-- The plain link first, and underlined.
+
+           A styled button is a table cell with a background colour, and mail
+           clients treat those as decoration: some strip the background, some
+           invert it in dark mode until the label disappears into it, some
+           drop the table. A supplier then gets an email telling them to press
+           something that is not there.
+
+           So the address appears as an ordinary underlined link before the
+           button. If every style in this message is discarded, that line still
+           works, which is the only thing that has to be true. -->
+      <p style="margin:0 0 18px;font-size:16px;line-height:1.5;">
+        <a href="${link}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
+          ${link}
+        </a>
+      </p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
         <tr><td style="border-radius:999px;background:${fill};">
           <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
@@ -180,10 +197,6 @@ export function invoiceInviteEmail({ business, fromName, note, link }) {
           </a>
         </td></tr>
       </table>
-
-      <p style="margin:0 0 18px;font-size:13.5px;line-height:1.5;color:#8A827B;word-break:break-all;">
-        Or paste this into your browser:<br/><span style="color:${muted}">${link}</span>
-      </p>
 
       <p style="margin:0;font-size:14px;line-height:1.55;color:#8A827B;">
         This is not a payment page and nothing is charged. It sends the details to their bookkeeping so the
@@ -333,7 +346,13 @@ export function invoiceCorrectionEmail(
         </table></td></tr>
       </table>
 
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+      <p style="margin:0 0 18px;font-size:16px;line-height:1.5;">
+        <a href="${link}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
+          ${link}
+        </a>
+      </p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
         <tr><td style="border-radius:999px;background:${fill};">
           <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
@@ -341,10 +360,6 @@ export function invoiceCorrectionEmail(
           </a>
         </td></tr>
       </table>
-
-      <p style="margin:0;font-size:13.5px;line-height:1.5;color:#8A827B;word-break:break-all;">
-        Or paste this into your browser:<br/><span style="color:${muted}">${link}</span>
-      </p>
     </td></tr>
   </table>
 </td></tr></table>

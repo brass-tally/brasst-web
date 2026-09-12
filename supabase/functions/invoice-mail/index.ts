@@ -16,6 +16,7 @@
  *   { action: "notify",    token, id }              public, mails both sides
  *   { action: "test",      token }                  public, proves the mail path
  *   { action: "send-link", token, to, note }        owner only, needs a bearer
+ *   { action: "preview-invite", token }             owner only, mails the invite to yourself
  *   { action: "decided",   token, id, outcome }     owner only, tells the supplier
  *   { action: "correct",   token, id, reason }      owner only, asks for a redo
  *   { action: "share-invite", ledgerId, to, note }  owner only, no token needed
@@ -73,8 +74,30 @@ async function sendMail(to: string, subject: string, html: string, replyTo?: str
 }
 
 /** The token is the only thing a caller is trusted for, and only this far. */
+/* The token out of whatever was pasted.
+
+   Three shapes exist in the wild: the bare token, the short link
+   /i/<slug>/<token>, and the older /invoice?t=<token>. Stripping the query
+   string first turns the third into the word "invoice", which is a wrong
+   answer delivered confidently, so the query is checked before the path. */
+function takeToken(raw: unknown): string {
+  const v = String(raw ?? "").trim();
+  if (!v) return "";
+  const q = v.match(/[?&]t=([A-Za-z0-9_-]+)/);
+  if (q) return q[1];
+  return v.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() || "";
+}
+
 async function resolveLink(db: ReturnType<typeof admin>, token: unknown) {
-  if (typeof token !== "string" || !token || token.length > 64) return null;
+  if (typeof token !== "string" || !token || token.length > 400) return null;
+  /* Take the last path segment, so pasting the whole link works.
+
+     The address is brasstally.com/i/genie-ai/cr7va67h3she9, and the token is
+     only the last part of it. Anyone reading that URL will reasonably paste
+     more of it than the token, and "this link is not active" is a confusing
+     way to say "you gave me a slug as well". */
+  token = takeToken(token);
+  if (!token || (token as string).length > 64) return null;
   const { data } = await db
     .from("invoice_links")
     .select("id, ledger_id, label, slug, active, ledgers(name, user_id)")
@@ -161,7 +184,20 @@ Deno.serve(async (req) => {
   }
 
   const link = await resolveLink(db, token);
-  if (!link) return json({ ok: false, error: "This link is not active." });
+  if (!link) {
+    /* Two different problems wore one sentence. A supplier holding a
+       cancelled link and an owner pasting a slug both got "not active", and
+       only one of those is about the link. */
+    const raw = takeToken(token);
+    const { data: any } = await db
+      .from("invoice_links").select("active").eq("token", raw).maybeSingle();
+    return json({
+      ok: false,
+      error: any
+        ? "That link has been turned off."
+        : `No intake link with that token. The token is the last part of the address, after the final slash.`,
+    });
+  }
   const business = (link.ledgers as { name: string }).name;
   const ownerId = (link.ledgers as { user_id: string }).user_id;
 
@@ -177,6 +213,35 @@ Deno.serve(async (req) => {
       const { data, error } = await db.storage.from(BUCKET).createSignedUploadUrl(path);
       if (error) throw error;
       return json({ ok: true, path, signedUrl: data.signedUrl });
+    }
+
+    if (action === "preview-invite") {
+      /* Send yourself the exact email a supplier gets.
+
+         Diagnosing "it arrived without a button" from a description is slow
+         and usually wrong. This puts the real message in your own inbox,
+         rendered by your own client, in one call. */
+      const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      const { data: caller } = bearer ? await db.auth.getUser(bearer) : { data: null };
+      if (!caller?.user?.id || caller.user.id !== ownerId) {
+        return json({ ok: false, error: "That is not your link." }, 403);
+      }
+      const to = caller.user.email;
+      if (!to) return json({ ok: false, error: "No email on your account." });
+
+      const r = await sendMail(
+        to,
+        `Preview: send your invoice to ${business}`,
+        invoiceInviteEmail({
+          business,
+          fromName: to.split("@")[0],
+          note: "This is a preview. A supplier sees exactly this.",
+          link: linkFor(String(token), link.slug),
+        }),
+      );
+      return r.ok
+        ? json({ ok: true, to, link: linkFor(String(token), link.slug) })
+        : json({ ok: false, error: r.error });
     }
 
     if (action === "notify" || action === "test") {
