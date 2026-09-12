@@ -117,11 +117,16 @@ const fileToB64 = (file) =>
     r.readAsDataURL(file);
   });
 
+/* Returns null rather than a fallback when it cannot tell, so a caller can
+   try somewhere else before giving up. The old version answered
+   "application/octet-stream" with confidence, which reads as an answer and
+   ends the search. */
 const attTypeFromName = (name = "") =>
-  /\.pdf$/i.test(name) ? "application/pdf"
-  : /\.(png|gif|webp)$/i.test(name) ? `image/${name.split(".").pop().toLowerCase()}`
-  : /\.(jpe?g)$/i.test(name) ? "image/jpeg"
-  : "application/octet-stream";
+  /\.pdf(\?|$)/i.test(name) ? "application/pdf"
+  : /\.(png|gif|webp)(\?|$)/i.test(name)
+    ? `image/${name.replace(/\?.*$/, "").split(".").pop().toLowerCase()}`
+  : /\.(jpe?g)(\?|$)/i.test(name) ? "image/jpeg"
+  : null;
 
 // Uploads the file to the private "invoices" bucket; returns its storage path (or null on failure).
 async function storeAttachment(att) {
@@ -134,7 +139,13 @@ async function storeAttachment(att) {
 
 async function attachmentToBlobURL(attachmentId, name) {
   const url = await db.signedUrl(attachmentId);
-  return { url, name, type: attTypeFromName(name) };
+  /* The type comes from the stored path, not the display name.
+
+     A supplier invoice is shown as "INV-002", which has no extension, so the
+     viewer decided it could not preview a perfectly ordinary PDF and offered
+     a download button instead. The name is for people; the path is what
+     actually ends in .pdf. */
+  return { url, name, type: attTypeFromName(attachmentId) || attTypeFromName(name) || "application/octet-stream" };
 }
 
 async function downloadAttachment(attachmentId, fallbackName) {
@@ -5384,13 +5395,69 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   const shell = useRef(null);
   useEffect(() => {
     if (!open) return;
-    const away = (e) => {
-      if (shell.current && !shell.current.contains(e.target)) setOpen(null);
+
+    /* Where the gesture began, not only where it ended.
+
+       Selecting a link by dragging past the edge of the panel releases
+       outside it, and closing on that is the panel punishing you for
+       reading. A gesture that started inside belongs to the panel wherever
+       it finishes. */
+    let startedInside = false;
+    const down = (e) => {
+      startedInside = Boolean(
+        e.target?.isConnected &&
+        (shell.current?.contains(e.target) || e.target.closest?.("[data-invoice-tools]")),
+      );
     };
-    // pointerdown, not click: closing should happen the moment you commit to
-    // the gesture, not when you release somewhere else entirely.
-    document.addEventListener("pointerdown", away);
-    return () => document.removeEventListener("pointerdown", away);
+
+    const away = (e) => {
+      const el = e.target;
+      if (!shell.current || !el) return;
+      if (startedInside) { startedInside = false; return; }
+
+      /* Three things that are not "outside", and all three were closing it.
+
+         A dialog, a preview or a confirm lives at the top of the document
+         rather than inside this panel, so pressing a button in one looked
+         like clicking away. Viewing an invoice closed the tray behind it,
+         which is the opposite of what opening something should do.
+
+         A node that has already left the page cannot be compared with
+         anything. Pressing a button that removes its own row gives an event
+         whose target is detached by the time this runs, and `contains` says
+         false, so the panel closed under the mouse that was using it.
+
+         And anything marked as belonging to this panel, wherever React chose
+         to put it. */
+      if (!el.isConnected) return;
+
+      /* While anything is open on top, this panel is not the thing being
+         dismissed. Checking the document rather than the event covers the
+         backdrop too: clicking away from a preview should close the preview
+         and leave what is underneath it alone. */
+      if (document.querySelector("[role=dialog]")) return;
+
+      if (el.closest?.("[data-invoice-tools], [data-popover]")) return;
+      if (shell.current.contains(el)) return;
+
+      setOpen(null);
+    };
+
+    /* On release, not on press.
+
+       Pressing closes the moment a gesture begins, which sounds decisive and
+       means a drag that starts inside and ends outside, or a text selection
+       that runs past the edge, shuts the panel mid-action. */
+    document.addEventListener("mousedown", down, true);
+    document.addEventListener("touchstart", down, true);
+    document.addEventListener("mouseup", away);
+    document.addEventListener("touchend", away);
+    return () => {
+      document.removeEventListener("mousedown", down, true);
+      document.removeEventListener("touchstart", down, true);
+      document.removeEventListener("mouseup", away);
+      document.removeEventListener("touchend", away);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -5964,7 +6031,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   };
 
   return (
-    <div ref={shell}>
+    <div ref={shell} data-invoice-tools>
       <div className="flex items-center gap-2">
         <Tool id="inbox" icon={Inbox} label="Invoices sent to you" count={pending.length} />
         <Tool id="link" icon={LinkIcon} label="Your intake link" />
@@ -8810,7 +8877,7 @@ function TxAttachment({ tx, setTxAttachment, openPreview }) {
     try {
       const key = await storeAttachment({
         name: file.name,
-        type: file.type || attTypeFromName(file.name),
+        type: file.type || attTypeFromName(file.name) || "application/octet-stream",
         file,
       });
       if (!key) throw new Error("store failed");
@@ -10106,7 +10173,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
       return;
     }
     setDocErr("");
-    setDoc({ name: file.name || "receipt.png", type: file.type || attTypeFromName(file.name), file });
+    setDoc({ name: file.name || "receipt.png", type: file.type || attTypeFromName(file.name) || "application/octet-stream", file });
   };
 
   const confirm = async () => {
