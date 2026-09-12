@@ -622,3 +622,23 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
 @keyframes spin-once { to { transform: rotate(360deg); } }
 .spin-once { animation: spin-once 500ms cubic-bezier(.4, 0, .2, 1); }
 @media (prefers-reduced-motion: reduce) { .spin-once { animation: none; } }
+
+/* The tally mark, drawing itself while a figure is being fetched.
+
+   A dash in place of a number is still a number-shaped thing, so the eye
+   reads it as a value and then sees the value change. A mark that is visibly
+   working is read as "not yet", and nothing is mistaken for an answer.
+
+   Same three strokes as the launch screen, so the app has one gesture for
+   "hold on" rather than a different spinner in every corner. */
+@keyframes tally-draw {
+  0%   { stroke-dashoffset: 22; opacity: .25; }
+  45%  { stroke-dashoffset: 0;  opacity: 1; }
+  100% { stroke-dashoffset: 0;  opacity: .25; }
+}
+.tally-load line { stroke-dasharray: 22; animation: tally-draw 1.25s ease-in-out infinite; }
+.tally-load line:nth-child(2) { animation-delay: .16s; }
+.tally-load line:nth-child(3) { animation-delay: .32s; }
+@media (prefers-reduced-motion: reduce) {
+  .tally-load line { animation: none; opacity: .45; }
+}

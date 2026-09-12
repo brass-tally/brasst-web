@@ -4636,24 +4636,43 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
       // string of symbols. "Δ −$1,397.97" is a thing to decode, "the books say
       // X, a gap of Y" is a thing to read.
       label: "Balance to date",
-      /* A dash while the bank is being read.
+      /* Not a dash, and not the book figure.
 
          Drawing the book figure and correcting it a moment later is worse
          than drawing nothing: the first number was never wrong exactly, it
          just was not the one being asked for, and a figure that changes while
-         you look at it is a figure you stop trusting. */
-      value: balance.source === "loading" ? "·" : balance.beforeAnchor ? "·" : money(balance.value),
+         you look at it is a figure you stop trusting.
+
+         A dash was the first attempt and is still number-shaped, so the eye
+         reads it as a value and then watches the value change, which is the
+         glitch it was meant to prevent. A mark that is visibly working reads
+         as "not yet". */
+      value: balance.source === "loading" ? <TallyLoading /> : balance.beforeAnchor ? "·" : money(balance.value),
       tone: P.text, wide: true, onClick: onReconcile,
-      lead: fromBank
+      lead: balance.source === "loading"
+        ? ""
+        : fromBank
         ? (balance.delta != null && Math.abs(balance.delta) >= 0.01
             ? `Books say ${money(balance.book)}, a gap of ${money(Math.abs(balance.delta))}`
             : "Bank and books agree")
         : balance.beforeAnchor
           ? `This month ends before your anchor`
           : `Anchored at ${money(balance.anchorAmount)}`,
-      foot: fromBank
-        ? `Updated ${balance.balanceAsOf ? relDay(balance.balanceAsOf) : "today"}`
-        : `Set on ${balance.anchorDate}`,
+      /* The day and the time, and nothing invented.
+
+         This said "Updated today" with no clock, and said it even when there
+         was no timestamp at all: the word "today" was a hardcoded fallback,
+         so a balance of unknown age claimed to be current. A figure that
+         asserts its own freshness without knowing it is worse than one that
+         says nothing.
+
+         `stamp` gives "today at 7:02 a.m.", which is what makes a balance
+         worth trusting or worth refreshing. */
+      foot: balance.source === "loading"
+        ? "Reading the bank"
+        : fromBank
+          ? (balance.balanceAsOf ? `Updated ${stamp(balance.balanceAsOf)}` : "Updated, time unknown")
+          : `Set on ${balance.anchorDate}`,
       warn: needsConsolidation,
     },
     net: {
@@ -8802,6 +8821,28 @@ function TallyText({ text, tone }) {
         return <p key={i} style={{ color: tone }}>{inlineBold(b.v, String(i))}</p>;
       })}
     </div>
+  );
+}
+
+/* Three strokes, drawing themselves, where a figure is being fetched.
+
+   The same gesture as the launch screen, so the app has one way of saying
+   hold on rather than a different spinner in every corner. */
+function TallyLoading({ size = 26 }) {
+  return (
+    <svg
+      className="tally-load"
+      width={size}
+      height={size * 0.72}
+      viewBox="0 0 26 19"
+      fill="none"
+      role="img"
+      aria-label="Reading the bank"
+    >
+      <line x1="2" y1="4" x2="18" y2="4" stroke={P.credit} strokeWidth="3" strokeLinecap="round" />
+      <line x1="2" y1="11" x2="13" y2="11" stroke={P.debit} strokeWidth="3" strokeLinecap="round" />
+      <line x1="23" y1="2" x2="21" y2="17" stroke={P.brass} strokeWidth="3" strokeLinecap="round" />
+    </svg>
   );
 }
 
