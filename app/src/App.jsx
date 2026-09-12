@@ -25,7 +25,7 @@ import {
 } from "./lib/contacts";
 import { addInterval, occurrencesBetween, obligationsView, recurringCosts } from "./lib/analysis";
 import {
-  proposeMatches, explainDelta, clearedIndex, consolidationPlan,
+  proposeMatches, incomingSettlements, explainDelta, clearedIndex, consolidationPlan,
   findDuplicateEntries, findDuplicateBankLines, likelyAlreadyInBooks, signatureOf,
 } from "./lib/reconcile";
 import { runAgent, trimHistory } from "./lib/agent";
@@ -1465,6 +1465,55 @@ function Ledger({ onSignOut }) {
     /* Is this somebody else's ledger, shared with me to read? */
   const readOnly = Boolean(data?.ledger?.readOnly);
 
+  /* Deposits that look like invoices being paid.
+
+     Recomputed from live state rather than stored, so dismissing one only has
+     to remember the bank line rather than keep a table in step with the
+     books. */
+  const [notArrival, setNotArrival] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("bt-not-arrival") || "[]")); }
+    catch { return new Set(); }
+  });
+  const [arrivedBusy, setArrivedBusy] = useState("");
+
+  const arrived = useMemo(() => {
+    if (!data || readOnly) return [];
+    return incomingSettlements(bankTxns, data.receivables || [])
+      .filter((h) => !notArrival.has(h.bank.id));
+  }, [data, bankTxns, notArrival, readOnly]);
+
+  const approveArrival = async (h) => {
+    setArrivedBusy(h.bank.id);
+    /* The bank line is the evidence, which is better than a photograph of
+       one. Settling normally asks for a document; a statement entry showing
+       the money arriving is the document. */
+    const tx = settleAR("receivables", h.obligation.id, {
+      amount: Math.abs(h.bank.amount),
+      date: h.bank.date,
+      payMethod: "cash",
+    });
+
+    /* Pair the deposit with the entry settling it, so consolidating does not
+       ask about it again and the trail from the bank line to the invoice it
+       paid is there to follow. */
+    if (tx?.id) {
+      applyAutoMatches([{ bankId: h.bank.id, txId: tx.id }]);
+      await dbTry(() => bank.matchBankTxn(h.bank.id, tx.id, "auto"));
+    }
+    setArrivedBusy("");
+    addNotification(notify.info(`${h.obligation.party} marked received.`));
+  };
+
+  const dismissArrival = (h) => {
+    setNotArrival((prev) => {
+      const next = new Set(prev);
+      next.add(h.bank.id);
+      try { localStorage.setItem("bt-not-arrival", JSON.stringify([...next])); } catch { /* fine */ }
+      return next;
+    });
+  };
+
+
   /* One gate in front of every write.
 
      The banner and the hidden buttons were the whole defence, and neither is
@@ -1881,6 +1930,13 @@ function Ledger({ onSignOut }) {
       await db.insertTransaction(tx);
       if (next) await db.insertObligation(kind, next);
     });
+
+    /* The entry this created, so a caller can point at it.
+
+       Approving an arrival pairs the bank line with the settlement, and
+       pairing it to nothing would mark the line handled while leaving no
+       trail from the deposit to the invoice it paid. */
+    return tx;
   };
   const updateAR = (kind, id, patch) => {
     if (blockedByReadOnly()) return;
@@ -2507,6 +2563,10 @@ function Ledger({ onSignOut }) {
             receiptSettle={receiptSettle} onReceiptSettleUsed={() => setReceiptSettle(null)}
             readOnly={readOnly}
             contacts={contacts}
+            arrived={arrived}
+            onApproveArrived={approveArrival}
+            onDismissArrived={dismissArrival}
+            arrivedBusy={arrivedBusy}
             onInboundChange={refreshInbound}
           />
         )}
@@ -5332,6 +5392,74 @@ const ordinal = (n) => {
   return `${v}${suffix}`;
 };
 
+/* Money that arrived against an invoice you are owed.
+
+   The reconciler pairs bank lines with entries you already made. Nobody
+   paired a deposit with the invoice it settles, so a client who paid a
+   fortnight ago still shows as owing and you chase them. A wrong figure is a
+   correction; chasing somebody who has already paid costs the relationship.
+
+   Proposed rather than applied. Settling writes income, and a bank line
+   cannot tell you which invoice a round number was for. */
+function ArrivedCard({ items, onApprove, onDismiss, busyId }) {
+  if (!items.length) return null;
+  const total = items.reduce((n, h) => n + Math.abs(h.bank.amount), 0);
+
+  return (
+    <section style={{ background: P.credit + "12", borderRadius: 20 }} className="p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 style={{ fontFamily: SERIF }} className="text-xl">
+          {items.length === 1 ? "This looks like an invoice being paid" : "These look like invoices being paid"}
+        </h3>
+        <span style={{ fontFamily: MONO, color: P.credit }} className="text-[15.5px] tabular-nums">
+          {fmt(total)}
+        </span>
+      </div>
+      <p style={{ color: P.muted }} className="text-[15px] mb-1">
+        Money arrived that matches what somebody owes you. Approving marks the invoice received and pairs it
+        with the bank line.
+      </p>
+
+      {items.map((h) => (
+        <div key={h.bank.id} className="py-3" style={{ borderTop: `1px solid ${P.line}` }}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
+              {h.obligation.party}
+              {h.obligation.description ? (
+                <span style={{ color: P.muted }}> &middot; {h.obligation.description}</span>
+              ) : null}
+            </span>
+            <span style={{ fontFamily: MONO, color: P.credit }} className="text-[15.5px] tabular-nums shrink-0">
+              {fmt(Math.abs(h.bank.amount))}
+            </span>
+          </div>
+          <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+            {h.bank.date} &middot; {(h.bank.description || "bank line").slice(0, 40)} &middot; {h.why}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-2.5">
+            <button
+              onClick={() => onApprove(h)}
+              disabled={busyId === h.bank.id}
+              style={{ background: P.credit, color: "#fff", borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {busyId === h.bank.id ? "Marking" : "Mark it received"}
+            </button>
+            <button
+              onClick={() => onDismiss(h)}
+              disabled={busyId === h.bank.id}
+              style={{ color: P.muted }}
+              className="h-11 px-3 text-[15px] press"
+            >
+              Not this one
+            </button>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [] }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
@@ -5901,15 +6029,28 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
        number, because "1 accepted" without naming it is a number you cannot
        act on. */
     const last = row.last;
+
+    /* Whether the payable this became has been paid.
+
+       The tray said "added to what you owe" forever, including after you had
+       paid it, so the same bill looked open in one place and settled in
+       another. They are one thread and the row should say where it ends. */
+    const ob = (last || inv)?.obligationId ? onFindPayable?.((last || inv).obligationId) : null;
+    const paid = ob && ob.status !== "open";
+
     const state = pendingHere
       ? "waiting on you"
       : sc
         ? [
-            last ? `${last.invoiceNo || "last one"} added to what you owe` : "nothing yet",
+            last
+              ? `${last.invoiceNo || "last one"} ${paid ? `paid${ob.settledOn ? ` ${ob.settledOn}` : ""}` : "added to what you owe"}`
+              : "nothing yet",
             `next on the ${ordinal(sc.dayOfMonth)}`,
           ].join(" · ")
         : inv?.status === "accepted"
-          ? "added to what you owe"
+          ? paid
+            ? `paid${ob.settledOn ? ` ${ob.settledOn}` : ""}`
+            : "added to what you owe"
           : "set aside";
 
     return (
@@ -9581,7 +9722,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [] }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -9626,6 +9767,15 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
 
   return (
     <div className="space-y-6 stagger">
+      {!readOnly && (
+        <ArrivedCard
+          items={arrived}
+          onApprove={onApproveArrived}
+          onDismiss={onDismissArrived}
+          busyId={arrivedBusy}
+        />
+      )}
+
       {!readOnly && (
         <InvoiceTools
           ledgerId={data.ledger.id}
@@ -9905,6 +10055,10 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 
   const renderRow = (i, inGroup) => {
     const overdue = i.dueDate && i.dueDate < todayStr();
+    /* Not due, and it repeats. See the button below for why this matters. */
+    const tooEarly = Boolean(
+      i.dueDate && i.dueDate > todayStr() && (i.recurrence === "recurring" || i.frequency),
+    );
     const future = !overdue && i.dueDate && i.dueDate > horizon;
 
     if (editingId === i.id && editForm) {
@@ -9963,11 +10117,31 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         >
           <Pencil size={14} />
         </button>
+        {/* A bill that is not due yet, and repeats, cannot be settled here.
+
+            A yearly fee paid last week reappears with next year's date on it,
+            and its tick sits there looking exactly like the one you just
+            used. Pressing it marks a bill paid 323 days early, which is a
+            misclick that takes a year to notice.
+
+            Faded and refusing, with the date in the tooltip, rather than
+            hidden: a control that vanishes leaves you wondering whether the
+            bill is tracked at all. A one-off can still be paid early, because
+            paying a bill ahead of its date is a normal thing to do when there
+            is only one of it. */}
         <button
-          onClick={() => setSettleFor(i)}
-          title={`${action}: confirm the actual amount, date, payment, and file the receipt`}
-          aria-label={action}
-          style={{ background: P.surface, color: P.text, borderRadius: R.pill, boxShadow: elev(1) }}
+          onClick={() => { if (!tooEarly) setSettleFor(i); }}
+          disabled={tooEarly}
+          title={tooEarly
+            ? `Not due until ${i.dueDate}. This one repeats, so it unlocks nearer the date.`
+            : `${action}: confirm the actual amount, date, payment, and file the receipt`}
+          aria-label={tooEarly ? `Not due until ${i.dueDate}` : action}
+          style={{
+            background: P.surface, color: P.text, borderRadius: R.pill,
+            boxShadow: tooEarly ? "none" : elev(1),
+            opacity: tooEarly ? 0.32 : 1,
+            cursor: tooEarly ? "not-allowed" : "pointer",
+          }}
           className="shrink-0 w-11 h-11 flex items-center justify-center press"
         >
           <Check size={17} />

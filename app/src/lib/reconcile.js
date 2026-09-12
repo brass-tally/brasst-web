@@ -564,3 +564,74 @@ export function clearedIndex(bankTxns) {
   }
   return map;
 }
+
+/* ================= money that arrived =================
+
+   A credit on the bank that looks like an invoice being paid.
+
+   The books already pair bank lines with entries you made. This is the other
+   direction: somebody owes you, money appears, and nobody has joined the two.
+   Until they are joined the receivable sits there looking unpaid and you
+   chase a client who paid you a fortnight ago, which is worse than a wrong
+   figure because it costs you the relationship as well.
+
+   Proposed, never applied. Settling a receivable writes income into the
+   books, and the bank cannot tell you which invoice a round number was for. */
+
+const norm = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+
+/** Does the bank's description mention who owes you? */
+function partyLooksRight(bankText, party) {
+  const a = norm(bankText);
+  const b = norm(party);
+  if (!a || !b) return false;
+  if (a.includes(b) || b.includes(a)) return true;
+  // Any word of four letters or more, so "Bonecare" matches "BONECARE VENDOR
+  // PAYMENT" without "inc" matching half a statement.
+  return b.split(" ").filter((w) => w.length >= 4).some((w) => a.includes(w));
+}
+
+export function incomingSettlements(bankTxns = [], receivables = [], { windowDays = 45 } = {}) {
+  const open = receivables.filter((o) => o.status === "open");
+  const credits = bankTxns.filter(
+    (b) => b.direction === "credit" && b.status !== "matched" && b.status !== "ignored",
+  );
+  if (!open.length || !credits.length) return [];
+
+  const used = new Set();
+  const out = [];
+
+  for (const b of credits) {
+    const amount = Math.abs(Number(b.amount) || 0);
+    if (!amount) continue;
+
+    const near = open.filter((o) => {
+      if (used.has(o.id)) return false;
+      if (Math.abs(Math.abs(Number(o.amount) || 0) - amount) > 0.005) return false;
+      if (!o.dueDate || !b.date) return true;
+      const gap = Math.abs(new Date(b.date) - new Date(o.dueDate)) / 864e5;
+      return gap <= windowDays;
+    });
+    if (!near.length) continue;
+
+    /* One candidate, or one whose name is in the bank line.
+
+       Two open invoices for the same amount from different clients is a coin
+       toss, and a coin toss settled automatically is a wrong entry nobody
+       will question. Those are left alone. */
+    const named = near.filter((o) => partyLooksRight(b.description, o.party));
+    const pick = named.length === 1 ? named[0] : near.length === 1 ? near[0] : null;
+    if (!pick) continue;
+
+    used.add(pick.id);
+    out.push({
+      bank: b,
+      obligation: pick,
+      why: named.length === 1
+        ? `${pick.party} appears on the bank line`
+        : "the only open invoice for that amount",
+    });
+  }
+
+  return out;
+}
