@@ -1504,6 +1504,15 @@ function Ledger({ onSignOut }) {
     addNotification(notify.info(`${h.obligation.party} marked received.`));
   };
 
+  /* Join a deposit to the entry that explains it.
+     Used when somebody marks an invoice received by hand and the bank already
+     shows the money arriving. */
+  const pairBankWithTx = async (bankId, txId) => {
+    if (!bankId || !txId) return;
+    applyAutoMatches([{ bankId, txId }]);
+    await dbTry(() => bank.matchBankTxn(bankId, txId, "auto"));
+  };
+
   const dismissArrival = (h) => {
     setNotArrival((prev) => {
       const next = new Set(prev);
@@ -2563,6 +2572,8 @@ function Ledger({ onSignOut }) {
             receiptSettle={receiptSettle} onReceiptSettleUsed={() => setReceiptSettle(null)}
             readOnly={readOnly}
             contacts={contacts}
+            bankTxns={bankTxns}
+            onPairBank={pairBankWithTx}
             arrived={arrived}
             onApproveArrived={approveArrival}
             onDismissArrived={dismissArrival}
@@ -9722,7 +9733,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank }) {
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -9825,7 +9836,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         </div>
       )}
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} />
+        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} />
         <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} />
       </div>
     </div>
@@ -9892,7 +9903,7 @@ function ARFields({ kind, f, set, data, addSub, addCredit, contacts = [] }) {
   );
 }
 
-function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [] }) {
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [], bankTxns = [], onPairBank }) {
   const [adding, setAdding] = useState(false);
   const [settleFor, setSettleFor] = useState(null);   // item awaiting the confirm dialog
 
@@ -10247,10 +10258,11 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
         <SettleModal
           kind={kind}
           item={settleFor}
+          bankTxns={bankTxns}
           data={data}
           addCredit={addCredit}
           action={action}
-          onConfirm={async ({ att, ...actual }) => {
+          onConfirm={async ({ att, bankId, ...actual }) => {
             let attachmentId, attachmentName;
             if (att) {
               attachmentId = await storeAttachment(att);
@@ -10258,7 +10270,15 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
               if (!attachmentId) throw new Error("The receipt couldn't be saved to storage. Check your connection and try again.");
               attachmentName = att.name;
             }
-            settleAR(kind, settleFor.id, { ...actual, attachmentId, attachmentName });
+            const tx = settleAR(kind, settleFor.id, { ...actual, attachmentId, attachmentName });
+
+            /* Join the deposit to the entry that explains it.
+
+               Without this the invoice is settled and the bank line is still
+               loose, so the next consolidation asks about money whose story is
+               already written down. */
+            if (bankId && tx?.id) onPairBank?.(bankId, tx.id);
+
             setSettleFor(null);
           }}
           onClose={() => setSettleFor(null)}
@@ -10317,7 +10337,7 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 }
 
 /* ================= settle confirm: the actuals ================= */
-function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }) {
+function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, bankTxns = [] }) {
   const [amount, setAmount] = useState(String(item.amount));
   const [date, setDate] = useState(todayStr());
   const [payMethod, setPayMethod] = useState(item.payMethod === "credits" ? "credits" : "cash");
@@ -10338,7 +10358,29 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
   // Nothing settles without paper: either the invoice already filed against this
   // entry, or a receipt attached right here.
   const filedName = item.attachmentId ? (item.attachmentName || "the filed invoice") : null;
-  const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName);
+  /* A deposit on the bank that matches what is being marked received.
+
+     Marking an invoice received asked for a document, which for money coming
+     in means hunting for the remittance advice or photographing a screen. The
+     bank statement already says the money arrived, on a date, for an amount.
+     It is better evidence than a photograph and it is already here.
+
+     Amount to the cent, within a fortnight of the date being entered, and
+     only unmatched credits, so a line already explained by something else is
+     never claimed twice. */
+  const bankProof = useMemo(() => {
+    if (kind !== "receivables") return null;
+    const want = Math.abs(Number(parsed) || 0);
+    if (!want) return null;
+    return (bankTxns || []).find((b) => {
+      if (b.direction !== "credit" || b.status === "matched" || b.status === "ignored") return false;
+      if (Math.abs(Math.abs(Number(b.amount) || 0) - want) > 0.005) return false;
+      if (!b.date || !date) return true;
+      return Math.abs(new Date(b.date) - new Date(date)) <= 14 * 864e5;
+    }) || null;
+  }, [kind, parsed, date, bankTxns]);
+
+  const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName || bankProof);
 
   const pickDoc = (file) => {
     if (!file) return;
@@ -10355,7 +10397,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
     setSaving(true);
     setDocErr("");
     try {
-      await onConfirm({ amount: parsed, date, payMethod, creditId, att: doc });
+      await onConfirm({ amount: parsed, date, payMethod, creditId, att: doc, bankId: bankProof?.id });
     } catch (e) {
       setDocErr(e?.message || "Something went wrong filing that. Try again.");
       setSaving(false);
@@ -10404,6 +10446,36 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose }
               <FileText size={14} />
               {filedName ? "Attach the payment receipt" : "Attach the receipt · photo or PDF"}
             </button>
+          )}
+
+          {/* The bank already saw it.
+
+              Shown rather than silently accepted, because "why did this let me
+              through without a receipt" is a fair question and the answer is a
+              good one: a statement entry is stronger evidence than a
+              photograph of a screen. */}
+          {bankProof && (
+            <div
+              style={{ background: P.credit + "14", borderRadius: 14 }}
+              className="flex items-start gap-3 p-3.5 mt-2"
+            >
+              <span
+                aria-hidden
+                style={{ background: P.credit + "22", color: P.credit, borderRadius: 10 }}
+                className="w-8 h-8 flex items-center justify-center shrink-0"
+              >
+                <Check size={15} />
+              </span>
+              <span className="min-w-0">
+                <span style={{ color: P.text }} className="text-[15px] block">
+                  The bank shows {fmt(Math.abs(bankProof.amount))} arriving on {bankProof.date}
+                </span>
+                <span style={{ color: P.muted }} className="text-[14px]">
+                  {(bankProof.description || "bank line").slice(0, 46)}. That is the evidence, so no receipt
+                  is needed, and the two will be paired.
+                </span>
+              </span>
+            </div>
           )}
           {filedName && !doc && (
             <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs mt-1.5 truncate">
