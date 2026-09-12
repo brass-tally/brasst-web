@@ -1262,6 +1262,20 @@ function Ledger({ onSignOut }) {
     /* eslint-disable-next-line */
   }, [ledgers?.length]);
 
+  /* How far the books are behind the bank, this month.
+
+     An unmatched, unignored line is money that moved and has not been written
+     down. Split by direction so each card can speak for itself. */
+  const unrecordedThisMonth = useMemo(() => {
+    const rows = (bankTxns || []).filter(
+      (b) => b.status !== "matched" && b.status !== "ignored" && String(b.date || "").startsWith(month),
+    );
+    return {
+      in: rows.filter((b) => b.direction === "credit").length,
+      out: rows.filter((b) => b.direction !== "credit").length,
+    };
+  }, [bankTxns, month]);
+
   const morningRan = useRef("");
   const runMorningPass = async () => {
     const today = todayStr();
@@ -2623,6 +2637,10 @@ function Ledger({ onSignOut }) {
           /* Consolidating is a write flow from the first tap, so a reader is
              not offered it at all. The banner already says why. */
           onConsolidate={readOnly ? null : () => setMatchOpen(true)}
+          /* Bank lines in the month on screen that nothing in the books
+             accounts for. Counted here because the cards show the month, and
+             a count from another month would be worse than none. */
+          unrecorded={unrecordedThisMonth}
         />
         )}
 
@@ -3488,15 +3506,27 @@ function MatchView({
      description, then the ledger's catch-all. Every one of these is offered
      for correction afterwards rather than presented as settled. */
   const guessCategory = (b) => {
-    const cats = (data.categories || []).filter((c) =>
-      (b.direction === "credit" ? c.kind === "income" : c.kind === "expense"));
+    /* `data.categories` is `{ expense: [...], income: [...] }`, not a list.
+
+       I called `.filter` on the object, which threw the moment somebody
+       pressed Go ahead on a consolidation. Two mistakes in one line: the
+       shape, and a field called `kind` that does not exist on a category
+       either. It built and linted, because neither of those is visible until
+       the line runs, and the line only runs when a bank payment has nothing
+       behind it in the books. */
+    const groups = data.categories || { expense: [], income: [] };
+    const cats = (b.direction === "credit" ? groups.income : groups.expense) || [];
     const text = String(b.description || "").toLowerCase();
 
     const named = cats.find((c) => c.name && text.includes(c.name.toLowerCase()));
-    if (named) return { category: named.name, subcategory: undefined, account: b.account };
+    if (named) return { category: named.name, subcategory: undefined, account: b.account || named.account };
 
     const fallback = cats.find((c) => /uncategor|other|misc/i.test(c.name)) || cats[0];
-    return { category: fallback?.name || "Uncategorised", subcategory: undefined, account: b.account };
+    return {
+      category: fallback?.name || (b.direction === "credit" ? "Other income" : "Uncategorised"),
+      subcategory: undefined,
+      account: b.account,
+    };
   };
 
   const doCreate = (b, opts) => {
@@ -4622,7 +4652,7 @@ function Delta({ now, prev, invert }) {
   );
 }
 
-function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName, counts }) {
+function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName, counts, unrecorded = { in: 0, out: 0 } }) {
   const fromBank = balance.source === "bank";
 
   // The bar appears when the grid leaves the screen. A sentinel and an observer
@@ -4714,10 +4744,27 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
       delta: { now: sums.net, prev: prevSums?.net },
       foot: `Across ${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
     },
-    in:  { label: "Money in",  value: money(sums.inc), tone: P.credit, delta: { now: sums.inc, prev: prevSums?.inc },
-           foot: `${inCount} ${inCount === 1 ? "deposit" : "deposits"}` },
-    out: { label: "Money out", value: money(sums.exp), tone: P.debit,  delta: { now: sums.exp, prev: prevSums?.exp, invert: true },
-           foot: `${outCount} ${outCount === 1 ? "payment" : "payments"}` },
+    /* These count the books, and the books can be behind the bank.
+
+       "Money in $0.00, 0 deposits" is true of your ledger and reads as false
+       when the bank shows a month of activity. The figure is not wrong; it is
+       incomplete, and a card that cannot say which is a card that looks
+       broken.
+
+       So when the bank holds lines nobody has recorded, the count says so and
+       the change against last month is withheld: comparing an empty month
+       with a full one produces "100% down", which is arithmetic rather than
+       information. */
+    in:  { label: "Money in",  value: money(sums.inc), tone: P.credit,
+           delta: unrecorded.in ? null : { now: sums.inc, prev: prevSums?.inc },
+           foot: unrecorded.in
+             ? `${inCount} recorded · ${unrecorded.in} more on the bank, not yet in the books`
+             : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}` },
+    out: { label: "Money out", value: money(sums.exp), tone: P.debit,
+           delta: unrecorded.out ? null : { now: sums.exp, prev: prevSums?.exp, invert: true },
+           foot: unrecorded.out
+             ? `${outCount} recorded · ${unrecorded.out} more on the bank, not yet in the books`
+             : `${outCount} ${outCount === 1 ? "payment" : "payments"}` },
     ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
     ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
     credits: creditsLeft !== null
