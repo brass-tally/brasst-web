@@ -2,7 +2,7 @@
 // Multi-ledger: every row belongs to a ledger; setLedgerId() scopes all reads/writes.
 
 import { supabase } from "./supabase";
-import { assertWritable, setLedgerAccess } from "./access";
+import { assertWritable, setLedgerAccess, isReadOnly } from "./access";
 
 let LID = null; // current ledger id, set before any data call
 export const setLedgerId = (id) => { LID = id; };
@@ -144,16 +144,24 @@ export async function loadAll(ledger) {
      banner would mean a write fired before the first render is unguarded, and
      the morning pass does exactly that. */
   setLedgerAccess({ readOnly: Boolean(ledger?.readOnly), ledgerName: ledger?.name });
-
-  assertWritable();
   setLedgerId(ledger.id);
 
-  // user-level prefs (theme) live in settings; create the row lazily
+  /* No assertWritable here.
+
+     My write-lock script added one to this function because it contains an
+     insert, and guarding the whole of it means a shared reader cannot open
+     the ledger at all: the read they are entitled to dies on a guard meant
+     for writes.
+
+     Only the lazy settings row is a write, and it is a write about the reader
+     rather than about the books, so it is skipped for a reader instead of
+     refused. */
   let { data: settings } = await supabase.from("settings").select("*").maybeSingle();
-  if (!settings) {
+  if (!settings && !isReadOnly()) {
     await supabase.from("settings").insert({ starting_balance: 0 }).select().maybeSingle();
     settings = { theme: "dark", currency: "CAD" };
   }
+  if (!settings) settings = { theme: "dark", currency: ledger?.currency || "CAD" };
 
   const [cats, txs, obs] = await Promise.all([
     supabase.from("categories").select("*").eq("ledger_id", ledger.id).order("sort"),
