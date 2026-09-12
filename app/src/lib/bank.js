@@ -278,3 +278,58 @@ export async function openPlaidLink({
   handler.open();
   return handler;
 }
+
+/* ---------------- the morning refresh ----------------
+
+   A scheduled job in the database calls Plaid at 7am Eastern. That job needs
+   three configuration rows which are easy to miss, and when one is absent
+   net.http_post does nothing and reports nothing: the job runs every hour,
+   succeeds every hour, and syncs nothing. The balance is then a day old and
+   the app has no idea.
+
+   So the app checks for itself. If a connection has not been synced since
+   this morning's boundary, it syncs it on load. The cron stays, because it
+   works while nobody has the app open; this is what makes the figure right
+   whenever somebody is actually looking at it. */
+
+/** 7am Eastern today, or yesterday's if it is not 7am yet. */
+export function lastMorningBoundary(at = new Date()) {
+  const est = new Date(at.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const boundary = new Date(est);
+  boundary.setHours(7, 0, 0, 0);
+  if (est < boundary) boundary.setDate(boundary.getDate() - 1);
+  // Back to real time, so it can be compared with a stored timestamp.
+  const drift = at.getTime() - est.getTime();
+  return new Date(boundary.getTime() + drift);
+}
+
+export function isStale(conn, at = new Date()) {
+  if (!conn?.lastSyncedAt) return true;
+  return new Date(conn.lastSyncedAt) < lastMorningBoundary(at);
+}
+
+/* Sync every connection that is behind, across every ledger.
+
+   Across every ledger on purpose: the balance on the ledger you are not
+   looking at is the one you will be surprised by, and there are two of them
+   by design in this app. */
+export async function refreshStale(ledgerIds, { onDone } = {}) {
+  const ids = [...new Set((ledgerIds || []).filter(Boolean))];
+  let synced = 0;
+  for (const ledgerId of ids) {
+    let conns = [];
+    try { conns = await listConnections(ledgerId); } catch { continue; }
+    for (const c of conns) {
+      if (!isStale(c) || needsReconnect(c)) continue;
+      try {
+        await plaid("sync", { connection_id: c.id });
+        synced += 1;
+      } catch (e) {
+        // A bank that refuses today should not stop the next one.
+        console.warn("morning sync failed for", c.institutionName || c.id, e?.message || e);
+      }
+    }
+  }
+  if (synced) onDone?.(synced);
+  return synced;
+}

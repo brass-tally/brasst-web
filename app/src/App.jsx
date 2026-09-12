@@ -1182,6 +1182,38 @@ function Ledger({ onSignOut }) {
 
      Once a day, keyed on the date, so opening the app four times before
      lunch does not produce four announcements. */
+  /* Bring the banks up to date before anything reads them.
+
+     The scheduled job needs three configuration rows that are easy to miss,
+     and a missing one fails silently, so the balance quietly becomes a day
+     old and nothing says so. This checks: any connection not synced since
+     this morning's 7am Eastern boundary is synced now.
+
+     Every ledger, not just the one on screen. The balance you will be
+     surprised by is the one on the ledger you were not looking at, and there
+     are two of them by design. */
+  const syncedToday = useRef("");
+  useEffect(() => {
+    const stamp = `${todayStr()}`;
+    if (!ledgers?.length || syncedToday.current === stamp) return;
+    syncedToday.current = stamp;
+    (async () => {
+      const n = await bank.refreshStale(ledgers.map((l) => l.id));
+      if (!n) return;
+      addNotification(notify.info(
+        n === 1 ? "Bank refreshed." : `${n} bank connections refreshed.`,
+      ));
+      /* The figures on screen were read before the sync, so read them again.
+         Connections carry the balance, and the bank lines are what the
+         reconciler compares against, so both are reloaded rather than just
+         the one that shows a number. */
+      if (!currentLedger?.id) return;
+      try { setBankConns(await bank.listConnections(currentLedger.id)); } catch { /* leave what is there */ }
+      try { setBankTxns(await bank.listBankTransactions(currentLedger.id)); } catch { /* same */ }
+    })();
+    /* eslint-disable-next-line */
+  }, [ledgers?.length]);
+
   const morningRan = useRef("");
   const runMorningPass = async () => {
     const today = todayStr();
@@ -5330,6 +5362,25 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
      looking at the screen is concerned. */
   const pendingScheduleIds = new Set(pending.map((i) => i.scheduleId).filter(Boolean));
   const quietSchedules = schedules.filter((sc) => !pendingScheduleIds.has(sc.id));
+
+  /* One row per relationship.
+
+     A monthly arrangement with Syed was three things on screen: the
+     arrangement, the invoice it raised last month, and that invoice again in
+     the history. All real, all different, and from the outside three copies
+     of Syed.
+
+     The history only shows what is not already represented above. An invoice
+     belonging to an arrangement is that arrangement as far as anyone reading
+     the page is concerned, so it is reachable from the row rather than listed
+     beside it. */
+  const shownScheduleIds = new Set(schedules.map((sc) => sc.id));
+  const historyRows = history.filter(
+    (h) => h.status !== "pending" && !(h.scheduleId && shownScheduleIds.has(h.scheduleId)),
+  );
+  const hiddenByArrangement = history.filter(
+    (h) => h.status !== "pending" && h.scheduleId && shownScheduleIds.has(h.scheduleId),
+  ).length;
   const scheduleFor = (inv) => schedules.find((sc) => sc.id === inv.scheduleId) || null;
 
   /* Has anything ever arrived? The history cannot answer that, because voiding
@@ -5515,10 +5566,19 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
      person and leaves everyone else working. When they all shared a token
      this button could not have existed honestly. */
   const revokeInvite = async (iv) => {
+    /* Two different consequences wearing one button.
+
+       Somebody invited from here holds a link of their own, so revoking stops
+       them alone. Somebody who arrived through a link you pasted somewhere is
+       on the general one, and turning that off stops everybody holding it.
+       Saying "nobody else is affected" in the second case would be a lie. */
+    const personal = iv.invited && links.filter((l) => l.id === iv.linkId).some((l) => l.label);
     if (!(await onConfirmVoid?.({
       title: `Revoke ${iv.email}?`,
-      body: "Their link stops working immediately. Anything they have already sent stays in your books, and nobody else is affected.",
-      confirmLabel: "Revoke it",
+      body: personal
+        ? "Their link stops working immediately. Anything they have already sent stays in your books, and nobody else is affected."
+        : "They are using your general link, so turning it off stops everyone who holds it, not just them. Anything already sent stays in your books.",
+      confirmLabel: personal ? "Revoke it" : "Turn the link off",
     }))) return;
     setBusy(iv.id);
     await share.revokeInvoiceLink(iv.linkId);
@@ -5875,7 +5935,16 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                       </span>
                     </span>
                     <span style={{ color: P.faint }} className="text-[13.5px]">
-                      Nothing due. Next on the {ordinal(sc.dayOfMonth)}.
+                      {(() => {
+                        /* What this arrangement has done, on the arrangement.
+                           It was a separate history entry, which is how one
+                           supplier came to appear twice on one screen. */
+                        const raised = history.filter((h) => h.scheduleId === sc.id && h.status === "accepted").length;
+                        const next = `Next on the ${ordinal(sc.dayOfMonth)}.`;
+                        return raised
+                          ? `${raised} ${raised === 1 ? "invoice" : "invoices"} accepted so far. ${next}`
+                          : `Nothing due yet. ${next}`;
+                      })()}
                     </span>
                   </span>
                   <span
@@ -5988,13 +6057,15 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                 </div>
               ))}
 
-              {history.length > pending.length && (
+              {(historyRows.length > 0 || hiddenByArrangement > 0) && (
                 <details className="mt-4">
                   <summary style={{ color: P.brassText }} className="text-[15px] cursor-pointer press">
-                    Everything that has come in ({history.length})
+                    {historyRows.length > 0
+                      ? `One-off invoices that have come in (${historyRows.length})`
+                      : `Everything that has come in (${hiddenByArrangement})`}
                   </summary>
                   <div className="mt-2">
-                    {history.filter((h) => h.status !== "pending").map((inv) => (
+                    {(historyRows.length ? historyRows : history.filter((h) => h.status !== "pending")).map((inv) => (
                       <Row
                         key={inv.id}
                         inv={inv}
@@ -6077,8 +6148,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                     <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
                       {invites.length === 0 ? (
                         <p style={{ color: P.muted }} className="text-[14px]">
-                          Nobody has been emailed this link yet. Anyone you send it to by hand will not
-                          appear here, because we only know about the ones sent from Brasstally.
+                          Nobody has been invited and nothing has come in through this link yet.
                         </p>
                       ) : (
                         <>
@@ -6092,8 +6162,8 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                   {iv.email}
                                 </span>
                                 <span style={{ color: P.faint }} className="text-[13px]">
-                                  {String(iv.sentAt).slice(0, 10)}
-                                  {iv.submissions > 0 ? ` · ${iv.submissions} sent in` : " · nothing yet"}
+                                  {iv.invited ? "invited" : "sent in"} {String(iv.sentAt).slice(0, 10)}
+                                  {iv.submissions > 0 ? ` · ${iv.submissions} received` : " · nothing yet"}
                                   {iv.active ? "" : " · revoked"}
                                 </span>
                               </span>
@@ -6112,8 +6182,10 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                             </div>
                           ))}
                           <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
-                            Each person has their own link, so revoking one stops that person and nobody
-                            else. Anything they already sent stays in your books.
+                            Anyone invited from here has their own link, so revoking one stops that person
+                            and nobody else. People shown as having sent in without an invitation were
+                            given the link some other way and share the general one, so revoking them
+                            turns it off for everybody holding it.
                           </p>
                         </>
                       )}

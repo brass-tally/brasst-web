@@ -397,8 +397,16 @@ export async function stopSchedule(id) {
 }
 
 /** Who this link has been emailed to. Owner only, by policy. */
-/* Who was invited, joined to the link they were given, so the list can show
-   whether each person's access is still live and how much they have sent. */
+/* Everyone this link has touched, invited or not.
+
+   The list only knew about emails sent from Brasstally, which meant a link
+   pasted into a text message showed as "nobody has been emailed this link
+   yet" while six invoices sat in the tray from the people holding it. True
+   and useless, which is the worst kind of empty state.
+
+   Submissions are the other half and they are recoverable, because every
+   inbound invoice carries who sent it. So the list is built from both: who
+   was invited, and who has actually used it. */
 export async function listLinkInvites(ledgerId) {
   return soft("link invites", async () => {
     const { data, error } = await supabase
@@ -407,34 +415,59 @@ export async function listLinkInvites(ledgerId) {
       .eq("ledger_id", ledgerId)
       .order("sent_at", { ascending: false });
     if (error) throw error;
+
     const rows = (data || []).map((r) => ({
       id: r.id, linkId: r.link_id, email: r.email,
       note: r.note || undefined, sentAt: r.sent_at,
       active: r.invoice_links?.active ?? true,
       submissions: r.invoice_links?.submissions ?? 0,
-      token: r.invoice_links?.token,
+      invited: true,
     }));
 
-    /* Links whose label is an address but which have no invite row.
-
-       Migration 0037 backfills these, and this covers the case where it has
-       not been run: a personal link carries the recipient in its label, so
-       the list can be right without waiting for a migration. Derived entries
-       are marked so the interface does not claim a send date it invented. */
-    const known = new Set(rows.map((r) => r.linkId));
     const { data: links } = await supabase
       .from("invoice_links")
       .select("id, label, active, submissions, created_at")
       .eq("ledger_id", ledgerId);
+    const linkById = new Map((links || []).map((l) => [l.id, l]));
+
+    // A personal link carries its recipient in the label, so an invitation
+    // sent before there was a table to record it is still recoverable.
+    const known = new Set(rows.map((r) => r.linkId));
     for (const l of links || []) {
       if (known.has(l.id)) continue;
       if (!l.label || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(l.label)) continue;
       rows.push({
-        id: `derived:${l.id}`, linkId: l.id, email: l.label,
-        sentAt: l.created_at, active: l.active, submissions: l.submissions || 0,
-        derived: true,
+        id: `link:${l.id}`, linkId: l.id, email: l.label, sentAt: l.created_at,
+        active: l.active, submissions: l.submissions || 0, invited: true, derived: true,
       });
     }
+
+    /* And whoever has actually sent something in, however they got the link. */
+    const { data: subs } = await supabase
+      .from("inbound_invoices")
+      .select("link_id, party, contact_email, submitted_at")
+      .eq("ledger_id", ledgerId)
+      .order("submitted_at", { ascending: false });
+
+    const seen = new Set(rows.map((r) => (r.email || "").toLowerCase()));
+    const byPerson = new Map();
+    for (const sub of subs || []) {
+      const key = (sub.contact_email || sub.party || "").toLowerCase();
+      if (!key || seen.has(key)) continue;
+      const at = byPerson.get(key);
+      if (at) { at.submissions += 1; continue; }
+      byPerson.set(key, {
+        id: `sub:${key}`, linkId: sub.link_id,
+        email: sub.contact_email || sub.party,
+        name: sub.party,
+        sentAt: sub.submitted_at,
+        active: linkById.get(sub.link_id)?.active ?? true,
+        submissions: 1,
+        invited: false,
+      });
+    }
+    rows.push(...byPerson.values());
+
     rows.sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)));
     return rows;
   }, []);

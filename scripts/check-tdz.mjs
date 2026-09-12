@@ -17,7 +17,21 @@
 import { readFileSync } from "node:fs";
 
 const file = process.argv[2] || "app/src/App.jsx";
-const lines = readFileSync(file, "utf8").split("\n");
+/* Comments are not code.
+
+   This flagged a hook for reading `balance` because the word appears in a
+   sentence above it explaining what the hook is for. A check that treats
+   prose as identifiers teaches people to write worse comments, which is a
+   strange thing for a correctness tool to do.
+
+   Blanked rather than removed, so every line number this reports still
+   matches the file somebody will open. */
+const lines = readFileSync(file, "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+  .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, p) => p + " ".repeat(m.length - p.length))
+  .split("\n");
+
+
 
 const problems = [];
 let scope = new Map();   // name -> line index, for the component being read
