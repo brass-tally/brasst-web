@@ -3324,6 +3324,23 @@ function MatchView({
     setSkipped((s) => s.filter((k) => k !== `pair:${last.bankId}` && k !== `new:${last.bankId}`));
   };
 
+  /* The best guess available, and no pretence that it is more than that.
+
+     A filing rule if one matches, then a category whose name appears in the
+     description, then the ledger's catch-all. Every one of these is offered
+     for correction afterwards rather than presented as settled. */
+  const guessCategory = (b) => {
+    const cats = (data.categories || []).filter((c) =>
+      (b.direction === "credit" ? c.kind === "income" : c.kind === "expense"));
+    const text = String(b.description || "").toLowerCase();
+
+    const named = cats.find((c) => c.name && text.includes(c.name.toLowerCase()));
+    if (named) return { category: named.name, subcategory: undefined, account: b.account };
+
+    const fallback = cats.find((c) => /uncategor|other|misc/i.test(c.name)) || cats[0];
+    return { category: fallback?.name || "Uncategorised", subcategory: undefined, account: b.account };
+  };
+
   const doCreate = (b, opts) => {
     const t = actions.createFrom(b, opts);
     note({
@@ -3423,7 +3440,21 @@ function MatchView({
     for (const g of plan.fix.duplicates) removed += doRemoveDup(g);
     for (const g of plan.fix.dupBank) setAside += doIgnoreDupBank(g);
 
-    setFixedSummary({ paired, removed, setAside, filed });
+    /* Payments the bank made and the books never heard of.
+
+       These used to be a list handed back for the user to type in. The bank
+       is the authority on whether money moved, so they are recorded, with the
+       best category available and a flag saying it was a guess. Reversible in
+       a tap, and it misstates nothing in the meantime: the money did leave
+       the account. */
+    let recorded = 0;
+    for (const b of plan.fix.record || []) {
+      const guess = guessCategory(b);
+      doCreate(b, { category: guess.category, subcategory: guess.subcategory, account: guess.account });
+      recorded += 1;
+    }
+
+    setFixedSummary({ paired, removed, setAside, filed, recorded });
     setFixing(false);
   };
 
@@ -3615,6 +3646,23 @@ function MatchView({
             <div style={{ color: P.faint }} className="text-[13.5px] mt-2">
               These are filed when you run the plan below, and every one is listed in the record afterwards.
             </div>
+          </div>
+        )}
+
+        {fixedSummary?.recorded > 0 && (
+          <div style={{ background: P.brass + "14", borderRadius: 16 }} className="p-4 mb-4">
+            <div style={{ color: P.brassText }} className="text-[15px]">
+              {fixedSummary.recorded} {fixedSummary.recorded === 1 ? "payment" : "payments"} the bank made
+              {fixedSummary.recorded === 1 ? " is" : " are"} now in the books.
+            </div>
+            <div style={{ color: P.muted }} className="text-[14.5px] mt-1">
+              The amounts and dates come from the bank and are right. The categories are a guess, so worth a
+              look in Transactions. Delete any of them there if the bank was wrong.
+            </div>
+            {/* Closing lands on the section behind this, and the entries are
+                in Transactions. Threading a navigation prop for one button
+                would be more wiring than the button is worth; the sentence
+                above says where to look. */}
           </div>
         )}
 
@@ -5273,7 +5321,7 @@ const ordinal = (n) => {
   return `${v}${suffix}`;
 };
 
-function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onConfirmVoid, contacts = [] }) {
+function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [] }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
@@ -5360,8 +5408,6 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   /* An arrangement is shown separately only when it has nothing in the queue.
      Otherwise the invoice in the queue is the arrangement, as far as anyone
      looking at the screen is concerned. */
-  const pendingScheduleIds = new Set(pending.map((i) => i.scheduleId).filter(Boolean));
-  const quietSchedules = schedules.filter((sc) => !pendingScheduleIds.has(sc.id));
 
   /* One row per relationship.
 
@@ -5374,19 +5420,86 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
      belonging to an arrangement is that arrangement as far as anyone reading
      the page is concerned, so it is reachable from the row rather than listed
      beside it. */
-  const shownScheduleIds = new Set(schedules.map((sc) => sc.id));
-  const historyRows = history.filter(
-    (h) => h.status !== "pending" && !(h.scheduleId && shownScheduleIds.has(h.scheduleId)),
-  );
-  const hiddenByArrangement = history.filter(
-    (h) => h.status !== "pending" && h.scheduleId && shownScheduleIds.has(h.scheduleId),
-  ).length;
+  /* One row per thing, whatever kind of thing it is.
+
+     There were two lists: what is waiting, and what has come in. A monthly
+     arrangement appeared in the first and the invoice that created it in the
+     second, so the same agreement with Syed occupied two lines that looked
+     like duplicates because they were describing one relationship twice.
+
+     Now it is one list. Every row is an invoice or an arrangement, labelled
+     with what it is and what state it is in, sorted so the ones that need a
+     decision are at the top. The kind is a label on the line, not a heading
+     above a section. */
+  const rows = useMemo(() => {
+    const out = [];
+    const claimed = new Set();
+
+    // An arrangement is one row, carrying whatever it has raised.
+    for (const sc of schedules) {
+      const mine = history.filter((h) => h.scheduleId === sc.id);
+      mine.forEach((h) => claimed.add(h.id));
+      const waiting = pending.find((p) => p.scheduleId === sc.id);
+      if (waiting) claimed.add(waiting.id);
+      out.push({
+        key: `sc-${sc.id}`,
+        kind: "monthly",
+        schedule: sc,
+        invoice: waiting || null,
+        accepted: mine.filter((h) => h.status === "accepted").length,
+        party: sc.party,
+        description: sc.description,
+        amount: waiting ? waiting.amount : sc.amount,
+        sortAt: waiting ? "0" : `1-${sc.party}`,
+      });
+    }
+
+    // Then anything not part of one: pending first, then decided.
+    for (const inv of [...pending, ...history]) {
+      if (claimed.has(inv.id)) continue;
+      claimed.add(inv.id);
+      out.push({
+        key: `inv-${inv.id}`,
+        kind: inv.recurrence === "monthly" ? "monthly" : "once",
+        schedule: null,
+        invoice: inv,
+        accepted: inv.status === "accepted" ? 1 : 0,
+        party: inv.party,
+        description: inv.description,
+        amount: inv.amount,
+        sortAt: inv.status === "pending" ? "0" : `2-${String(inv.submittedAt || "")}`,
+      });
+    }
+
+    return out.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
+  }, [schedules, pending, history]);
   const scheduleFor = (inv) => schedules.find((sc) => sc.id === inv.scheduleId) || null;
 
   /* Has anything ever arrived? The history cannot answer that, because voiding
      deletes the row. The link counts every submission it has ever taken and
      nothing removes that, so it is the honest source. */
   const everReceived = links.some((l) => l.submissions > 0) || history.length > 0 || schedules.length > 0;
+
+  /* Is this already on the books?
+
+     A supplier who emails an invoice and also sends it through the link, or
+     one whose monthly arrangement raised it while you entered it by hand,
+     produces two payables for one debt. Nothing downstream catches that: it
+     is two separate obligations with the same amount, and it is found when
+     somebody pays twice.
+
+     Matched on party and amount, within a month either way, and only against
+     open payables: a settled one is a different month's bill. */
+  const alreadyOwed = (inv) => {
+    const want = String(inv.party || "").trim().toLowerCase();
+    const amt = Math.abs(Number(inv.amount) || 0);
+    return (onFindOpenPayables?.() || []).find((p) => {
+      if (String(p.party || "").trim().toLowerCase() !== want) return false;
+      if (Math.abs(Math.abs(Number(p.amount) || 0) - amt) > 0.005) return false;
+      if (!p.dueDate || !inv.dueDate) return true;
+      return Math.abs(new Date(p.dueDate) - new Date(inv.dueDate)) < 31 * 864e5;
+    }) || null;
+  };
 
   const accept = async (inv) => {
     /* A figure in another currency cannot go into the books at face value.
@@ -5398,6 +5511,17 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
 
        So it asks, prefilled with the invoiced figure, and whatever you enter
        is recorded with the original kept in the description. */
+    /* Say so before it becomes a second bill, not after. */
+    const twin = alreadyOwed(inv);
+    if (twin) {
+      const ok = await onConfirmVoid?.({
+        title: `You already owe ${twin.party} ${fmt(Math.abs(twin.amount))}`,
+        body: `That one is due ${twin.dueDate || "with no date"}${twin.description ? `, for ${twin.description}` : ""}. Accepting this adds a second payable for the same amount. If it is the same bill, deny this one instead.`,
+        confirmLabel: "Add it anyway",
+      });
+      if (!ok) return;
+    }
+
     if (foreign(inv)) {
       const converted = await askAmount({
         title: `${inv.party} invoiced ${inv.currency} ${fmt(inv.amount)}`,
@@ -5431,7 +5555,13 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     /* A monthly submission becomes an arrangement. It starts from next month,
        because the invoice in hand already covers this one. */
     if (res.ok && inv.recurrence === "monthly" && !inv.scheduleId) {
-      await share.startSchedule(ledgerId, inv);
+      /* Link the invoice back to the arrangement it started.
+
+         It was not linked, so the accepted invoice and the arrangement it
+         created were two unrelated rows as far as the interface could tell,
+         and the same supplier appeared twice. */
+      const made = await share.startSchedule(ledgerId, inv);
+      if (made?.id) await share.attachToSchedule(inv.id, made.id);
     }
     // Tell whoever sent it. Fired without waiting: the books are already right.
     if (first?.token) share.notifySupplierDecision(first.token, inv.id, "accepted").catch(() => {});
@@ -5666,79 +5796,139 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   const foreign = (inv) => inv.currency && inv.currency !== ledgerCcy;
   const withCcy = (inv) => (foreign(inv) ? `${inv.currency} ${fmt(inv.amount)}` : fmt(inv.amount));
 
-  const Row = ({ inv, actions }) => (
-    <div className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
-      <div className="flex items-baseline justify-between gap-3">
-        <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
-          {inv.party}
-          {inv.description ? <span style={{ color: P.muted }}> &middot; {inv.description}</span> : null}
-          {inv.recurrence === "monthly" && (
-            <span
-              style={{ background: P.brass + "24", color: P.brassText, borderRadius: 999 }}
-              className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
-            >
-              Monthly
-            </span>
-          )}
-        </span>
-        <span
-          style={{ fontFamily: MONO, color: P.debit }}
-          className="text-[15.5px] tabular-nums shrink-0 whitespace-nowrap"
-        >
-          {withCcy(inv)}
-        </span>
-      </div>
-      <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
-        {inv.invoiceNo ? `${inv.invoiceNo} · ` : ""}
-        {inv.dueDate ? `due ${inv.dueDate}` : "no due date"}
-        {inv.taxAmount ? ` · ${fmt(inv.taxAmount)} tax` : ""}
-        {inv.status !== "pending" ? ` · ${inv.status === "accepted" ? "added to what you owe" : "set aside"}` : ""}
-      </div>
-      {/* The pill already says Monthly, so the sentence saying the same thing
-          is two labels for one fact. */}
-      {/* What they itemised.
+  /* One row, whatever it is describing.
 
-          A supplier who typed four lines instead of attaching a PDF did all
-          that work into a field nobody displayed, and the owner saw one total
-          with no way to know it had been broken down. */}
-      {inv.lines?.length > 0 && (
-        <div style={{ background: P.surface2, borderRadius: 12 }} className="mt-2 px-3 py-2">
-          {inv.lines.map((l, i) => (
-            <div key={i} className="flex items-baseline justify-between gap-3 py-0.5">
-              <span style={{ color: P.muted }} className="text-[13.5px] min-w-0 truncate">
-                {l.description}
-                {Number(l.quantity) !== 1 && (
-                  <span style={{ color: P.faint }}> &times;{l.quantity}</span>
-                )}
-              </span>
+     An arrangement, a waiting invoice, or one that has been dealt with. The
+     kind is a label on the line rather than a heading over a section, which
+     is what stops the same supplier appearing twice under two headings. */
+  const Row = ({ row }) => {
+    const inv = row.invoice;
+    const sc = row.schedule;
+    const pendingHere = inv?.status === "pending";
+    const foreignHere = inv ? foreign(inv) : false;
+
+    const state = pendingHere
+      ? "waiting on you"
+      : sc
+        ? `${row.accepted ? `${row.accepted} accepted` : "nothing yet"} · next on the ${ordinal(sc.dayOfMonth)}`
+        : inv?.status === "accepted"
+          ? "added to what you owe"
+          : "set aside";
+
+    return (
+      <div className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
+        <div className="flex items-baseline justify-between gap-3">
+          <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
+            {row.party}
+            {row.description ? <span style={{ color: P.muted }}> &middot; {row.description}</span> : null}
+            {row.kind === "monthly" && (
               <span
-                style={{ color: P.faint, fontFamily: MONO }}
-                className="text-[13px] tabular-nums shrink-0"
+                style={{ background: P.brass + "24", color: P.brassText, borderRadius: 999 }}
+                className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
               >
-                {fmt(l.amount ?? (Number(l.quantity) || 1) * (Number(l.rate) || 0))}
+                Monthly
               </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {inv.note && inv.note !== "Raised automatically from a monthly arrangement" && (
-        <p style={{ color: P.muted }} className="text-[14px] mt-1.5 leading-snug">{inv.note}</p>
-      )}
-      <div className="flex flex-wrap items-center gap-2 mt-2.5">
-        {inv.filePath && (
-          <button
-            onClick={() => openPreview(inv.filePath, inv.invoiceNo || `${inv.party} invoice`, inv)}
-            style={{ color: P.brassText }}
-            className="text-[14px] inline-flex items-center gap-1.5 press"
+            )}
+          </span>
+          <span
+            style={{ fontFamily: MONO, color: pendingHere ? P.debit : P.faint }}
+            className="text-[15.5px] tabular-nums shrink-0 whitespace-nowrap"
           >
-            <Paperclip size={14} /> See the invoice
-          </button>
+            {foreignHere ? `${inv.currency} ${fmt(row.amount)}` : fmt(row.amount)}
+          </span>
+        </div>
+
+        <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+          {inv?.invoiceNo ? `${inv.invoiceNo} · ` : ""}
+          {inv?.dueDate ? `due ${inv.dueDate} · ` : ""}
+          {state}
+        </div>
+
+        {inv?.lines?.length > 0 && pendingHere && (
+          <div style={{ background: P.surface2, borderRadius: 12 }} className="mt-2 px-3 py-2">
+            {inv.lines.map((l, k) => (
+              <div key={k} className="flex items-baseline justify-between gap-3 py-0.5">
+                <span style={{ color: P.muted }} className="text-[13.5px] min-w-0 truncate">
+                  {l.description}
+                  {Number(l.quantity) !== 1 && <span style={{ color: P.faint }}> &times;{l.quantity}</span>}
+                </span>
+                <span style={{ color: P.faint, fontFamily: MONO }} className="text-[13px] tabular-nums shrink-0">
+                  {fmt(l.amount ?? (Number(l.quantity) || 1) * (Number(l.rate) || 0))}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
-        {actions}
+
+        {inv?.note && inv.note !== "Raised automatically from a monthly arrangement" && (
+          <p style={{ color: P.muted }} className="text-[14px] mt-1.5 leading-snug">{inv.note}</p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2 mt-2.5">
+          {inv?.filePath && (
+            <button
+              onClick={() => openPreview(inv.filePath, inv.invoiceNo || `${row.party} invoice`, inv)}
+              style={{ color: P.brassText }}
+              className="text-[14px] inline-flex items-center gap-1.5 press"
+            >
+              <Paperclip size={14} /> See the invoice
+            </button>
+          )}
+
+          {pendingHere && (
+            <>
+              <button
+                onClick={() => accept(inv)}
+                disabled={busy === inv.id}
+                style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                className="h-11 px-4 text-[15px] font-medium press"
+              >
+                {busy === inv.id ? "Adding" : "Add to what I owe"}
+              </button>
+              <button
+                onClick={() => { setCorrecting(correcting?.id === inv.id ? null : inv); setReason(""); }}
+                disabled={busy === inv.id}
+                style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                className="h-11 px-4 text-[15px] font-medium press"
+              >
+                Needs correction
+              </button>
+              <button
+                onClick={() => decline(inv)}
+                disabled={busy === inv.id}
+                style={{ color: P.debit }}
+                className="h-11 px-3 text-[15px] font-medium press"
+              >
+                Deny
+              </button>
+            </>
+          )}
+
+          {sc && (
+            <button
+              onClick={() => stopOne(sc)}
+              disabled={busy === sc.id}
+              style={{ color: P.faint }}
+              className="h-11 px-2 text-[14px] press"
+            >
+              Stop repeating
+            </button>
+          )}
+
+          {!pendingHere && inv && (
+            <button
+              onClick={() => voidOne(inv)}
+              disabled={busy === inv.id}
+              style={{ color: P.debit }}
+              className="h-11 px-2 text-[14px] press"
+            >
+              Void
+            </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div ref={shell}>
@@ -5853,19 +6043,16 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   "Nothing waiting" is a card that appears the moment you clear
                   the last one, so the reward for finishing is a box telling you
                   the box is empty. */}
-              {(pending.length > 0 || quietSchedules.length > 0) && !filed && (
+              {rows.length > 0 && !filed && (
                 <>
-                  <h3 style={{ fontFamily: SERIF }} className="text-xl">Waiting on you</h3>
+                  <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices sent to you</h3>
                   <p style={{ color: P.muted }} className="text-[15px] mb-2">
-                    Sent through your intake link. Accepting one adds it to what you owe.
+                    One line each. Accepting adds it to what you owe.
                   </p>
                 </>
               )}
 
-              {/* Cleared, and it says so once. The panel closes itself a beat
-                  later, because the point of clearing a queue is not having to
-                  look at it. */}
-              {pending.length === 0 && quietSchedules.length === 0 && !filed && (
+              {rows.length === 0 && !filed && (
                 <div className="py-2 text-center">
                   <div
                     style={{ background: P.credit + "18", color: P.credit }}
@@ -5873,11 +6060,6 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   >
                     <Check size={22} />
                   </div>
-                  {/* "Nothing has come in yet" was keyed on the history, and
-                      voiding deletes the row it counted. Void your only
-                      invoice and the app announced that none had ever
-                      arrived, which is a thing it could see was untrue: the
-                      link's own counter says how many were received. */}
                   <div style={{ color: P.text }} className="text-[16px]">
                     {everReceived ? "All caught up" : "Nothing has come in yet"}
                   </div>
@@ -5889,8 +6071,6 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                 </div>
               )}
 
-              {/* The row that was just accepted, holding its place for a beat
-                  so the confirmation happens where you were looking. */}
               {filed && (
                 <div className="py-6 text-center filed-pop">
                   <div
@@ -5904,118 +6084,14 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                     {filed.party} &middot; {fmt(filed.amount)}
                     {filed.dueDate ? ` · due ${filed.dueDate}` : ""}
                   </div>
-                  <div style={{ color: P.faint }} className="text-[14px] mt-1">
-                    Added to what you owe
-                  </div>
+                  <div style={{ color: P.faint }} className="text-[14px] mt-1">Added to what you owe</div>
                 </div>
               )}
 
-              {/* One list.
-
-                  Waiting invoices and quiet arrangements were two sections
-                  describing the same relationships, so GEN Work appeared twice
-                  and the eye had to work out that both were the same thing.
-                  An arrangement with nothing due is a row like any other,
-                  marked Monthly, saying when the next one lands. */}
-              {!filed && quietSchedules.map((sc) => (
-                <div
-                  key={`sched-${sc.id}`}
-                  className="flex items-center gap-3 py-3.5"
-                  style={{ borderTop: `1px solid ${P.line}` }}
-                >
-                  <span className="flex-1 min-w-0">
-                    <span style={{ color: P.text }} className="text-[15.5px] block truncate">
-                      {sc.party}
-                      {sc.description ? <span style={{ color: P.muted }}> &middot; {sc.description}</span> : null}
-                      <span
-                        style={{ background: P.brass + "24", color: P.brassText, borderRadius: 999 }}
-                        className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
-                      >
-                        Monthly
-                      </span>
-                    </span>
-                    <span style={{ color: P.faint }} className="text-[13.5px]">
-                      {(() => {
-                        /* What this arrangement has done, on the arrangement.
-                           It was a separate history entry, which is how one
-                           supplier came to appear twice on one screen. */
-                        const raised = history.filter((h) => h.scheduleId === sc.id && h.status === "accepted").length;
-                        const next = `Next on the ${ordinal(sc.dayOfMonth)}.`;
-                        return raised
-                          ? `${raised} ${raised === 1 ? "invoice" : "invoices"} accepted so far. ${next}`
-                          : `Nothing due yet. ${next}`;
-                      })()}
-                    </span>
-                  </span>
-                  <span
-                    style={{ fontFamily: MONO, color: P.faint }}
-                    className="text-[15px] tabular-nums shrink-0"
-                  >
-                    {fmt(sc.amount)}
-                  </span>
-                  <button
-                    onClick={() => stopOne(sc)}
-                    disabled={busy === sc.id}
-                    style={{ color: P.faint }}
-                    className="h-11 px-2 text-[14px] shrink-0 press"
-                  >
-                    Stop
-                  </button>
-                </div>
-              ))}
-
-              {!filed && pending.map((inv) => (
-                /* The correction form sits here, beside the row, not inside
-                   it. Row is defined within this component, so React sees a
-                   new function on every render and remounts the subtree: an
-                   input in there loses focus after every character typed. */
-                <div key={inv.id}>
-                  <Row
-                    inv={inv}
-                    actions={
-                      <>
-                        <button
-                          onClick={() => accept(inv)}
-                          disabled={busy === inv.id}
-                          style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
-                          className="h-11 px-4 text-[15px] font-medium press"
-                        >
-                          {busy === inv.id ? "Adding" : "Add to what I owe"}
-                        </button>
-                        <button
-                          onClick={() => { setCorrecting(correcting?.id === inv.id ? null : inv); setReason(""); }}
-                          disabled={busy === inv.id}
-                          style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
-                          className="h-11 px-4 text-[15px] font-medium press"
-                        >
-                          Needs correction
-                        </button>
-                        <button
-                          onClick={() => decline(inv)}
-                          disabled={busy === inv.id}
-                          style={{ color: P.debit }}
-                          className="h-11 px-3 text-[15px] font-medium press"
-                        >
-                          Deny
-                        </button>
-                        {scheduleFor(inv) && (
-                          /* Stopping the arrangement belongs on the invoice it
-                             produced, which is the thing you are looking at
-                             when you decide you no longer want it. */
-                          <button
-                            onClick={() => stopOne(scheduleFor(inv))}
-                            disabled={busy === scheduleFor(inv).id}
-                            style={{ color: P.faint }}
-                            className="h-11 px-2 text-[14px] press"
-                          >
-                            Stop repeating
-                          </button>
-                        )}
-                      </>
-                    }
-                  />
-
-                  {correcting?.id === inv.id && (
+              {!filed && rows.map((row) => (
+                <div key={row.key}>
+                  <Row row={row} />
+                  {correcting?.id === row.invoice?.id && (
                     <div style={{ background: P.surface2, borderRadius: 14 }} className="p-3.5 mb-3">
                       <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">
                         What needs changing
@@ -6029,15 +6105,15 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                       />
                       <div className="flex flex-wrap items-center gap-2 mt-3">
                         <button
-                          onClick={() => requestCorrection(inv)}
-                          disabled={busy === inv.id || !inv.contactEmail}
+                          onClick={() => requestCorrection(row.invoice)}
+                          disabled={busy === row.invoice.id || !row.invoice.contactEmail}
                           style={{
                             background: P.brass, color: P.onbrass, borderRadius: R.pill,
-                            opacity: inv.contactEmail ? 1 : 0.5,
+                            opacity: row.invoice.contactEmail ? 1 : 0.5,
                           }}
                           className="h-11 px-4 text-[15px] font-medium press"
                         >
-                          {busy === inv.id ? "Sending" : "Send it back"}
+                          {busy === row.invoice.id ? "Sending" : "Send it back"}
                         </button>
                         <button
                           onClick={() => { setCorrecting(null); setReason(""); }}
@@ -6047,7 +6123,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                           Cancel
                         </button>
                       </div>
-                      {!inv.contactEmail && (
+                      {!row.invoice.contactEmail && (
                         <p style={{ color: P.debit }} className="text-[14px] mt-2 leading-snug">
                           They left no email address, so there is nobody to send this to. Deny it instead.
                         </p>
@@ -6056,34 +6132,6 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   )}
                 </div>
               ))}
-
-              {(historyRows.length > 0 || hiddenByArrangement > 0) && (
-                <details className="mt-4">
-                  <summary style={{ color: P.brassText }} className="text-[15px] cursor-pointer press">
-                    {historyRows.length > 0
-                      ? `One-off invoices that have come in (${historyRows.length})`
-                      : `Everything that has come in (${hiddenByArrangement})`}
-                  </summary>
-                  <div className="mt-2">
-                    {(historyRows.length ? historyRows : history.filter((h) => h.status !== "pending")).map((inv) => (
-                      <Row
-                        key={inv.id}
-                        inv={inv}
-                        actions={
-                          <button
-                            onClick={() => voidOne(inv)}
-                            disabled={busy === inv.id}
-                            style={{ color: P.debit }}
-                            className="text-[14px] press"
-                          >
-                            Void
-                          </button>
-                        }
-                      />
-                    ))}
-                  </div>
-                </details>
-              )}
             </>
           )}
 
@@ -9478,6 +9526,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
           onCount={onInboundChange}
           contacts={contacts}
           onFindPayable={(id) => data.payables.find((p) => p.id === id) || null}
+          onFindOpenPayables={() => (data.payables || []).filter((p) => p.status === "open")}
           onDeletePayable={(id) => delAR("payables", id)}
           onConfirmVoid={askConfirm}
         />

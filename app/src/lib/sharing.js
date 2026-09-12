@@ -485,3 +485,18 @@ export async function forgetLinkInvite(id) {
     return { ok: true };
   }, { ok: false });
 }
+
+/* Tie an invoice to the arrangement it began.
+
+   Without this the invoice and the schedule are two unrelated rows, which is
+   how one supplier came to occupy two lines describing the same monthly
+   agreement. */
+export async function attachToSchedule(invoiceId, scheduleId) {
+  assertWritable();
+  return soft("attach schedule", async () => {
+    const { error } = await supabase
+      .from("inbound_invoices").update({ schedule_id: scheduleId }).eq("id", invoiceId);
+    if (error) throw error;
+    return { ok: true };
+  }, { ok: false });
+}

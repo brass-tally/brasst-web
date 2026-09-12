@@ -169,20 +169,31 @@ export function consolidationPlan({ bankTxns = [], txs = [], duplicates = [], du
     : `Remove ${dupExtras} entries that were recorded twice, worth ${fmtish(exactDups.reduce((s, g) => s + g.extraTotal, 0))} between them. Each is an exact copy of one being kept.`);
   if (dupBankExtras) lines.push(`Set aside ${dupBankExtras} bank ${dupBankExtras === 1 ? "line the bank sent" : "lines the bank sent"} twice. The originals stay.`);
 
+  /* A payment the bank made and the books never heard of is not a question.
+
+     It was in `ask`, so consolidating handed back a list of things for the
+     user to type in, which is the work they installed a bookkeeper to avoid.
+     The bank is the authority on whether money moved: it moved. The only open
+     question is what to call it, and that is a correction, not a decision.
+
+     So it is recorded, and the entries come back marked for a look. Creating
+     one is reversible in a tap and misstates nothing in the meantime: the
+     money did leave the account. */
   return {
     fix: {
       matches: auto,
       duplicates: exactDups,
       dupBank: dupBankLines,
-      count: auto.length + dupExtras + dupBankExtras,
+      record: openBank,
+      count: auto.length + dupExtras + dupBankExtras + openBank.length,
       lines,
     },
     ask: {
       changed,
       maybeDuplicates: maybeDups,
       pairs: suggested,
-      unrecorded: openBank,
-      count: changed.length + maybeDups.length + suggested.length + openBank.length,
+      unrecorded: [],
+      count: changed.length + maybeDups.length + suggested.length,
     },
     uncleared: openBook,
     scanned: {
