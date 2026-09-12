@@ -5240,7 +5240,7 @@ const ordinal = (n) => {
   return `${v}${suffix}`;
 };
 
-function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onConfirmVoid, contacts = [] }) {
+function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onConfirmVoid, contacts = [] }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
@@ -5575,7 +5575,9 @@ function InvoiceTools({ ledgerId, openPreview, onAccept, onCount, onDeletePayabl
      Writing "CAD" beside every figure on a Canadian ledger is noise, and
      writing nothing beside a figure that is not in dollars is a mistake
      waiting to be made at year end. */
-  const ledgerCcy = data?.ledger?.currency || "CAD";
+  // Passed in. This component takes a ledger id, not the ledger, and reading
+  // `data` here threw on render: AR / AP would not open at all.
+  const ledgerCcy = ledgerCurrency || "CAD";
   const foreign = (inv) => inv.currency && inv.currency !== ledgerCcy;
   const withCcy = (inv) => (foreign(inv) ? `${inv.currency} ${fmt(inv.amount)}` : fmt(inv.amount));
 
@@ -9237,6 +9239,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
       {!readOnly && (
         <InvoiceTools
           ledgerId={data.ledger.id}
+          ledgerCurrency={data.ledger.currency}
           openPreview={openPreview}
           onAccept={(inv) => addAR("payables", inv)}
           onCount={onInboundChange}
@@ -9281,8 +9284,8 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         </div>
       )}
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" />
-        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} />
+        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} />
+        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} />
       </div>
     </div>
   );
@@ -9348,7 +9351,7 @@ function ARFields({ kind, f, set, data, addSub, addCredit, contacts = [] }) {
   );
 }
 
-function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed }) {
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [] }) {
   const [adding, setAdding] = useState(false);
   const [settleFor, setSettleFor] = useState(null);   // item awaiting the confirm dialog
 
