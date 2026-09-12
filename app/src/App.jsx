@@ -12630,7 +12630,27 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
   // Ask Plaid whether each Item is still signed in, then re-read. Runs in the
   // background: a dropped sign-in should announce itself here rather than
   // waiting for the user to press Sync and watch it fail.
-  const refreshHealth = async () => {
+  /* Checking health costs money.
+
+     `check_status` calls Plaid's /item/get once per connection, and it ran
+     every time this card mounted, which is every visit to Connectors. That is
+     a metered call for a question that changes about as often as a bank
+     changes its mind: a connection that was healthy an hour ago is healthy
+     now, and when it is not, the next sync says so anyway.
+
+     Once every six hours, remembered across reloads, and always on demand
+     when somebody presses the button. */
+  const HEALTH_EVERY_MS = 6 * 60 * 60 * 1000;
+
+  const refreshHealth = async ({ force = false } = {}) => {
+    const key = `bt-bank-health:${data.ledger.id}`;
+    if (!force) {
+      try {
+        const last = Number(localStorage.getItem(key) || 0);
+        if (last && Date.now() - last < HEALTH_EVERY_MS) return;
+      } catch { /* no store, fall through and check */ }
+    }
+    try { localStorage.setItem(key, String(Date.now())); } catch { /* fine */ }
     try {
       await bank.checkStatus(data.ledger.id);
       await refreshConns();
