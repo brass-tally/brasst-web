@@ -387,6 +387,41 @@ Deno.serve(async (req) => {
       const note = String(body.note || "").slice(0, 400)
         .replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]!));
 
+      /* Each person gets their own link.
+
+         One shared token means "revoke this invitation" cannot mean anything:
+         turning it off stops everyone, and leaving it on leaves the person you
+         wanted to cut off still holding a working address. A link per
+         recipient makes revocation a real thing rather than a button that
+         apologises.
+
+         Reuse an existing one for the same address, so inviting somebody twice
+         does not leave two tokens to keep track of. */
+      let target = link;
+      const { data: existing } = await db
+        .from("invoice_links")
+        .select("id, token, slug, ledger_id, label, active")
+        .eq("ledger_id", link.ledger_id)
+        .eq("label", to)
+        .eq("active", true)
+        .maybeSingle();
+
+      if (existing) {
+        target = existing as typeof link;
+      } else {
+        const fresh = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
+        const { data: made, error: mkErr } = await db
+          .from("invoice_links")
+          .insert({ ledger_id: link.ledger_id, token: fresh, label: to, owner_id: ownerId })
+          .select("id, token, slug, ledger_id, label, active")
+          .single();
+        if (mkErr) {
+          console.warn("could not make a personal link, falling back:", mkErr.message);
+        } else {
+          target = made as typeof link;
+        }
+      }
+
       const r = await sendMail(
         to,
         `Send your invoice to ${business}`,
@@ -394,7 +429,7 @@ Deno.serve(async (req) => {
           business,
           fromName: caller.user.email ? caller.user.email.split("@")[0] : null,
           note: note || null,
-          link: linkFor(String(token), link.slug),
+          link: linkFor(String(target.token), target.slug),
         }),
         caller.user.email ?? undefined,
       );
@@ -405,7 +440,7 @@ Deno.serve(async (req) => {
            send, so a failed send leaves no phantom entry. */
         try {
           await db.from("invoice_link_invites").insert({
-            link_id: link.id, ledger_id: link.ledger_id, email: to, note: note || null,
+            link_id: target.id, ledger_id: link.ledger_id, email: to, note: note || null,
           });
         } catch (e) {
           console.warn("invite not recorded:", e);

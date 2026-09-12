@@ -5259,7 +5259,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   const [spinning, setSpinning] = useState(false);
   const [schedules, setSchedules] = useState([]);
   const [invites, setInvites] = useState([]);
-  const [showAllSent, setShowAllSent] = useState(false);
+  const [showSent, setShowSent] = useState(false);
   const [correcting, setCorrecting] = useState(null);
   const [reason, setReason] = useState("");
 
@@ -5320,7 +5320,9 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   }, [open]);
 
   const first = links[0];
-  const sentTo = invites.filter((i) => !first || i.linkId === first.id);
+  /* Every link on the ledger has taken submissions, not just the general
+     one, now that each recipient gets their own. */
+  const totalReceived = links.reduce((n, l) => n + (l.submissions || 0), 0);
 
   /* An arrangement is shown separately only when it has nothing in the queue.
      Otherwise the invoice in the queue is the arrangement, as far as anyone
@@ -5504,6 +5506,24 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     const left = 500 - (Date.now() - started);
     if (left > 0) await new Promise((r) => setTimeout(r, left));
     setSpinning(false);
+  };
+
+  /* Revoking one person, which now means something.
+
+     Every recipient is emailed their own link, so turning one off stops that
+     person and leaves everyone else working. When they all shared a token
+     this button could not have existed honestly. */
+  const revokeInvite = async (iv) => {
+    if (!(await onConfirmVoid?.({
+      title: `Revoke ${iv.email}?`,
+      body: "Their link stops working immediately. Anything they have already sent stays in your books, and nobody else is affected.",
+      confirmLabel: "Revoke it",
+    }))) return;
+    setBusy(iv.id);
+    await share.revokeInvoiceLink(iv.linkId);
+    setBusy("");
+    setDone(`${iv.email} can no longer send invoices through that link.`);
+    refresh();
   };
 
   const sendLink = async () => {
@@ -6023,49 +6043,6 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   >
                     {share.invoiceLinkUrl(first.token, first.slug)}
                   </div>
-                  {/* Who holds this link, and what to do about it.
-
-                      "6 received" counted submissions and said nothing about
-                      who was invited. A link that has gone to six people, one
-                      of whom you no longer work with, is a link you cannot
-                      reason about without a list. */}
-                  {sentTo.length > 0 && (
-                    <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
-                      <div style={{ color: P.text }} className="text-[14.5px] mb-1.5">
-                        Sent to {sentTo.length} {sentTo.length === 1 ? "person" : "people"}
-                      </div>
-                      {sentTo.slice(0, showAllSent ? 99 : 3).map((iv) => (
-                        <div key={iv.id} className="flex items-center gap-2 py-1.5">
-                          <span style={{ color: P.muted }} className="text-[14px] flex-1 min-w-0 truncate">
-                            {iv.email}
-                            <span style={{ color: P.faint }} className="ml-2">{String(iv.sentAt).slice(0, 10)}</span>
-                          </span>
-                          <button
-                            onClick={async () => { await share.forgetLinkInvite(iv.id); refresh(); }}
-                            style={{ color: P.faint }}
-                            className="text-[13.5px] shrink-0 press"
-                            title="Remove from this list. They still hold the link."
-                          >
-                            Forget
-                          </button>
-                        </div>
-                      ))}
-                      {sentTo.length > 3 && (
-                        <button
-                          onClick={() => setShowAllSent(!showAllSent)}
-                          style={{ color: P.brassText }}
-                          className="text-[14px] mt-1 press"
-                        >
-                          {showAllSent ? "Show fewer" : `Show all ${sentTo.length}`}
-                        </button>
-                      )}
-                      <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
-                        Forgetting a name only clears this list. Everyone above still holds the address, so
-                        turn the link off if you want it to stop working.
-                      </p>
-                    </div>
-                  )}
-
                   <div className="flex flex-wrap items-center gap-2 mt-3">
                     <button
                       onClick={copy}
@@ -6081,16 +6058,80 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                     >
                       <Mail size={16} /> Email it
                     </button>
-                    <span style={{ color: P.faint }} className="text-[14px]">
-                      {first.submissions} received
-                      {links.length > 1 ? ` · ${links.length} links, the rest are in Settings` : ""}
-                    </span>
+                    {/* The counter is the way in.
+
+                        It read "6 received" and could not be pressed, so the
+                        only number on the panel was the one that answered the
+                        least useful question. Who holds the link matters more
+                        than how many have used it, and both are behind this
+                        now. */}
+                    <button
+                      onClick={() => setShowSent(!showSent)}
+                      style={{ color: P.brassText }}
+                      className="text-[14px] press inline-flex items-center gap-1.5"
+                      aria-expanded={showSent}
+                    >
+                      {invites.length > 0
+                        ? `${invites.length} invited · ${totalReceived} received`
+                        : `${totalReceived} received`}
+                      <ChevronDown
+                        size={13}
+                        style={{ transform: showSent ? "rotate(180deg)" : "none", transition: "transform .18s" }}
+                      />
+                    </button>
                   </div>
 
                   {/* Sending it, rather than copying it somewhere else to send.
                       A link that has to be pasted into another app is a link
                       that gets pasted with no context, and the supplier then
                       has to guess what it is. */}
+                  {showSent && (
+                    <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
+                      {invites.length === 0 ? (
+                        <p style={{ color: P.muted }} className="text-[14px]">
+                          Nobody has been emailed this link yet. Anyone you send it to by hand will not
+                          appear here, because we only know about the ones sent from Brasstally.
+                        </p>
+                      ) : (
+                        <>
+                          {invites.map((iv) => (
+                            <div key={iv.id} className="flex items-center gap-3 py-2">
+                              <span className="flex-1 min-w-0">
+                                <span
+                                  style={{ color: iv.active ? P.text : P.faint, textDecoration: iv.active ? "none" : "line-through" }}
+                                  className="text-[14.5px] block truncate"
+                                >
+                                  {iv.email}
+                                </span>
+                                <span style={{ color: P.faint }} className="text-[13px]">
+                                  {String(iv.sentAt).slice(0, 10)}
+                                  {iv.submissions > 0 ? ` · ${iv.submissions} sent in` : " · nothing yet"}
+                                  {iv.active ? "" : " · revoked"}
+                                </span>
+                              </span>
+                              {iv.active ? (
+                                <button
+                                  onClick={() => revokeInvite(iv)}
+                                  disabled={busy === iv.id}
+                                  style={{ color: P.debit }}
+                                  className="text-[14px] shrink-0 press"
+                                >
+                                  {busy === iv.id ? "Revoking" : "Revoke"}
+                                </button>
+                              ) : (
+                                <span style={{ color: P.faint }} className="text-[13.5px] shrink-0">off</span>
+                              )}
+                            </div>
+                          ))}
+                          <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
+                            Each person has their own link, so revoking one stops that person and nobody
+                            else. Anything they already sent stays in your books.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {mailing && (
                     <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mt-3">
                       <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">

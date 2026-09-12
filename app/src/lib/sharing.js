@@ -397,17 +397,22 @@ export async function stopSchedule(id) {
 }
 
 /** Who this link has been emailed to. Owner only, by policy. */
+/* Who was invited, joined to the link they were given, so the list can show
+   whether each person's access is still live and how much they have sent. */
 export async function listLinkInvites(ledgerId) {
   return soft("link invites", async () => {
     const { data, error } = await supabase
       .from("invoice_link_invites")
-      .select("id, link_id, email, note, sent_at")
+      .select("id, link_id, email, note, sent_at, invoice_links(token, active, submissions)")
       .eq("ledger_id", ledgerId)
       .order("sent_at", { ascending: false });
     if (error) throw error;
     return (data || []).map((r) => ({
       id: r.id, linkId: r.link_id, email: r.email,
       note: r.note || undefined, sentAt: r.sent_at,
+      active: r.invoice_links?.active ?? true,
+      submissions: r.invoice_links?.submissions ?? 0,
+      token: r.invoice_links?.token,
     }));
   }, []);
 }
