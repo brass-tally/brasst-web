@@ -1221,9 +1221,29 @@ function Ledger({ onSignOut }) {
      are two of them by design. */
   const syncedToday = useRef("");
   useEffect(() => {
-    const stamp = `${todayStr()}`;
-    if (!ledgers?.length || syncedToday.current === stamp) return;
-    syncedToday.current = stamp;
+    /* At most one attempt per day, per device, and Plaid is charged per call.
+
+       This was a ref, which lives for one page load, so every refresh was a
+       fresh attempt. A sync that failed, or a connection whose timestamp did
+       not move, would be tried again on the next reload and again on the one
+       after. That is a bill, not a bug report, and it is the kind that
+       arrives at the end of the month.
+
+       The marker is the morning it belongs to, written before the work
+       starts. If the attempt fails, it fails until tomorrow: a failed sync is
+       a stale balance, which is visible and survivable, and a retry loop
+       against a metered API is neither.
+
+       The scheduled job is the real path. This is the fallback for a device
+       that opens the app before the job has run, or on a project where the
+       job has never been configured. */
+    const morning = bank.lastMorningBoundary().toISOString().slice(0, 10);
+    const key = `bt-bank-pass:${morning}`;
+    if (!ledgers?.length || syncedToday.current === morning) return;
+    try { if (localStorage.getItem(key)) { syncedToday.current = morning; return; } } catch { /* no store */ }
+    syncedToday.current = morning;
+    try { localStorage.setItem(key, String(Date.now())); } catch { /* no store */ }
+
     (async () => {
       const n = await bank.refreshStale(ledgers.map((l) => l.id));
       if (!n) return;
@@ -1374,7 +1394,13 @@ function Ledger({ onSignOut }) {
   useEffect(() => {
     if (!currentLedger) return;
     setData(null);
-    setBankConns([]);
+      /* null, not an empty list.
+
+         Clearing to [] says "this ledger has no bank", so the balance answers
+         from the books, draws that figure, and corrects itself when the real
+         connections arrive a moment later. That is the flash, and it survived
+         the last two fixes because this line runs before either of them. */
+      setBankConns(null);
     setBankTxns([]);
     setMatchOpen(false);
     window.localStorage.setItem("ledger:last", currentLedger.id);
@@ -1605,9 +1631,16 @@ function Ledger({ onSignOut }) {
   // anchor count toward the balance, so untracked earlier months can't distort it.
   // Connected ledgers show the bank figure as Balance to date; books stay for delta.
   const balance = useMemo(() => {
+    /* No ledger yet is not a balance of zero.
+
+       This returned zero with source "books", so the card drew $0.00 with
+       every appearance of certainty and then replaced it with the real
+       figure. That is the flash, and it happens before the bank is even
+       reached: gating on the connections alone could never have fixed it,
+       because the first wrong number arrives one step earlier. */
     if (!data) {
       return {
-        value: 0, book: 0, bank: null, delta: null, source: "books",
+        value: null, book: 0, bank: null, delta: null, source: "loading",
         beforeAnchor: false, anchorAmount: 0, anchorDate: "", balanceAsOf: null,
       };
     }
