@@ -1127,7 +1127,23 @@ function Ledger({ onSignOut }) {
   const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
   const [bankTxns, setBankTxns] = useState([]); // every line Plaid has sent, with its match state
   const [matchOpen, setMatchOpen] = useState(false); // the two-column reconcile view
-  const [bankConns, setBankConns] = useState([]); // Plaid connections for this ledger (balances)
+  /* null until they have been read.
+
+     It was an empty array from the first render, so "not loaded yet" and "no
+     bank connected" were the same value. The balance fell back to the book
+     figure, drew it, and then jumped to the bank figure a moment later. The
+     first number was never wrong exactly, it was just not the one being
+     asked for, which is worse: a figure that changes while you look at it is
+     a figure you stop trusting. */
+  const [bankConns, setBankConns] = useState(null);
+
+  /* Null is the loading signal and it stops here.
+
+     Every consumer below wants a list, and threading "or it might be null"
+     through nine components to express one moment of uncertainty is how a
+     small distinction becomes everybody's problem. The balance reads the raw
+     value, everything else gets a list. */
+  const conns = bankConns || []; // Plaid connections for this ledger (balances)
   const [accountOpen, setAccountOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const inFlight = useRef(new Set()); // synchronous double-tap lock for settle/remove
@@ -1221,6 +1237,7 @@ function Ledger({ onSignOut }) {
       if (!currentLedger?.id) return;
       try { setBankConns(await bank.listConnections(currentLedger.id)); } catch { /* leave what is there */ }
       try { setBankTxns(await bank.listBankTransactions(currentLedger.id)); } catch { /* same */ }
+      setSyncedAt(Date.now());
     })();
     /* eslint-disable-next-line */
   }, [ledgers?.length]);
@@ -1318,7 +1335,7 @@ function Ledger({ onSignOut }) {
       Boolean(window.localStorage.getItem("guide:used")),
     ].filter(Boolean).length;
     return { done, total: 5 };
-  }, [data, bankConns]);
+  }, [data, conns]);
 
   /* ---- 1) list this user's ledgers ---- */
   useEffect(() => {
@@ -1475,6 +1492,9 @@ function Ledger({ onSignOut }) {
     catch { return new Set(); }
   });
   const [arrivedBusy, setArrivedBusy] = useState("");
+  /* Bumped after a background sync, so views holding their own copy of the
+     connections know to read them again. */
+  const [syncedAt, setSyncedAt] = useState(0);
 
   const arrived = useMemo(() => {
     if (!data || readOnly) return [];
@@ -1598,6 +1618,14 @@ function Ledger({ onSignOut }) {
       .filter((t) => t.date && t.date > anchorDate && t.date.slice(0, 7) <= month && !isCredits(t))
       .reduce((s, t) => s + (t.type === "income" ? t.amount : -t.amount), 0);
     const book = anchorAmount + cum;
+    /* Still reading. Say so rather than answering from the books and
+       correcting yourself. */
+    if (bankConns === null) {
+      return {
+        value: null, book, bank: null, delta: null, source: "loading",
+        beforeAnchor, anchorAmount, anchorDate, balanceAsOf: null,
+      };
+    }
     const bankTotal = bank.sumBankBalance(bankConns);
     const balanceAsOf = bank.latestBalanceAsOf(bankConns);
     const connected = bankTotal != null;
@@ -1656,8 +1684,8 @@ function Ledger({ onSignOut }) {
     return { signature, history, last, settled: Boolean(last && last.signature === signature) };
   }, [recon, duplicates, dupBankLines, data]);
   const insights = useMemo(
-    () => (data ? computeInsights(data, { balance, month, bankConns, recon, consolidation, duplicates }) : []),
-    [data, balance, month, bankConns, recon, consolidation, duplicates],
+    () => (data ? computeInsights(data, { balance, month, bankConns: conns, recon, consolidation, duplicates }) : []),
+    [data, balance, month, conns, recon, consolidation, duplicates],
   );
 
   // One message, at most, and only when the conversation is closed. The queue
@@ -2598,7 +2626,7 @@ function Ledger({ onSignOut }) {
         )}
         {tab === "credits" && <CreditsCard readOnly={readOnly} data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
-        {tab === "integrations" && <IntegrationsTab data={data} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
+        {tab === "integrations" && <IntegrationsTab data={data} syncedAt={syncedAt} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
           setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
@@ -2636,7 +2664,7 @@ function Ledger({ onSignOut }) {
             setup={!setupHidden ? (
               <SetupChecklist
                 data={data}
-                bankConns={bankConns}
+                bankConns={conns}
                 openGuide={openGuide}
                 onGo={(where) => { if (where === "capture") return setChatOpen(true); setTab(where); }}
                 onDismiss={() => { window.localStorage.setItem("setup:hidden", "1"); setSetupHidden(true); }}
@@ -2697,7 +2725,7 @@ function Ledger({ onSignOut }) {
               openBooks={openBooks}
               recon={recon}
               consolidation={consolidation}
-              bankConns={bankConns}
+              bankConns={conns}
               insights={insights}
               taxPolicy={taxPolicy}
               onSettleFromReceipt={settleFromReceipt}
@@ -4608,7 +4636,13 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
       // string of symbols. "Δ −$1,397.97" is a thing to decode, "the books say
       // X, a gap of Y" is a thing to read.
       label: "Balance to date",
-      value: balance.beforeAnchor ? "·" : money(balance.value),
+      /* A dash while the bank is being read.
+
+         Drawing the book figure and correcting it a moment later is worse
+         than drawing nothing: the first number was never wrong exactly, it
+         just was not the one being asked for, and a figure that changes while
+         you look at it is a figure you stop trusting. */
+      value: balance.source === "loading" ? "·" : balance.beforeAnchor ? "·" : money(balance.value),
       tone: P.text, wide: true, onClick: onReconcile,
       lead: fromBank
         ? (balance.delta != null && Math.abs(balance.delta) >= 0.01
@@ -12156,7 +12190,7 @@ function SendToAccountant({ subject, shortBody, fullText, files, email, setEmail
   );
 }
 
-function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange, openGuide, onReview }) {
+function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0 }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
   const fye = data.ledger.fye || "12-31";
@@ -12267,7 +12301,7 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
 
   return (
     <div className="space-y-6 stagger">
-      <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} openGuide={openGuide} onReview={onReview} />
+      <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} openGuide={openGuide} onReview={onReview} syncedAt={syncedAt} />
 
       {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
       {!isBiz ? <PersonalTaxCard data={data} openGuide={openGuide} /> : (
@@ -12501,7 +12535,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
 
 /* ================= live bank feed (Plaid) ================= */
-function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview }) {
+function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0 }) {
   const [conns, setConns] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(null);
@@ -12564,7 +12598,11 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
       }
       catch { setConns([]); setShowSetup(true); onConnectionsChange?.([]); }
     })();
-  }, [data.ledger.id]);
+  /* Reloaded when the app syncs in the background, not only when the
+       ledger changes. The morning refresh updated the connection and this card
+       kept showing the timestamp it read on mount, so a feed that had just run
+       still claimed to be two days old. */
+    }, [data.ledger.id, syncedAt]);
 
   // Resume Plaid Link after a bank OAuth redirect (?oauth_state_id=…)
   useEffect(() => {
