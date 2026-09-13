@@ -10929,36 +10929,81 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 
   const cancelAdd = () => { setAdding(false); setForm(blank); setAtt(null); setReadErr(""); };
 
+  /* A settled entry, with what it was for.
+
+     The description was behind an eleven pixel icon, so a line reading
+     "Syed Belal $2,727.00 paid 2026-08-11" could not be reconciled against
+     anything without clicking something you would have to notice first. The
+     amount and the party are not enough: the same supplier bills you for
+     different work, and a figure with no subject is a figure you cannot check.
+
+     So it reads on two lines: who and what, then how much and when. */
   const SettledLine = ({ i, indent }) => (
-    <div style={{ color: P.muted, fontFamily: MONO, paddingLeft: indent ? "18px" : 0 }} className="text-xs flex justify-between items-center gap-2 py-1">
-      <span className="truncate flex items-center gap-1.5">
-        <Lock size={10} style={{ color: P.faint }} />
-        {i.party}{isCredits(i) ? " (credits)" : ""}
-        {(i.description || i.attachmentId) && (
-          <button
-            onClick={() => setNoteFor(noteFor?.id === i.id ? null : i)}
-            title="View note / history"
-            style={{ color: noteFor?.id === i.id ? P.brass : P.faint }}
-          >
-            <StickyNote size={11} />
-          </button>
-        )}
-      </span>
-      <span className="shrink-0 flex items-center gap-2">
-        {fmt(i.amount)} · {kind === "receivables" ? "received" : "paid"} {i.settledOn}
-        <button
-          type="button"
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeSettled(kind, i); }}
-          title="Remove this settlement (and its transaction)"
-          aria-label="Remove settlement"
-          style={{ color: P.faint, padding: "4px", margin: "-4px", cursor: "pointer" }}
-          className="hover:opacity-100"
-          onMouseEnter={(e) => (e.currentTarget.style.color = P.debit)}
-          onMouseLeave={(e) => (e.currentTarget.style.color = P.faint)}
+    <div style={{ paddingLeft: indent ? "18px" : 0 }} className="py-1.5">
+      <div className="flex justify-between items-baseline gap-2">
+        <span
+          style={{ color: P.muted, fontFamily: MONO }}
+          className="text-xs truncate flex items-center gap-1.5 min-w-0"
         >
-          <Trash2 size={13} />
-        </button>
-      </span>
+          <Lock size={10} style={{ color: P.faint }} />
+          {i.party}{isCredits(i) ? " (credits)" : ""}
+        </span>
+        <span
+          style={{ color: P.muted, fontFamily: MONO }}
+          className="text-xs shrink-0 flex items-center gap-2"
+        >
+          {fmt(i.amount)} &middot; {kind === "receivables" ? "received" : "paid"} {i.settledOn}
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeSettled(kind, i); }}
+            title="Remove this settlement (and its transaction)"
+            aria-label="Remove settlement"
+            style={{ color: P.faint, padding: "4px", margin: "-4px", cursor: "pointer" }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = P.debit)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = P.faint)}
+          >
+            <Trash2 size={13} />
+          </button>
+        </span>
+      </div>
+
+      {/* What it was for, and what backs it up. On the line, not behind an
+          icon: this is the part that answers "where did that come from". */}
+      <div
+        style={{ color: P.faint, paddingLeft: 15 }}
+        className="text-[11.5px] flex items-center gap-2 min-w-0"
+      >
+        <span className="truncate">
+          {/* An entry with nothing written on it says so.
+
+              Showing an empty line leaves you wondering whether the detail is
+              missing or you have missed it, and one of those is worth acting
+              on. An old entry from before the intake flow often has nothing,
+              and knowing that is the answer to where it came from. */}
+          {i.description
+            ? `${i.description}${i.category ? ` · ${i.category}` : ""}`
+            : i.category
+              ? i.category
+              : "no description on this one"}
+        </span>
+        {i.attachmentId ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openPreview(i.attachmentId, i.attachmentName || "receipt", i);
+            }}
+            title="See the receipt"
+            style={{ color: P.brassText }}
+            className="shrink-0 inline-flex items-center gap-1"
+          >
+            <Paperclip size={10} /> receipt
+          </button>
+        ) : (
+          <span className="shrink-0">no receipt</span>
+        )}
+      </div>
     </div>
   );
 
