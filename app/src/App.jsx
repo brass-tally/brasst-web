@@ -4760,6 +4760,13 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
   const arFoot = counts?.arFoot || "settle in AR / AP to count it";
   const apFoot = counts?.apFoot || "settle in AR / AP to count it";
 
+  /* What actually moved this month: filed entries, plus bank lines nothing
+     has filed yet. They cannot overlap, because an unrecorded line is one no
+     entry accounts for. */
+  const trueIn = unrecorded.in ? unrecorded.bankIn : sums.inc;
+  const trueOut = unrecorded.out ? unrecorded.bankOut : sums.exp;
+  const trueNet = trueIn - trueOut;
+
   const cards = {
     balance: {
       // The figure is the headline; the state of it is a sentence, not a
@@ -4806,8 +4813,13 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
       warn: needsConsolidation,
     },
     net: {
-      label: "Net this month", value: money(sums.net),
-      tone: sums.net >= 0 ? P.credit : P.debit, wide: true,
+      label: "Net this month",
+      /* Net has to agree with the two cards beside it.
+
+         In and out now show what moved, so a net computed from the filed half
+         would sit between them contradicting both. */
+      value: money(trueNet),
+      tone: trueNet >= 0 ? P.credit : P.debit, wide: true,
       delta: { now: sums.net, prev: prevSums?.net },
       /* Where the month began and where it ends up.
 
@@ -4816,9 +4828,15 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
          existing on 1 September. Every period opens with what the last one
          left, and saying so is the difference between a list of movements and
          a set of books. */
-      foot: carry?.known
-        ? `Opened at ${money(carry.opening)}, closes at ${money(carry.closing)}`
-        : `Across ${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
+      /* The opening figure is built from the books, so while lines are
+         unfiled it is describing a period the books do not yet fully cover.
+         Saying "opened at X" from an incomplete record is the same confident
+         wrong number as the one this replaced, so it waits. */
+      foot: unrecorded.in || unrecorded.out
+        ? `${money(sums.net)} of this is filed. Consolidate to carry the month forward.`
+        : carry?.known
+          ? `Opened at ${money(carry.opening)}, closes at ${money(carry.closing)}`
+          : `Across ${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
     },
     /* These count the books, and the books can be behind the bank.
 
@@ -4831,18 +4849,35 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
        the change against last month is withheld: comparing an empty month
        with a full one produces "100% down", which is arithmetic rather than
        information. */
-    in:  { label: "Money in",  value: money(sums.inc), tone: P.credit,
+    /* The headline is what came in, not what has been filed.
+
+       It showed the books, so September read $700.83 while the bank had taken
+       $2,032.03, and the true figure was relegated to a note under it. The
+       books being behind is a bookkeeping lag, not a different reality: the
+       money arrived either way, and a card called "Money in" that excludes
+       money that came in is answering a different question from the one it
+       asks.
+
+       Adding them cannot double count. An unrecorded line is by definition
+       one no entry accounts for, so the moment it is filed it leaves this
+       set and joins the other. */
+    in:  { label: "Money in",
+           value: money(trueIn), tone: P.credit,
            delta: unrecorded.in ? null : { now: sums.inc, prev: prevSums?.inc },
            /* The bank's own figure, so this card can be checked against a
               statement without opening one. When the books are complete the
               two agree and there is nothing to say. */
+           /* The split, under the true figure. Which half is filed matters
+              for the tax pack and for anything that reads the books, so it is
+              said plainly rather than hidden behind a total. */
            foot: unrecorded.in
-             ? `Bank shows ${money(unrecorded.bankIn)} across ${unrecorded.bankInCount}, ${money(unrecorded.inAmount)} of it not yet in the books`
+             ? `${money(sums.inc)} filed · ${money(unrecorded.inAmount)} still to file, across ${unrecorded.in}`
              : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}` },
-    out: { label: "Money out", value: money(sums.exp), tone: P.debit,
+    out: { label: "Money out",
+           value: money(trueOut), tone: P.debit,
            delta: unrecorded.out ? null : { now: sums.exp, prev: prevSums?.exp, invert: true },
            foot: unrecorded.out
-             ? `Bank shows ${money(unrecorded.bankOut)} across ${unrecorded.bankOutCount}, ${money(unrecorded.outAmount)} of it not yet in the books`
+             ? `${money(sums.exp)} filed · ${money(unrecorded.outAmount)} still to file, across ${unrecorded.out}`
              : `${outCount} ${outCount === 1 ? "payment" : "payments"}` },
     ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
     ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
@@ -8212,6 +8247,56 @@ function Capture({
     };
   };
 
+  /* Built from what is actually true right now.
+
+     Ordered by what it costs to ignore: money arriving that nobody has
+     recorded first, then invoices waiting, then a bank that disagrees with
+     the books, then chasing. The last two are always useful and sit at the
+     bottom so they never crowd out something urgent. */
+  const quickPrompts = useMemo(() => {
+    const out = [];
+    const overdueIn = (data?.receivables || []).filter(
+      (o) => o.status === "open" && o.dueDate && o.dueDate < todayStr(),
+    );
+
+    if (waiting > 0) {
+      out.push({
+        label: `Review ${waiting} waiting ${waiting === 1 ? "invoice" : "invoices"}`,
+        ask: "What invoices are waiting on me, and should I accept them?",
+        icon: <Inbox size={13} />,
+      });
+    }
+    if (hasInvoiceLink || (contacts || []).length) {
+      out.push({
+        label: "Email an invoice link",
+        ask: "Send an invoice request to one of my contractors.",
+        icon: <Mail size={13} />,
+      });
+    }
+    if (drift) {
+      out.push({
+        label: "Explain the bank gap",
+        ask: "Walk me through the gap between my bank balance and my books, line by line.",
+        icon: <Landmark size={13} />,
+      });
+    }
+    if (overdueIn.length) {
+      out.push({
+        label: `Chase ${overdueIn.length} overdue`,
+        ask: "Which invoices are overdue to me, and who should I chase first?",
+        icon: <FileClock size={13} />,
+      });
+    }
+    if (out.length < 3) {
+      out.push({
+        label: "Where did the money go",
+        ask: "Where did my money go this month, by category, with the biggest first?",
+        icon: <TrendingUp size={13} />,
+      });
+    }
+    return out.slice(0, 3);
+  }, [waiting, hasInvoiceLink, contacts, drift, data?.receivables]);
+
   const push = (m) => {
     setMsgs((prev) => [...prev, m]);
     if (threadReady) {
@@ -8683,6 +8768,29 @@ function Capture({
         )}
         <div ref={endRef} />
       </div>
+      {/* What is worth asking, given the state of the books.
+
+          Not a fixed menu. A menu of everything is a menu nobody reads, and a
+          suggestion to chase overdue invoices when nothing is overdue teaches
+          people to ignore the row. Each of these only appears when it has
+          something behind it, at most three, and they go once the
+          conversation is underway. */}
+      {quickPrompts.length > 0 && msgs.length <= 2 && !busy && (
+        <div className="px-3 pt-2 flex flex-wrap gap-1.5">
+          {quickPrompts.map((q) => (
+            <button
+              key={q.label}
+              onClick={() => ask(q.ask)}
+              style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+              className="h-9 px-3 text-[13.5px] press inline-flex items-center gap-1.5"
+            >
+              {q.icon}
+              {q.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="p-3 flex items-center gap-2 tally-composer" style={{ borderTop: `1px solid ${P.line}` }}>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ""; }} />
         <button
