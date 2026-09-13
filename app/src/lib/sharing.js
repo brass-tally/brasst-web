@@ -411,7 +411,7 @@ export async function listLinkInvites(ledgerId) {
   return soft("link invites", async () => {
     const { data, error } = await supabase
       .from("invoice_link_invites")
-      .select("id, link_id, email, note, sent_at, invoice_links(token, active, submissions)")
+      .select("id, link_id, email, note, sent_at, reference, invoice_links(token, active, submissions)")
       .eq("ledger_id", ledgerId)
       .order("sent_at", { ascending: false });
     if (error) throw error;
@@ -419,6 +419,7 @@ export async function listLinkInvites(ledgerId) {
     const rows = (data || []).map((r) => ({
       id: r.id, linkId: r.link_id, email: r.email,
       note: r.note || undefined, sentAt: r.sent_at,
+      reference: r.reference || undefined,
       active: r.invoice_links?.active ?? true,
       submissions: r.invoice_links?.submissions ?? 0,
       invited: true,

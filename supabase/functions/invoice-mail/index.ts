@@ -397,29 +397,37 @@ Deno.serve(async (req) => {
 
          Reuse an existing one for the same address, so inviting somebody twice
          does not leave two tokens to keep track of. */
-      let target = link;
-      const { data: existing } = await db
-        .from("invoice_links")
-        .select("id, token, slug, ledger_id, label, active")
-        .eq("ledger_id", link.ledger_id)
-        .eq("label", to)
-        .eq("active", true)
-        .maybeSingle();
+      /* A new link for every invitation, not one per person.
 
-      if (existing) {
-        target = existing as typeof link;
+         Reusing an address's existing link meant two requests for two
+         different pieces of work shared one address and one history: nothing
+         could say which invitation an arriving invoice answered, and revoking
+         one revoked both.
+
+         Each invitation is now its own link with its own reference, so it can
+         be quoted, tracked and cancelled on its own. */
+      const { data: ref } = await db.rpc("next_invite_reference", { p_ledger: link.ledger_id });
+      const reference = (ref as string) || null;
+
+      let target = link;
+      const fresh = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
+      const { data: made, error: mkErr } = await db
+        .from("invoice_links")
+        .insert({
+          ledger_id: link.ledger_id,
+          token: fresh,
+          label: reference ? `${reference} · ${to}` : to,
+          owner_id: ownerId,
+        })
+        .select("id, token, slug, ledger_id, label, active")
+        .single();
+
+      if (mkErr) {
+        // A link that could not be made is not worth failing the send over:
+        // the general one still works and the invitation still arrives.
+        console.warn("could not make a link for this invitation, falling back:", mkErr.message);
       } else {
-        const fresh = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
-        const { data: made, error: mkErr } = await db
-          .from("invoice_links")
-          .insert({ ledger_id: link.ledger_id, token: fresh, label: to, owner_id: ownerId })
-          .select("id, token, slug, ledger_id, label, active")
-          .single();
-        if (mkErr) {
-          console.warn("could not make a personal link, falling back:", mkErr.message);
-        } else {
-          target = made as typeof link;
-        }
+        target = made as typeof link;
       }
 
       const r = await sendMail(
@@ -440,7 +448,8 @@ Deno.serve(async (req) => {
            send, so a failed send leaves no phantom entry. */
         try {
           await db.from("invoice_link_invites").insert({
-            link_id: target.id, ledger_id: link.ledger_id, email: to, note: note || null,
+            link_id: target.id, ledger_id: link.ledger_id, email: to,
+            note: note || null, reference,
           });
         } catch (e) {
           console.warn("invite not recorded:", e);

@@ -1270,9 +1270,39 @@ function Ledger({ onSignOut }) {
     const rows = (bankTxns || []).filter(
       (b) => b.status !== "matched" && b.status !== "ignored" && String(b.date || "").startsWith(month),
     );
+    /* The amount, not only the count.
+
+       "16 more on the bank" leaves you to wonder whether that is $50 or
+       $5,000, which is the difference between a tidy-up and a wrong month.
+       September read $700.83 while the bank had taken over $2,000, and the
+       card could not say where the rest was.
+
+       Pending lines are excluded, because the bank has not settled them and
+       they are not part of the month. */
+    const settled = rows.filter((b) => !b.pending);
+    const sum = (list) => list.reduce((n, b) => n + Math.abs(Number(b.amount) || 0), 0);
+    const ins = settled.filter((b) => b.direction === "credit");
+    const outs = settled.filter((b) => b.direction !== "credit");
+
+    /* And what the bank itself says the month was.
+
+       Not the unrecorded part, the whole of it: every settled line that month,
+       matched or not. This is the figure a statement would give you, computed
+       from the same feed the statement comes from, so the card can be checked
+       without opening one. */
+    const all = (bankTxns || []).filter(
+      (b) => !b.pending && b.status !== "ignored" && String(b.date || "").startsWith(month),
+    );
+    const allIn = all.filter((b) => b.direction === "credit");
+    const allOut = all.filter((b) => b.direction !== "credit");
+
     return {
-      in: rows.filter((b) => b.direction === "credit").length,
-      out: rows.filter((b) => b.direction !== "credit").length,
+      in: ins.length, inAmount: sum(ins),
+      out: outs.length, outAmount: sum(outs),
+      pending: rows.length - settled.length,
+      bankIn: sum(allIn), bankInCount: allIn.length,
+      bankOut: sum(allOut), bankOutCount: allOut.length,
+      hasBank: all.length > 0,
     };
   }, [bankTxns, month]);
 
@@ -1630,6 +1660,39 @@ function Ledger({ onSignOut }) {
     const exp = cash.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     return { inc, exp, net: inc - exp };
   }, [monthTx]);
+
+  /* What the month opened with, and what it closed at.
+
+     A month had a total in and a total out and no relationship to the month
+     before it, so money received on 31 August simply stopped existing on 1
+     September. That is not how a set of books works: every period opens with
+     what the last one left.
+
+     Opening is the anchor plus everything dated after the anchor and before
+     this month began. Closing is opening plus the month's own movement, which
+     is what carries into the next one. Credits are excluded from both, the
+     same way they are excluded from the month totals, because they never
+     touched cash. */
+  const carry = useMemo(() => {
+    if (!data) return { opening: 0, closing: 0, known: false };
+    const anchorDate = data.settings?.anchorDate || "1970-01-01";
+    const anchorAmount = Number(data.settings?.startingBalance) || 0;
+    const firstOfMonth = `${month}-01`;
+
+    const before = (data.transactions || [])
+      .filter((t) => !isCredits(t) && t.date && t.date > anchorDate && t.date < firstOfMonth)
+      .reduce((n, t) => n + (t.type === "income" ? t.amount : -t.amount), 0);
+
+    const opening = anchorAmount + before;
+    return {
+      opening,
+      closing: opening + sums.net,
+      /* Only meaningful once the month being viewed starts after the anchor.
+         Before that the opening figure is a fragment of a period the books do
+         not cover, and showing it would invite arithmetic that does not hold. */
+      known: firstOfMonth >= anchorDate,
+    };
+  }, [data, month, sums.net]);
   // The month before, computed the same way, so each figure can say which
   // direction it is moving rather than sitting there as a bare total.
   const prevSums = useMemo(() => {
@@ -2384,9 +2447,12 @@ function Ledger({ onSignOut }) {
      the rail and not on the dock is a section phone users cannot find. */
   const tabs = [
     ["overview", "Snapshot", LayoutGrid],
+    /* Second, under Snapshot. What is owed and owing is the thing with a
+       decision attached, so it belongs where the eye lands after the
+       headline figures rather than behind two sections of history. */
+    ["arap", "AR / AP", FileClock],
     ["transactions", "Transactions", Receipt],
     ["pl", "P&L", TrendingUp],
-    ["arap", "AR / AP", FileClock],
     ["credits", "Credits", Coins],
     ["calendar", "Calendar", CalendarDays],
     ["contacts", "Contacts", Users],
@@ -2641,6 +2707,7 @@ function Ledger({ onSignOut }) {
              accounts for. Counted here because the cards show the month, and
              a count from another month would be worse than none. */
           unrecorded={unrecordedThisMonth}
+          carry={carry}
         />
         )}
 
@@ -4652,7 +4719,7 @@ function Delta({ now, prev, invert }) {
   );
 }
 
-function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName, counts, unrecorded = { in: 0, out: 0 } }) {
+function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName, counts, unrecorded = { in: 0, out: 0 }, carry }) {
   const fromBank = balance.source === "bank";
 
   // The bar appears when the grid leaves the screen. A sentinel and an observer
@@ -4742,7 +4809,16 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
       label: "Net this month", value: money(sums.net),
       tone: sums.net >= 0 ? P.credit : P.debit, wide: true,
       delta: { now: sums.net, prev: prevSums?.net },
-      foot: `Across ${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
+      /* Where the month began and where it ends up.
+
+         A month with a total in and a total out and no link to the one before
+         it is a month floating free: money received on 31 August stopped
+         existing on 1 September. Every period opens with what the last one
+         left, and saying so is the difference between a list of movements and
+         a set of books. */
+      foot: carry?.known
+        ? `Opened at ${money(carry.opening)}, closes at ${money(carry.closing)}`
+        : `Across ${entryCount} ${entryCount === 1 ? "entry" : "entries"} this month`,
     },
     /* These count the books, and the books can be behind the bank.
 
@@ -4757,13 +4833,16 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
        information. */
     in:  { label: "Money in",  value: money(sums.inc), tone: P.credit,
            delta: unrecorded.in ? null : { now: sums.inc, prev: prevSums?.inc },
+           /* The bank's own figure, so this card can be checked against a
+              statement without opening one. When the books are complete the
+              two agree and there is nothing to say. */
            foot: unrecorded.in
-             ? `${inCount} recorded · ${unrecorded.in} more on the bank, not yet in the books`
+             ? `Bank shows ${money(unrecorded.bankIn)} across ${unrecorded.bankInCount}, ${money(unrecorded.inAmount)} of it not yet in the books`
              : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}` },
     out: { label: "Money out", value: money(sums.exp), tone: P.debit,
            delta: unrecorded.out ? null : { now: sums.exp, prev: prevSums?.exp, invert: true },
            foot: unrecorded.out
-             ? `${outCount} recorded · ${unrecorded.out} more on the bank, not yet in the books`
+             ? `Bank shows ${money(unrecorded.bankOut)} across ${unrecorded.bankOutCount}, ${money(unrecorded.outAmount)} of it not yet in the books`
              : `${outCount} ${outCount === 1 ? "payment" : "payments"}` },
     ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
     ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
@@ -6626,6 +6705,15 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                   style={{ color: iv.active ? P.text : P.faint, textDecoration: iv.active ? "none" : "line-through" }}
                                   className="text-[14.5px] block truncate"
                                 >
+                                  {/* The reference first. Two invitations to
+                                      one person are two different requests,
+                                      and the address alone cannot tell them
+                                      apart. */}
+                                  {iv.reference && (
+                                    <span style={{ fontFamily: MONO, color: P.brassText }} className="text-[13px] mr-2">
+                                      {iv.reference}
+                                    </span>
+                                  )}
                                   {iv.email}
                                 </span>
                                 <span style={{ color: P.faint }} className="text-[13px]">
