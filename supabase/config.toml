@@ -1,0 +1,38 @@
+# Supabase project configuration.
+#
+# Only the part that matters is here. The rest of a project's settings live in
+# the dashboard; this file exists so the one setting that breaks the invoice
+# flow is written down rather than remembered.
+
+project_id = "xwoccmgppjmgficvmogr"
+
+# ---------------------------------------------------------------------------
+# invoice-mail
+#
+# verify_jwt must be false, and that is not a loosening of security.
+#
+# With it on, Supabase rejects a request before the function runs unless it
+# carries a valid JWT. A browser's CORS preflight is an OPTIONS request with no
+# authorization header, by specification, so it is rejected with a 503 and the
+# browser never sends the real request. The symptom is "Failed to send a
+# request to the Edge Function", which sounds like the function is down when it
+# is in perfect health.
+#
+# The function has always done its own authorization, and does it more
+# precisely than a blanket JWT check can:
+#
+#   info, upload, notify   a supplier with no account, holding an intake token
+#                          which resolves the ledger server side
+#   send-link, decided,    the owner's own session, checked against the ledger's
+#   correct, share-invite, owner before anything is sent
+#   preview-invite
+#
+# A blanket check would also make the supplier form impossible, since a
+# contractor submitting an invoice has no account to have a JWT from.
+[functions.invoice-mail]
+verify_jwt = false
+
+# The Plaid function is called by pg_cron and by the app. It carries its own
+# shared secret for the cron path and checks the caller's session otherwise.
+[functions.plaid]
+verify_jwt = false
