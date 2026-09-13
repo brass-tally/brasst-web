@@ -7,7 +7,7 @@ personal finances are kept as two separate records rather than one pile with a
 filter on it, because they are two separate things and only one of them files a
 T2.
 
-As at 11 September 2026. GENIE AI, Inc., Ontario, Canada.
+As at 13 September 2026. GENIE AI, Inc., Ontario, Canada.
 
 ---
 
@@ -38,6 +38,20 @@ and dates, so a monthly fee is matched across instances.
 owe. Choose which cards you want. One bar underneath shows the month's shape
 with a sentence saying what it means.
 
+**Every figure opens.** Press a card and you get the entries behind it, grouped
+the way the sentence under the card describes them: through the bank, not
+through it, still to file, and anything the bank has not settled yet. Owed and
+owing group by urgency instead, because a commitment raises a question about
+when rather than where.
+
+The detail checks itself against the card each time it opens. If the two
+disagree, it says so and says which figure to distrust, rather than leaving you
+to find out from a statement.
+
+**A month opens with what the last one left.** Opening balance, the month's
+movement, closing balance. Money received on the 31st belongs to that month and
+carries into the next one.
+
 **What wants you.** Three panels above the numbers: what needs a decision, how
 close the month is to closed, and the reports you keep returning to. The
 closing checklist is worked out from your books rather than ticked by hand, so
@@ -49,6 +63,18 @@ ledgers, set entries to recur.
 
 **Receivables and payables.** Who owes you and what you owe, grouped by party
 with running totals. Settling asks for a receipt, and a settled entry locks.
+
+**A bill can be paid in part.** Take half now and half on completion: the
+dialog opens on what is left, records the payment, and keeps the bill open with
+the remainder showing. You say when the rest is expected, and the bill is judged
+overdue on that date rather than on the one it already partly met. It closes
+itself when the payments reach the total.
+
+**Evidence in order of strength.** An entry already in your books is adopted
+rather than duplicated. Failing that, a bank line showing the money is accepted
+as proof, because a statement entry is better evidence than a photograph of one.
+Failing both, a receipt is required as before. Any match found by amount alone
+can be refused with one press, and refusing is remembered.
 
 **Credits.** Non-cash pools such as cloud credits, tracked beside cash. What is
 left leads, what it bought sits underneath, and none of it touches your bank
@@ -80,9 +106,25 @@ rather than deleted.
 
 **Every run is recorded**, so a consolidation can be explained months later.
 
-**A morning pass.** After the overnight sync, the pairs Brasstally is certain
-about are made for you and reported in one message. Nothing is created,
-deleted or settled without you.
+**A morning pass.** The feed refreshes once each morning, at seven Eastern, and
+the pairs Brasstally is certain about are made for you and reported in one
+message.
+
+**Payments the bank made are recorded**, not handed back as a list to type in.
+The bank is the authority on whether money moved; the only open question is
+what to call it, and that is a correction rather than a decision. The amounts
+and dates are facts, the categories are a guess, and the run says which is
+which.
+
+**Money arriving is matched to what you are owed.** A deposit that looks like an
+invoice being paid is queued for one tap, with the shortfall named when a
+processor fee has come out of it. Two invoices sharing an amount with no name on
+the bank line are left alone, because a coin toss settled automatically is a
+wrong entry nobody questions.
+
+**Your bank is read once a day.** Plaid charges per call, so the refresh runs
+once each morning per device and the connection health check at most every six
+hours. Nothing is fetched again because you reloaded the page.
 
 ## Tax
 
@@ -121,6 +163,19 @@ and never the same thing twice.
 **Answers use tables**, not paragraphs, so four overdue invoices are a glance
 rather than something you read twice.
 
+**A new conversation each morning**, rolling at seven Eastern rather than
+midnight, so something asked at eleven at night belongs to that day. Yesterday's
+threads are kept and can be reopened.
+
+**She opens with what she found**, not a greeting: what is waiting, what is
+overdue, whether the bank and the books disagree. At most three things, in the
+order they cost you money. It is worked out from your ledger rather than asked
+of a model, because it has to be right and it has to be instant.
+
+**Suggested first questions**, drawn from what is actually true right now and
+gone once the conversation is underway. Asking for an invoice link shows you
+your contacts rather than asking who you mean.
+
 ## Working with other people
 
 **Contacts.** Everyone the ledger deals with, filed as contractor, vendor,
@@ -136,12 +191,45 @@ change nothing, and they never see your bank connection.
 arrives in a tray with the PDF attached. Both sides are emailed. Accepting
 creates an ordinary payable; nothing reaches your books unaccepted.
 
+**Every invitation is its own request**, with its own reference and its own
+link. Two requests to one contractor for two pieces of work are two separate
+things, so revoking one stops that person on that job and nobody else. The
+reference appears on the email, in the list, and against the invoice that
+answers it.
+
+**They can itemise instead of attaching.** A contractor without invoicing
+software fills in lines of description, quantity and rate, and the total adds
+itself up. The server recomputes it from the same lines, so the figure claimed
+and the figure itemised cannot disagree. A file can still be dropped on the
+form or chosen by tapping it.
+
+**In their own currency.** Ten currencies, defaulting to yours, with a warning
+when they differ. Accepting one fetches the day's rate, from the Bank of Canada
+where they publish it, and the rate, its source and the original amount go onto
+the record. Your books stay in one currency.
+
+**Three buttons, three outcomes.** Accepting moves it below into your books,
+asking for a correction leaves it waiting, and denying takes it off the list
+entirely. Denied invoices are kept behind a count, because a supplier who was
+refused may well ask why.
+
+**Paid invoices say so.** A stamp on the line: paid, or how much of it, and
+which month for anything that repeats. Ones settled in full collapse into a
+line each, expandable.
+
 **Monthly arrangements.** A contractor marks a submission as monthly and it is
 raised for them from then on, so they stop re-typing the same invoice. It still
 lands in your tray for you to accept.
 
 **Send one back.** "Needs correction" emails them the reason and a link, and
 the invoice stays pending until the corrected one arrives.
+
+**Paying tells them.** A supplier whose invoice came through a link is emailed
+when you pay, in part or in full, with the amount, what remains and when the
+rest is expected. The receipt goes with it as proof, unless you say otherwise
+before sending: a payment receipt is often a screenshot of your banking app, so
+that is a choice made in front of you rather than a default discovered
+afterwards.
 
 ## The app itself
 
@@ -176,7 +264,9 @@ to train models.
 **Invoices you send.** Brasstally records what you are owed but does not issue
 the invoice.
 
-**Multi-currency.** One currency per ledger.
+**Multi-currency.** One currency per ledger. A supplier can invoice you in
+theirs and it is converted on the way in, at a rate you can see and change, but
+the books themselves hold one currency.
 
 **Push notifications.** Email and an in-app mark today; they do not reach a
 closed phone.

@@ -33,6 +33,19 @@ export default [
     plugins: { "react-hooks": reactHooks },
     rules: {
       "no-undef": "error",
+      /* A value used above its declaration.
+
+         Valid JavaScript, and a crash the moment it runs: "Cannot access X
+         before initialization". The hand-written ordering check missed it
+         because it drops callback bodies, and a value read inside a callback
+         that runs during render is exactly where this hides. */
+      /* Reported, not fatal.
+
+         Most instances are a handler referring to another handler defined
+         further down, which is fine: by the time anything calls it, the whole
+         component has been evaluated. The dangerous ones run during render,
+         and check-tdz-render separates those and fails the build on them. */
+      "no-use-before-define": ["warn", { functions: false, classes: false, variables: true }],
       // Unused is a warning: a half-finished edit is worth seeing, not worth
       // stopping a build for.
       "no-unused-vars": ["warn", { args: "none", varsIgnorePattern: "^_" }],

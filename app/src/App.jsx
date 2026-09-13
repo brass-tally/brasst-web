@@ -1700,6 +1700,13 @@ function Ledger({ onSignOut }) {
     };
   }, [bankTxns, month, monthTx]);
 
+  const sums = useMemo(() => {
+    const cash = monthTx.filter((t) => !isCredits(t));
+    const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+    const exp = cash.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    return { inc, exp, net: inc - exp };
+  }, [monthTx]);
+
   /* What the cards are actually displaying, in one place, so the detail view
      can be checked against it. Two copies of an arithmetic is how they drift;
      one copy read by both is how they cannot. */
@@ -1712,13 +1719,6 @@ function Ledger({ onSignOut }) {
     /* eslint-disable-next-line */
   }, [unrecordedThisMonth, sums]);
 
-
-  const sums = useMemo(() => {
-    const cash = monthTx.filter((t) => !isCredits(t));
-    const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
-    const exp = cash.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
-    return { inc, exp, net: inc - exp };
-  }, [monthTx]);
 
   /* What the month opened with, and what it closed at.
 
