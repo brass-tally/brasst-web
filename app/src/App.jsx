@@ -8314,9 +8314,18 @@ function Capture({
        exactly backwards: the person who has neither is the one who needs the
        prompt, and the card creates the link when there is none. A suggestion
        that only appears once you no longer need it is not a suggestion. */
+    /* This one does not ask a question, it shows the list.
+
+       Pressing it used to start a conversation: she asked who, you typed a
+       name, she looked it up, and if the contact lived on the other ledger
+       you went round again. Three turns to reach a list the app already has
+       on screen.
+
+       A prompt for a thing the app knows should produce the thing, not an
+       enquiry about it. */
     out.push({
       label: "Email an invoice link",
-      ask: "Send an invoice request. Ask me who it should go to if you do not know.",
+      run: "pick-contact",
       icon: <Mail size={13} />,
     });
     if (drift) {
@@ -8355,6 +8364,34 @@ function Capture({
   const lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
   const showPrompts =
     quickPrompts.length > 0 && !busy && !input.trim() && lastMsg && lastMsg.role !== "user";
+
+  /* Who you could send an invoice request to, as a list rather than a
+     question. Contacts with an address first, because they can be sent to in
+     one more tap; everyone else is offered by name so the card can look the
+     address up or you can type one. */
+  const offerContacts = () => {
+    const withEmail = (contacts || []).filter((c) => c.email);
+    const withoutEmail = (contacts || []).filter((c) => !c.email);
+
+    if (!contacts.length) {
+      /* Contacts belong to a ledger, and somebody looking for a name they know
+         they saved deserves to be told where it lives rather than that it does
+         not exist. Syed on the business books is not missing, he is elsewhere. */
+      push({
+        role: "assistant",
+        text:
+          "Nobody is saved on this ledger. Contacts belong to one set of books, so anyone you added on your other ledger is there rather than here.\n\n" +
+          "Tell me a name and an email and I will draw the invitation, or add them in Contacts first.",
+      });
+      return;
+    }
+
+    push({
+      role: "assistant",
+      text: "Who should it go to?",
+      pickContacts: [...withEmail, ...withoutEmail].slice(0, 8),
+    });
+  };
 
   const push = (m) => {
     setMsgs((prev) => [...prev, m]);
@@ -8764,6 +8801,49 @@ function Capture({
               )}
               {/* Tally said something unprompted, and left the follow-up
                   question on the table rather than making the user phrase it. */}
+              {/* A contact chosen straight into the invitation card, rather
+                  than typed back as a sentence for her to interpret. */}
+              {m.pickContacts?.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {m.pickContacts.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() =>
+                        push({
+                          role: "assistant",
+                          proposal: {
+                            kind: "propose_invoice_invite",
+                            input: {
+                              to: c.email || "",
+                              name: c.name,
+                              reason: c.email
+                                ? `Invitation to ${c.name}, ${c.email}`
+                                : `${c.name} has no address on file, so add one below`,
+                            },
+                          },
+                        })
+                      }
+                      style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                      className="h-9 px-3 text-[13.5px] press inline-flex items-center gap-1.5"
+                    >
+                      {c.name}
+                      <span style={{ color: P.faint }} className="text-[12px]">
+                        {contacts_roleLabel(c.role)}
+                      </span>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => ask("Send an invoice request to somebody who is not in my contacts.")}
+                    style={{ color: P.muted }}
+                    className="h-9 px-2 text-[13.5px] press"
+                  >
+                    Someone else
+                  </button>
+                </div>
+              )}
+
               {m.followUp && (
                 <div className="mt-2">
                   <button type="button" onClick={() => ask(m.followUp)}
@@ -8839,7 +8919,7 @@ function Capture({
           {quickPrompts.map((q) => (
             <button
               key={q.label}
-              onClick={() => ask(q.ask)}
+              onClick={() => (q.run === "pick-contact" ? offerContacts() : ask(q.ask))}
               style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
               className="h-9 px-3 text-[13.5px] press inline-flex items-center gap-1.5"
             >
