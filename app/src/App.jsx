@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
@@ -16,6 +16,7 @@ import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross
 import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
 import { lookupRate } from "./lib/fx";
+import { listPlanned, addPlanned, updatePlanned, dropPlanned, plannedTotals } from "./lib/planned";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
 import { isReadOnly } from "./lib/access";
@@ -11335,6 +11336,31 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 
 /* ================= AR / AP ================= */
 function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank }) {
+  /* Plans live beside the payables, never inside them. */
+  const [plans, setPlans] = useState([]);
+  const refreshPlans = useCallback(async () => {
+    if (!data?.ledger?.id) return;
+    setPlans(await listPlanned(data.ledger.id));
+  }, [data?.ledger?.id]);
+
+  useEffect(() => { refreshPlans(); }, [refreshPlans]);
+
+  /* A plan becoming real.
+
+     It turns into an ordinary payable and the plan records what it became, so
+     the intention and the bill are the same story rather than two entries
+     somebody has to remember are related. */
+  const commitPlan = async (plan) => {
+    const created = await addAR("payables", {
+      party: plan.label,
+      description: plan.note || `Planned ${plan.bucket}`,
+      amount: Math.abs(plan.amount),
+      dueDate: plan.expectedOn || todayStr(),
+      category: plan.category,
+    });
+    await updatePlanned(plan.id, { status: "committed", obligationId: created?.id });
+    refreshPlans();
+  };
   const openAR = data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const openAP = data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0);
   const net = openAR - openAP;
@@ -11438,6 +11464,14 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
       )}
       <div className="grid md:grid-cols-2 gap-6">
         <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} />
+        <PlannedList
+          ledgerId={data.ledger.id}
+          plans={plans}
+          readOnly={readOnly}
+          onChanged={refreshPlans}
+          onCommit={commitPlan}
+        />
+
         <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} />
       </div>
     </div>
@@ -11504,6 +11538,181 @@ function ARFields({ kind, f, set, data, addSub, addCredit, contacts = [] }) {
   );
 }
 
+/* Money you mean to spend, kept out of what you owe.
+ *
+ * A payable is somebody else's claim: they expect it and will chase it. A plan
+ * is your own intention and costs nothing to abandon. Putting a trip you might
+ * take into "You owe them" overstates the figure you make decisions against,
+ * so this sits beside that section rather than inside it and its total is
+ * never added in.
+ *
+ * The one join between them is deliberate: when a plan becomes real, it turns
+ * into a payable and says so, rather than being retyped.
+ */
+function PlannedList({ ledgerId, plans, onChanged, readOnly, onCommit }) {
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [form, setForm] = useState({ label: "", amount: "", bucket: "travel", expectedOn: "", note: "" });
+
+  const open = plans.filter((p) => p.status === "planned");
+  const totals = plannedTotals(open);
+
+  const BUCKETS = [
+    ["travel", "Travel"],
+    ["equipment", "Equipment"],
+    ["software", "Software"],
+    ["people", "People"],
+    ["tax", "Tax"],
+    ["other", "Other"],
+  ];
+  const bucketLabel = (b) => (BUCKETS.find(([k]) => k === b) || [, "Other"])[1];
+
+  const save = async () => {
+    const amount = Number(String(form.amount).replace(/[^0-9.-]/g, ""));
+    if (!form.label.trim() || !(amount > 0)) return;
+    setBusy("new");
+    await addPlanned(ledgerId, { ...form, amount });
+    setBusy("");
+    setAdding(false);
+    setForm({ label: "", amount: "", bucket: "travel", expectedOn: "", note: "" });
+    onChanged?.();
+  };
+
+  return (
+    <section style={{ background: P.surface, borderRadius: 20 }} className="p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 style={{ fontFamily: SERIF }} className="text-xl">Planned</h3>
+        {open.length > 0 && (
+          <span style={{ fontFamily: MONO, color: P.muted }} className="text-[15.5px] tabular-nums">
+            {fmt(totals.total)}
+          </span>
+        )}
+      </div>
+      <p style={{ color: P.muted }} className="text-[15px] mb-1">
+        What you intend to spend. Not counted in what you owe, because nobody is expecting it yet.
+      </p>
+
+      {open.length === 0 && !adding && (
+        <p style={{ color: P.faint }} className="text-[14.5px] py-2">
+          Nothing planned. A trip, a laptop, a contractor you mean to hire.
+        </p>
+      )}
+
+      {open.map((p) => (
+        <div key={p.id} className="py-3" style={{ borderTop: `1px solid ${P.line}` }}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
+              {p.label}
+              <span
+                style={{ background: P.surface2, color: P.muted, borderRadius: 999 }}
+                className="ml-2 px-2 py-0.5 text-[12px] whitespace-nowrap"
+              >
+                {bucketLabel(p.bucket)}
+              </span>
+            </span>
+            <span style={{ fontFamily: MONO, color: P.muted }} className="text-[15.5px] tabular-nums shrink-0">
+              {fmt(p.amount)}
+            </span>
+          </div>
+          <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+            {p.expectedOn ? `around ${p.expectedOn}` : "no date yet"}
+            {p.note ? ` · ${p.note}` : ""}
+          </div>
+          {!readOnly && (
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <button
+                onClick={async () => {
+                  setBusy(p.id);
+                  await onCommit?.(p);
+                  setBusy("");
+                }}
+                disabled={busy === p.id}
+                style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                className="h-10 px-3.5 text-[14.5px] font-medium press"
+              >
+                {busy === p.id ? "Adding" : "It is happening"}
+              </button>
+              <button
+                onClick={async () => { setBusy(p.id); await dropPlanned(p.id); setBusy(""); onChanged?.(); }}
+                disabled={busy === p.id}
+                style={{ color: P.faint }}
+                className="h-10 px-2 text-[14px] press"
+              >
+                Drop it
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {!readOnly && !adding && (
+        <button
+          onClick={() => setAdding(true)}
+          style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+          className="h-11 px-4 text-[15px] font-medium press mt-3"
+        >
+          <Plus size={14} className="inline mb-0.5" /> Plan something
+        </button>
+      )}
+
+      {adding && (
+        <div style={{ background: P.surface2, borderRadius: 14 }} className="p-3.5 mt-3">
+          <input
+            autoFocus
+            value={form.label}
+            onChange={(e) => setForm({ ...form, label: e.target.value })}
+            placeholder="Flights to Karachi"
+            style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3.5 text-[15px] outline-none border-none mb-2"
+          />
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={form.amount}
+              onChange={(e) => setForm({ ...form, amount: e.target.value })}
+              inputMode="decimal"
+              placeholder="1800.00"
+              style={{ background: P.surface, color: P.text, borderRadius: 13, fontFamily: MONO }}
+              className="h-11 px-3.5 text-[15px] outline-none border-none w-32"
+            />
+            <select
+              value={form.bucket}
+              onChange={(e) => setForm({ ...form, bucket: e.target.value })}
+              style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+              className="h-11 px-3 text-[15px] outline-none border-none"
+            >
+              {BUCKETS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <input
+              type="date"
+              value={form.expectedOn}
+              onChange={(e) => setForm({ ...form, expectedOn: e.target.value })}
+              style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+              className="h-11 px-3 text-[15px] outline-none border-none"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              onClick={save}
+              disabled={busy === "new"}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {busy === "new" ? "Saving" : "Plan it"}
+            </button>
+            <button
+              onClick={() => setAdding(false)}
+              style={{ color: P.muted }}
+              className="h-11 px-2 text-[15px] press"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [], bankTxns = [], onPairBank }) {
   const [adding, setAdding] = useState(false);
   const [settleFor, setSettleFor] = useState(null);   // item awaiting the confirm dialog
@@ -11539,8 +11748,21 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
   // Items due beyond ~35 days render subdued with an "upcoming" tag, so a freshly
   // respawned recurring bill reads as future, not as something demanding settlement.
   const horizon = (() => { const d = new Date(); d.setDate(d.getDate() + 35); return d.toISOString().slice(0, 10); })();
-  const open = [...items.filter((i) => i.status === "open")]
-    .sort((a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31"));
+  /* Part paid first, then by date.
+
+     A bill you are halfway through is the one with a promise attached: you
+     agreed a date for the rest and somebody is expecting it. Sorted by date
+     alone it can sit at position nine, below four bills nobody has discussed,
+     and the arrangement is the thing most likely to be forgotten. */
+  const partPaidFirst = (a, b) => {
+    const ap = (Number(a.paidAmount) || 0) > 0.005 ? 0 : 1;
+    const bp = (Number(b.paidAmount) || 0) > 0.005 ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    const ad = ap === 0 && a.balanceDue ? a.balanceDue : a.dueDate;
+    const bd = bp === 0 && b.balanceDue ? b.balanceDue : b.dueDate;
+    return (ad || "9999-12-31").localeCompare(bd || "9999-12-31");
+  };
+  const open = [...items.filter((i) => i.status === "open")].sort(partPaidFirst);
   const daysUntil = (d) => Math.max(0, Math.round((new Date(d + "T00:00:00") - new Date(todayStr() + "T00:00:00")) / 86400000));
 
   // group open items by party (2+ under the same name collapse into one card)
@@ -11725,6 +11947,14 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
     const paidSoFar = Number(i.paidAmount) || 0;
     const left = Math.max(0, Math.round((Math.abs(i.amount) - paidSoFar) * 100) / 100);
 
+    /* Part paid, and marked in brass rather than red or green.
+     *
+     * It is neither: red is a bill nobody has touched, green is one that is
+     * finished, and this is an arrangement you are halfway through and have
+     * agreed the rest of. A third state deserves a third colour, and brass is
+     * the one this app uses for things in progress. */
+    const partPaid = paidSoFar > 0.005 && i.status === "open";
+
     const tooEarly = Boolean(
       i.dueDate && i.dueDate > todayStr() && (i.recurrence === "recurring" || i.frequency),
     );
@@ -11782,7 +12012,10 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
               showing its full amount when half is paid overstates the debt,
               and the total at the top of the section is built from the same
               figure, so they would disagree. */}
-          <div style={{ fontFamily: MONO, color: tone }} className="text-[15px] tabular-nums">
+          <div
+            style={{ fontFamily: MONO, color: partPaid ? P.brassText : tone }}
+            className="text-[15px] tabular-nums"
+          >
             {fmt(paidSoFar > 0 ? left : i.amount)}
           </div>
           {paidSoFar > 0 && (
