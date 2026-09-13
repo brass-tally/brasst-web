@@ -5214,6 +5214,11 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
         >
           <span style={{ color: P.muted }} className="text-[15px]">
             Everything below adds to
+            {pendingRows.length > 0 && (
+              <span style={{ color: P.faint }} className="block text-[13px]">
+                {pendingRows.length} more pending, not counted
+              </span>
+            )}
           </span>
           <span
             style={{ fontFamily: MONO, color: isIn ? P.credit : P.debit }}
@@ -5222,6 +5227,34 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
             {fmt(total)}
           </span>
         </div>
+
+        {/* How far the feed reaches, stated before the rows rather than after
+            them.
+
+            An absent transaction has two explanations that need different
+            answers: the bank has not settled it, which is the group below, or
+            the feed has not fetched it, which is this line. Both belong where
+            the question is asked. */}
+        {newestLine && (
+          <p style={{ color: P.faint }} className="text-[13px] pt-3">
+            The bank has given us everything up to {newestLine}. Anything after that has not arrived yet.
+          </p>
+        )}
+
+        {/* Pending first, because it answers the question people open this to
+            ask.
+
+            Somebody looking for yesterday's transfers was being asked to
+            scroll past thirty-eight settled rows to find out they were
+            pending. The newest days are the ones you check, so the reason they
+            are absent belongs at the top rather than at the bottom. */}
+        <Group
+          title="Not settled yet"
+          why="The bank has these and has not settled them, so they are not in the figure above yet."
+          rows={pendingRows}
+          describe={(b) => b.description || "bank line"}
+          amountOf={(b) => b.amount}
+        />
 
         <Group
           title="Through the bank"
@@ -5259,14 +5292,6 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
             The feed's newest line is {newestLine}. Anything after that has not been fetched yet.
           </p>
         )}
-
-        <Group
-          title="Not settled yet"
-          why="Not counted yet. The bank has not settled them."
-          rows={pendingRows}
-          describe={(b) => b.description || "bank line"}
-          amountOf={(b) => b.amount}
-        />
 
         {!bankRows.length && !bookOnly.length && !pendingRows.length && (
           <p style={{ color: P.muted }} className="text-[15px] py-4">
