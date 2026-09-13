@@ -4948,7 +4948,14 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
     return (
       <div className="mt-4">
         <div className="flex items-baseline justify-between gap-3">
-          <span style={{ color: P.text }} className="text-[15.5px]">{title}</span>
+          <span style={{ color: P.text }} className="text-[15.5px]">
+            {title}
+            {/* How many, so a long group announces its own length rather than
+                leaving you to scroll to find out. */}
+            <span style={{ color: P.faint }} className="text-[13.5px] font-normal">
+              {" "}&middot; {rows.length}
+            </span>
+          </span>
           <span
             style={{ fontFamily: MONO, color: tone || P.text }}
             className="text-[15.5px] tabular-nums shrink-0"
@@ -5005,8 +5012,19 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
           </div>
         )}
 
-        <div className="flex items-baseline justify-between gap-3 pb-3" style={{ borderBottom: `1px solid ${P.line}` }}>
-          <span style={{ color: P.muted }} className="text-[15px]">Everything below adds to</span>
+        {/* The total stays put.
+
+            A list of forty rows scrolls the total off the screen, which leaves
+            you reading amounts with nothing to add them against. It is the one
+            line you need throughout, so it stays at the top of the scroll
+            rather than at the top of the list. */}
+        <div
+          className="flex items-baseline justify-between gap-3 pb-3 sticky top-0 z-10"
+          style={{ borderBottom: `1px solid ${P.line}`, background: P.surface }}
+        >
+          <span style={{ color: P.muted }} className="text-[15px]">
+            Everything below adds to
+          </span>
           <span
             style={{ fontFamily: MONO, color: isIn ? P.credit : P.debit }}
             className="text-[19px] tabular-nums"
@@ -5065,6 +5083,17 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
             Nothing this month.
           </p>
         )}
+
+        {/* An end, so a list that stops looks like it stopped rather than like
+            it was cut off. */}
+        {(bankRows.length > 0 || bookOnly.length > 0) && (
+          <p
+            style={{ color: P.faint, borderTop: `1px solid ${P.line}` }}
+            className="text-[13px] text-center pt-3 mt-4"
+          >
+            That is everything for {monthLabel(month)}.
+          </p>
+        )}
       </ModalBody>
     </Modal>
   );
@@ -5095,7 +5124,12 @@ function ObligationTrail({ kind, rows, onClose, openPreview }) {
     return (
       <div className="mt-4">
         <div className="flex items-baseline justify-between gap-3">
-          <span style={{ color: P.text }} className="text-[15.5px]">{title}</span>
+          <span style={{ color: P.text }} className="text-[15.5px]">
+            {title}
+            <span style={{ color: P.faint }} className="text-[13.5px] font-normal">
+              {" "}&middot; {list.length}
+            </span>
+          </span>
           <span
             style={{ fontFamily: MONO, color: tone || P.text }}
             className="text-[15.5px] tabular-nums shrink-0"
@@ -5137,9 +5171,11 @@ function ObligationTrail({ kind, rows, onClose, openPreview }) {
   return (
     <Modal onClose={onClose} size="lg" title={isAR ? "Owed to you" : "You owe them"}>
       <ModalBody>
+        {/* Same as the figure trail: the total is what you are reading the
+            rows against, so it does not scroll away from them. */}
         <div
-          className="flex items-baseline justify-between gap-3 pb-3"
-          style={{ borderBottom: `1px solid ${P.line}` }}
+          className="flex items-baseline justify-between gap-3 pb-3 sticky top-0 z-10"
+          style={{ borderBottom: `1px solid ${P.line}`, background: P.surface }}
         >
           <span style={{ color: P.muted }} className="text-[15px]">
             {open.length} open, still outstanding
@@ -5172,6 +5208,15 @@ function ObligationTrail({ kind, rows, onClose, openPreview }) {
         {!open.length && (
           <p style={{ color: P.muted }} className="text-[15px] py-4">
             Nothing open.
+          </p>
+        )}
+
+        {open.length > 0 && (
+          <p
+            style={{ color: P.faint, borderTop: `1px solid ${P.line}` }}
+            className="text-[13px] text-center pt-3 mt-4"
+          >
+            That is all {open.length} of them.
           </p>
         )}
       </ModalBody>
