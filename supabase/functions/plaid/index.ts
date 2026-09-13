@@ -193,6 +193,48 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
     const { action, ...body } = await req.json();
+
+    /* Plaid telling us something happened, rather than us asking.
+     *
+     * We polled once a day, which meant a transaction could sit in Plaid for
+     * twenty-three hours before this application knew about it. A webhook
+     * fires the moment Plaid has something, and the sync runs then.
+     *
+     * This is as close to live as anybody can get. It does not make a bank
+     * release its data sooner: Plaid can only tell us what the bank has given
+     * it, so if RBC holds a transfer for a day, the webhook arrives a day
+     * later and is still instant with respect to the thing it is reporting.
+     *
+     * No session here, because Plaid has none. The item_id is the credential:
+     * it is issued by Plaid, stored by us, and a caller who does not know one
+     * cannot cause any work to happen.
+     */
+    if (body.webhook_type || body.webhook_code) {
+      const itemId = String(body.item_id || "");
+      const code = String(body.webhook_code || "");
+      const type = String(body.webhook_type || "");
+      if (!itemId) return json({ ok: true, ignored: "no item" });
+
+      const { data: conn } = await supabase
+        .from("bank_connections").select("*").eq("item_id", itemId).maybeSingle();
+      if (!conn) return json({ ok: true, ignored: "unknown item" });
+
+      if (type === "TRANSACTIONS" && (code === "SYNC_UPDATES_AVAILABLE" || code === "DEFAULT_UPDATE" || code === "INITIAL_UPDATE" || code === "HISTORICAL_UPDATE")) {
+        const result = await syncOne(supabase, plaid, conn);
+        return json({ ok: true, synced: result.added });
+      }
+
+      /* A sign-in that has expired, or is about to. Recorded rather than
+         acted on: reconnecting needs the person, and knowing early is what
+         lets the app say so before a figure goes stale. */
+      if (type === "ITEM" && (code === "ERROR" || code === "PENDING_EXPIRATION" || code === "USER_PERMISSION_REVOKED" || code === "LOGIN_REPAIRED")) {
+        const errCode = code === "LOGIN_REPAIRED" ? null : (body.error?.error_code || code);
+        await markStatus(conn.id, errCode, body.error?.error_message || null);
+        return json({ ok: true, status: errCode || "ok" });
+      }
+
+      return json({ ok: true, ignored: `${type}/${code}` });
+    }
     const env = Deno.env.get("PLAID_ENV") || "sandbox";
     const base = `https://${env}.plaid.com`;
     const creds = { client_id: Deno.env.get("PLAID_CLIENT_ID"), secret: Deno.env.get("PLAID_SECRET") };
@@ -274,6 +316,10 @@ Deno.serve(async (req) => {
         products: ["transactions"],
         country_codes: ["CA", "US"],
         language: "en",
+        /* Where Plaid should tell us about new transactions. Set at creation
+           because an Item's webhook is fixed when it is made; existing ones
+           are updated by the `set_webhook` action below. */
+        webhook: `${Deno.env.get("SUPABASE_URL") || ""}/functions/v1/plaid`,
       };
 
       // Update mode: hand Link the existing access_token and it re-authenticates
@@ -396,6 +442,27 @@ Deno.serve(async (req) => {
       if (error || !conn) throw new Error("Connection not found");
       const result = await syncOne(supabase, plaid, conn);
       return json(result);
+    }
+
+    /* Point an existing Item at the webhook.
+     *
+     * Connections made before this existed have no webhook and would keep
+     * being polled. One call each fixes them, and running it twice is
+     * harmless. */
+    if (action === "set_webhook") {
+      const { data: conns } = await supabase
+        .from("bank_connections").select("id, access_token").eq("ledger_id", body.ledger_id);
+      const url = `${Deno.env.get("SUPABASE_URL") || ""}/functions/v1/plaid`;
+      let done = 0;
+      for (const c of conns || []) {
+        try {
+          await plaid("/item/webhook/update", { access_token: c.access_token, webhook: url });
+          done += 1;
+        } catch (e) {
+          console.warn("webhook update failed for", c.id, (e as Error).message);
+        }
+      }
+      return json({ ok: true, updated: done, webhook: url });
     }
 
     if (action === "disconnect") {

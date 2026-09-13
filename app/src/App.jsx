@@ -1295,6 +1295,35 @@ function Ledger({ onSignOut }) {
     /* eslint-disable-next-line */
   }, [ledgers?.length]);
 
+  /* New bank lines, while you are looking at the screen.
+   *
+   * The webhook makes the database current the moment Plaid has something.
+   * This is the other half: without it the figures still wait for a reload,
+   * which is a strange thing to ask of somebody watching for a payment to
+   * land.
+   *
+   * Only the bank lines are subscribed to. Everything else in the books
+   * changes because you changed it, and re-reading those on every keystroke
+   * from another device would be a lot of noise for no gain. */
+  useEffect(() => {
+    if (!currentLedger?.id) return;
+    const channel = supabase
+      .channel(`bank:${currentLedger.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "bank_transactions", filter: `ledger_id=eq.${currentLedger.id}` },
+        async () => {
+          try {
+            setBankTxns(await bank.listBankTransactions(currentLedger.id));
+            setBankConns(await bank.listConnections(currentLedger.id));
+            setSyncedAt(Date.now());
+          } catch { /* a failed refresh is not worth interrupting anybody over */ }
+        },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [currentLedger?.id]);
+
   const morningRan = useRef("");
   const runMorningPass = async () => {
     const today = todayStr();
