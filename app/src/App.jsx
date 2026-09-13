@@ -3156,7 +3156,8 @@ function Ledger({ onSignOut }) {
           side={explaining}
           month={month}
           transactions={data.transactions}
-          bankTxns={conns.length ? bankTxns : bankTxns}
+          bankTxns={bankTxns}
+          obligations={explaining === "ar" ? data.receivables : data.payables}
           ledgerCcy={data.ledger.currency || "CAD"}
           openPreview={openPreview}
           onClose={() => setExplaining(null)}
@@ -4845,27 +4846,55 @@ function Delta({ now, prev, invert }) {
    Grouped rather than listed flat, because "here are 47 rows" is not an
    explanation. The groups are the sentence: through the bank, not through it,
    still to file. */
-function FigureTrail({ side, month, transactions, bankTxns, ledgerCcy, onClose, openPreview }) {
+function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerCcy, onClose, openPreview }) {
+  /* Owed and owing follow a different trail.
+
+     Money in and out are built from movements, so the question is where the
+     money went. What is owed is built from commitments, so the question is
+     when each one lands and how much of it is left. Same idea, different
+     spine: grouped by urgency rather than by route. */
+  if (side === "ar" || side === "ap") {
+    return (
+      <ObligationTrail
+        kind={side === "ar" ? "receivables" : "payables"}
+        rows={obligations || []}
+        onClose={onClose}
+        openPreview={openPreview}
+      />
+    );
+  }
+
   const isIn = side === "in";
-  const label = isIn ? "Money in" : "Money out";
+  const isNet = side === "net";
+  const label = isNet ? "Net this month" : isIn ? "Money in" : "Money out";
   const wantType = isIn ? "income" : "expense";
 
   const inMonth = (d) => String(d || "").startsWith(month);
   const paired = new Set((bankTxns || []).map((b) => b.matchedTxId).filter(Boolean));
 
+  /* Net is both sides, so nothing is filtered by direction. The groups then
+     read as money in and money out rather than as routes, which is what a net
+     figure is actually made of. */
   const bankRows = (bankTxns || []).filter(
     (b) => !b.pending && b.status !== "ignored" && inMonth(b.date)
-      && (isIn ? b.direction === "credit" : b.direction !== "credit"),
+      && (isNet || (isIn ? b.direction === "credit" : b.direction !== "credit")),
   );
   const bookOnly = (transactions || []).filter(
-    (t) => t.type === wantType && inMonth(t.date) && !paired.has(t.id) && t.payMethod !== "credits",
+    (t) => inMonth(t.date) && !paired.has(t.id) && t.payMethod !== "credits"
+      && (isNet || t.type === wantType),
   );
   const unfiled = bankRows.filter((b) => b.status !== "matched");
 
   const sum = (rows, key = "amount") =>
     rows.reduce((n, r) => n + Math.abs(Number(r[key]) || 0), 0);
 
-  const total = sum(bankRows) + sum(bookOnly);
+  const signed = (rows, isCredit) => rows.reduce(
+    (n, r) => n + (isCredit(r) ? Math.abs(Number(r.amount) || 0) : -Math.abs(Number(r.amount) || 0)), 0,
+  );
+
+  const total = isNet
+    ? signed(bankRows, (b) => b.direction === "credit") + signed(bookOnly, (t) => t.type === "income")
+    : sum(bankRows) + sum(bookOnly);
 
   const Group = ({ title, why, rows, describe, amountOf, tone }) => {
     if (!rows.length) return null;
@@ -4948,6 +4977,115 @@ function FigureTrail({ side, month, transactions, bankTxns, ledgerCcy, onClose, 
         {!bankRows.length && !bookOnly.length && (
           <p style={{ color: P.muted }} className="text-[15px] py-4">
             Nothing this month.
+          </p>
+        )}
+      </ModalBody>
+    </Modal>
+  );
+}
+
+/* What is owed, and when it lands.
+
+   The card gives a total across a dozen parties and a fortnight of dates,
+   which answers how much and nothing else. The useful questions are which of
+   these is late, which is about to be, and how much of each is actually left
+   after part payments. */
+function ObligationTrail({ kind, rows, onClose, openPreview }) {
+  const isAR = kind === "receivables";
+  const today = todayStr();
+  const soon = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+
+  const open = rows.filter((o) => o.status === "open");
+  const left = (o) => Math.max(0, Math.round((Math.abs(o.amount) - (Number(o.paidAmount) || 0)) * 100) / 100);
+  const due = (o) => ((Number(o.paidAmount) || 0) > 0 && o.balanceDue ? o.balanceDue : o.dueDate);
+
+  const overdue = open.filter((o) => due(o) && due(o) < today);
+  const within = open.filter((o) => due(o) && due(o) >= today && due(o) <= soon);
+  const later = open.filter((o) => !due(o) || due(o) > soon);
+  const total = open.reduce((n, o) => n + left(o), 0);
+
+  const Group = ({ title, why, list, tone }) => {
+    if (!list.length) return null;
+    return (
+      <div className="mt-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <span style={{ color: P.text }} className="text-[15.5px]">{title}</span>
+          <span
+            style={{ fontFamily: MONO, color: tone || P.text }}
+            className="text-[15.5px] tabular-nums shrink-0"
+          >
+            {fmt(list.reduce((n, o) => n + left(o), 0))}
+          </span>
+        </div>
+        <p style={{ color: P.faint }} className="text-[13.5px] mb-1">{why}</p>
+        {list.map((o) => (
+          <div
+            key={o.id}
+            className="flex items-baseline justify-between gap-3 py-1.5"
+            style={{ borderTop: `1px solid ${P.line}` }}
+          >
+            <span className="min-w-0">
+              <span style={{ color: P.muted }} className="text-[14px] block truncate">
+                {o.party}{o.description ? ` · ${o.description}` : ""}
+              </span>
+              <span style={{ color: P.faint }} className="text-[12.5px]">
+                {due(o) ? `due ${due(o)}` : "no date"}
+                {(Number(o.paidAmount) || 0) > 0
+                  ? ` · ${fmt(o.paidAmount)} of ${fmt(Math.abs(o.amount))} paid`
+                  : ""}
+                {o.attachmentId ? " · receipt on file" : ""}
+              </span>
+            </span>
+            <span
+              style={{ fontFamily: MONO, color: P.faint }}
+              className="text-[14px] tabular-nums shrink-0"
+            >
+              {fmt(left(o))}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <Modal onClose={onClose} size="lg" title={isAR ? "Owed to you" : "You owe them"}>
+      <ModalBody>
+        <div
+          className="flex items-baseline justify-between gap-3 pb-3"
+          style={{ borderBottom: `1px solid ${P.line}` }}
+        >
+          <span style={{ color: P.muted }} className="text-[15px]">
+            {open.length} open, still outstanding
+          </span>
+          <span
+            style={{ fontFamily: MONO, color: isAR ? P.credit : P.debit }}
+            className="text-[19px] tabular-nums"
+          >
+            {fmt(total)}
+          </span>
+        </div>
+
+        <Group
+          title="Overdue"
+          why={isAR ? "Past their date and not received. These are the ones to chase." : "Past their date and not paid."}
+          list={overdue}
+          tone={P.debit}
+        />
+        <Group
+          title="Within a fortnight"
+          why="Due in the next fourteen days."
+          list={within}
+        />
+        <Group
+          title="Later"
+          why="Further out, or with no date on them."
+          list={later}
+        />
+
+        {!open.length && (
+          <p style={{ color: P.muted }} className="text-[15px] py-4">
+            Nothing open.
           </p>
         )}
       </ModalBody>
@@ -5088,6 +5226,8 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
          would sit between them contradicting both. */
       value: money(trueNet),
       tone: trueNet >= 0 ? P.credit : P.debit, wide: true,
+      // Net is in minus out, so it opens on both.
+      onClick: onExplain ? () => onExplain("net") : undefined,
       delta: { now: sums.net, prev: prevSums?.net },
       /* Where the month began and where it ends up.
 
@@ -5167,8 +5307,10 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
            onClick: onExplain ? () => onExplain("out") : undefined,
            delta: unrecorded.out ? null : { now: sums.exp, prev: prevSums?.exp, invert: true },
            foot: cardFoot("out") },
-    ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
-    ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
+    ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot,
+           onClick: onExplain ? () => onExplain("ar") : undefined },
+    ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot,
+           onClick: onExplain ? () => onExplain("ap") : undefined },
     credits: creditsLeft !== null
       ? { label: "Credits left", value: money(creditsLeft), tone: creditsLeft > 0 ? P.credit : P.debit,
           onClick: onCredits, underline: true, foot: "non-cash, across every pool" }
