@@ -32,6 +32,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail, invoiceDecidedEmail,
   invoiceCorrectionEmail, shareInviteEmail,
+  paymentMadeEmail,
 } from "./emails.ts";
 
 const BUCKET = "invoices";   // the bucket the app reads from; "receipts" was a guess and nothing could open the file
@@ -56,7 +57,15 @@ const admin = () =>
   );
 
 /** Resend over its REST API. No package, one fetch, one place to read the error. */
-async function sendMail(to: string, subject: string, html: string, replyTo?: string) {
+type Attachment = { filename: string; content: string };
+
+async function sendMail(
+  to: string,
+  subject: string,
+  html: string,
+  replyTo?: string,
+  attachments?: Attachment[],
+) {
   const key = Deno.env.get("RESEND_API_KEY");
   const from = Deno.env.get("RESEND_FROM_EMAIL");
   if (!key || !from) {
@@ -66,7 +75,11 @@ async function sendMail(to: string, subject: string, html: string, replyTo?: str
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to, subject, html, ...(replyTo ? { reply_to: replyTo } : {}) }),
+    body: JSON.stringify({
+      from, to, subject, html,
+      ...(replyTo ? { reply_to: replyTo } : {}),
+      ...(attachments?.length ? { attachments } : {}),
+    }),
   });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) return { ok: false, error: body?.message || `Resend returned ${r.status}` };
@@ -213,6 +226,98 @@ Deno.serve(async (req) => {
       const { data, error } = await db.storage.from(BUCKET).createSignedUploadUrl(path);
       if (error) throw error;
       return json({ ok: true, path, signedUrl: data.signedUrl });
+    }
+
+    /* Tell the supplier they have been paid.
+
+       Somebody who sent an invoice through the link has no way of knowing it
+       was paid until the money shows up, and a part payment is worse: they see
+       less than they invoiced and have to decide whether to chase you. One
+       email closes that gap.
+
+       Keyed on the obligation, because that is what the app knows when a
+       payment is recorded. The invoice it came from carries the address and
+       the reference. */
+    /* Pull a filed receipt out of storage, base64, for attaching.
+
+       Returns null on anything unexpected rather than throwing: a receipt
+       that cannot be read is a missing attachment, not a reason to withhold
+       the payment notice. */
+    // deno-lint-ignore no-inner-declarations
+    async function receiptAttachment(path: string | null | undefined): Promise<Attachment | null> {
+      if (!path) return null;
+      try {
+        const { data, error } = await db.storage.from(BUCKET).download(path);
+        if (error || !data) return null;
+        const bytes = new Uint8Array(await data.arrayBuffer());
+        // Resend accepts far more, but a receipt larger than this is a scan
+        // nobody needs at full resolution and a slow send for everybody.
+        if (bytes.byteLength > 8 * 1024 * 1024) return null;
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+        const name = path.split("/").pop() || "receipt";
+        return { filename: name, content: btoa(binary) };
+      } catch {
+        return null;
+      }
+    }
+
+    if (action === "paid") {
+      const obligationId = String(body.obligation_id || "");
+      if (!obligationId) return json({ ok: false, error: "No obligation given." });
+
+      const { data: inv } = await db
+        .from("inbound_invoices")
+        .select("id, ledger_id, party, contact_email, amount, currency, link_id")
+        .eq("obligation_id", obligationId)
+        .maybeSingle();
+
+      // Not every payable came from an invitation, and that is not an error.
+      if (!inv) return json({ ok: true, skipped: "not from an invitation" });
+      if (!inv.contact_email) return json({ ok: true, skipped: "no address on file" });
+
+      const caller = await db.auth.getUser(bearer(req));
+      if (!caller?.data?.user) return json({ ok: false, error: "Sign in first." }, 401);
+
+      const { data: led } = await db
+        .from("ledgers").select("id, name, user_id, currency").eq("id", inv.ledger_id).maybeSingle();
+      if (!led || led.user_id !== caller.data.user.id) {
+        return json({ ok: false, error: "That is not your invoice." }, 403);
+      }
+
+      const { data: invite } = await db
+        .from("invoice_link_invites")
+        .select("reference").eq("link_id", inv.link_id).maybeSingle();
+
+      const paid = Number(body.paid) || 0;
+      const total = Number(body.total) || 0;
+      const outstanding = Math.max(0, Number(body.outstanding) || 0);
+
+      /* The same receipt that was filed against the payment.
+
+         A supplier chasing a payment they cannot see wants proof, and the
+         proof already exists: it was attached when the payment was recorded.
+         Sending a figure without it asks them to take your word for it. */
+      const receipt = await receiptAttachment(body.receipt_path);
+
+      const r = await sendMail(
+        inv.contact_email,
+        `${led.name} paid you ${(led.currency || "CAD")} ${paid.toFixed(2)}`,
+        paymentMadeEmail({
+          business: led.name,
+          party: inv.party,
+          reference: invite?.reference || null,
+          paid, total, outstanding,
+          balanceDue: body.balance_due || null,
+          when: String(body.when || "").slice(0, 10),
+          currency: led.currency || "CAD",
+        }),
+        caller.data.user.email ?? undefined,
+        receipt ? [receipt] : undefined,
+      );
+      return r.ok
+        ? json({ ok: true, to: inv.contact_email, attached: Boolean(receipt) })
+        : json({ ok: false, error: r.error });
     }
 
     if (action === "preview-invite") {

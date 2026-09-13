@@ -441,3 +441,79 @@ export function shareInviteEmail(
 </body></html>`;
 }
 
+
+/* A payment, told to the person waiting for it.
+
+   A supplier who sent an invoice through the link has no way of knowing it was
+   paid until the money appears, and a part payment is worse: they see less
+   than they invoiced and have to decide whether to chase you. One email closes
+   that gap and it costs nothing.
+
+   Short and unique, for the same reason the invitation is: the reference and
+   the figures differ every time, so there is nothing for a mail client to fold
+   away as repetition. */
+export function paymentMadeEmail(
+  { business, party, reference, paid, total, outstanding, balanceDue, when, currency }: {
+    business: string; party: string; reference?: string | null;
+    paid: number; total: number; outstanding: number;
+    balanceDue?: string | null; when: string; currency: string;
+  },
+) {
+  const brass = "#A9620A";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+  const credit = "#15803D";
+
+  const money = (n: number) =>
+    `${currency} ${(Math.abs(Number(n)) || 0).toLocaleString("en-CA", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    })}`;
+
+  const full = outstanding <= 0.005;
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>${business} paid ${money(paid)}</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:28px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <h1 style="margin:0 0 6px;font-size:21px;line-height:1.3;color:${ink};font-weight:600;">
+        ${business} paid you ${money(paid)}
+      </h1>
+      ${reference ? `<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${brass};margin-bottom:16px;">${reference}</div>` : ""}
+
+      <p style="margin:0 0 16px;font-size:15.5px;line-height:1.55;color:${muted};">
+        Sent on ${when}.
+      </p>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="background:#F5F3F0;border-radius:14px;padding:16px 18px;margin-bottom:16px;">
+        <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr><td style="padding:3px 0;font-size:15px;color:${muted}">Invoiced</td>
+              <td style="padding:3px 0;font-size:15px;color:${ink};text-align:right">${money(total)}</td></tr>
+          <tr><td style="padding:3px 0;font-size:15px;color:${muted}">Paid now</td>
+              <td style="padding:3px 0;font-size:15px;color:${credit};text-align:right">${money(paid)}</td></tr>
+          ${full ? "" : `<tr><td style="padding:3px 0;font-size:15px;color:${muted}">Still outstanding</td>
+              <td style="padding:3px 0;font-size:15px;color:${ink};text-align:right">${money(outstanding)}</td></tr>`}
+        </table></td></tr>
+      </table>
+
+      <p style="margin:0;font-size:14.5px;line-height:1.55;color:${muted};">
+        ${full
+          ? "That settles it in full. Nothing further is owed on this invoice."
+          : `The remainder is expected${balanceDue ? ` on ${balanceDue}` : " shortly"}. You will get another note when it goes.`}
+      </p>
+
+      <p style="margin:16px 0 0;font-size:13px;line-height:1.5;color:#8A827B;">
+        Sent by ${business} through Brasstally. Reply to them directly if anything here looks wrong.
+      </p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

@@ -2153,6 +2153,31 @@ function Ledger({ onSignOut }) {
         transactions: adopted ? d.transactions : [tx, ...d.transactions],
       };
     });
+    /* Tell whoever sent the invoice.
+
+       Fired without waiting: the books are already right, and a mail service
+       being slow should not hold up the interface. The function is quiet when
+       the payable did not come from an invitation, which is most of them, so
+       there is no need to work out here whether it applies. */
+    if (kind === "payables") {
+      // Worked out here rather than borrowed from the database block below,
+      // where these names also exist and are not in scope.
+      const billed = Math.abs(Number(item.amount) || 0);
+      const paidTotal = Math.round(((Number(item.paidAmount) || 0) + Math.abs(amount)) * 100) / 100;
+      const left = Math.max(0, Math.round((billed - paidTotal) * 100) / 100);
+
+      share.notifyPayment(id, {
+        paid: Math.abs(amount),
+        total: billed,
+        outstanding: left,
+        balanceDue: left > 0 ? (actual.balanceDue || item.balanceDue || null) : null,
+        when: settledOn,
+        /* The receipt filed against this payment, whichever it was: one
+           attached just now, or the one already on the obligation. */
+        receiptPath: actual.shareReceipt === false ? null : (receiptId || item.attachmentId || null),
+      });
+    }
+
     setMonth(settledOn.slice(0, 7));
     const label = kind === "receivables" ? "Payment received" : "Payment sent";
     const recurring = item.recurrence === "recurring" ? " (next due in " + addInterval(item.dueDate || settledOn, item.frequency || "monthly") + ")" : "";
@@ -11266,6 +11291,18 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
      An arrangement nobody wrote down is a bill that surprises you. Thirty days
      is a starting point rather than an assumption, and it is only asked for
      when the payment is actually short. */
+  /* Whether the receipt goes to the supplier with the payment notice.
+
+     On by default, because proof is the point of the notice and a supplier
+     chasing a payment they cannot see wants to see it.
+
+     Off is a real choice, though, and worth offering plainly: a payment
+     receipt is very often a screenshot of your banking app, with your balance
+     and somebody else's payments in the frame. Sending that to a contractor
+     is a decision, not a detail, and nobody should discover they made it
+     afterwards. */
+  const [shareReceipt, setShareReceipt] = useState(true);
+
   const [balanceDue, setBalanceDue] = useState(() => {
     const d = new Date(Date.now() + 30 * 864e5);
     return d.toISOString().slice(0, 10);
@@ -11291,6 +11328,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
       bankId: bankProof?.id,
       existingTxId: alreadyInBooks?.id,
       balanceDue: partial ? balanceDue : undefined,
+      shareReceipt,
     });
     } catch (e) {
       setDocErr(e?.message || "Something went wrong filing that. Try again.");
@@ -11342,7 +11380,30 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
             </button>
           )}
 
-          {(alreadyPaid > 0 || partial) && (
+          {/* Only for bills you are paying, and only when there is something to
+            send. A receivable's receipt is yours and goes nowhere. */}
+        {kind === "payables" && (doc || filedName) && (
+          <label className="flex items-start gap-2.5 mt-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={shareReceipt}
+              onChange={(e) => setShareReceipt(e.target.checked)}
+              style={{ accentColor: P.brass, width: 17, height: 17, marginTop: 2 }}
+              className="shrink-0"
+            />
+            <span className="min-w-0">
+              <span style={{ color: P.text }} className="text-[14.5px] block">
+                Send the receipt to them as proof
+              </span>
+              <span style={{ color: P.faint }} className="text-[13.5px]">
+                Only if this bill came from an invoice request. Worth a look first if it is a screenshot of
+                your banking app.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {(alreadyPaid > 0 || partial) && (
           <div
             style={{ background: P.surface2, borderRadius: 14 }}
             className="px-3.5 py-3 mt-2 text-[14.5px] leading-relaxed"

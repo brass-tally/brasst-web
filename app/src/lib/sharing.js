@@ -512,3 +512,27 @@ export async function attachToSchedule(invoiceId, scheduleId) {
     return { ok: true };
   }, { ok: false });
 }
+
+/* Tell a supplier their invoice has been paid, in part or in full.
+
+   Called after a payment is recorded, and deliberately not awaited by the
+   caller: the books are already right, and an email that fails should not
+   undo a payment. The function itself is quiet when the payable did not come
+   from an invitation, which is most of them. */
+export async function notifyPayment(obligationId, { paid, total, outstanding, balanceDue, when, receiptPath }) {
+  return soft("payment notice", async () => {
+    const { data, error } = await supabase.functions.invoke("invoice-mail", {
+      body: {
+        action: "paid",
+        obligation_id: obligationId,
+        paid, total, outstanding,
+        balance_due: balanceDue || null,
+        when,
+        // The receipt filed against this payment, attached as proof.
+        receipt_path: receiptPath || null,
+      },
+    });
+    if (error) throw error;
+    return data;
+  }, { ok: false });
+}
