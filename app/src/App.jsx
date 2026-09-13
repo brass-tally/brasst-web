@@ -66,6 +66,21 @@ const fmt = (n) =>
   Math.abs(n).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt0 = (n) =>
   (n < 0 ? "−$" : "$") + Math.abs(n).toLocaleString("en-CA", { maximumFractionDigits: 0 });
+
+/* An amount in somebody else's currency.
+ *
+ * `fmt` puts a dollar sign on everything, so prefixing a code produced
+ * "PKR $385,000.00": two currencies on one figure, one of them wrong. The code
+ * is the symbol here, and there should be only one.
+ */
+const fmtIn = (n, ccy, ledgerCcy = "CAD") => {
+  const value = Math.abs(Number(n) || 0).toLocaleString("en-CA", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  });
+  const sign = Number(n) < 0 ? "−" : "";
+  if (!ccy || ccy === ledgerCcy) return fmt(n);
+  return `${sign}${ccy} ${value}`;
+};
 const monthLabel = (ym) => {
   const [y, m] = ym.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString("en-CA", { month: "long", year: "numeric" });
@@ -1781,9 +1796,15 @@ function Ledger({ onSignOut }) {
   }, [data, month, bankConns]);
   const openBooks = useMemo(() => {
     if (!data) return { ar: 0, ap: 0 };
+    /* What is still owed, not what was originally billed.
+
+       A bill half paid still owes half, and a total that counts the whole of
+       it overstates the position. The rows show the remainder, so the totals
+       have to as well or the section will not add up to itself. */
+    const still = (o) => Math.max(0, Math.abs(o.amount) - (Number(o.paidAmount) || 0));
     return {
-      ar: data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0),
-      ap: data.payables.filter((r) => r.status === "open").reduce((s, r) => s + r.amount, 0),
+      ar: data.receivables.filter((r) => r.status === "open").reduce((s, r) => s + still(r), 0),
+      ap: data.payables.filter((r) => r.status === "open").reduce((s, r) => s + still(r), 0),
     };
   }, [data]);
   // What the agent would tell you if you asked: worked out locally, for free,
@@ -2100,11 +2121,30 @@ function Ledger({ onSignOut }) {
     setData((d) => {
       const fresh = d[kind].find((x) => x.id === id);
       if (!fresh || fresh.status !== "open") return d;    // belt and suspenders
+      /* A payment for less than what is owed leaves the bill open.
+
+         Marking the whole thing paid when half has gone is a lie; leaving it
+         untouched is also a lie once half has gone. The obligation carries
+         what has been paid so far and closes itself when that reaches the
+         total. */
+      const owed = Math.abs(Number(fresh.amount) || 0);
+      const paidSoFar = Math.round(((Number(fresh.paidAmount) || 0) + Math.abs(amount)) * 100) / 100;
+      const closes = paidSoFar >= owed - 0.005;
+
       return {
         ...d,
         [kind]: [
-          ...(next ? [next] : []),
-          ...d[kind].map((x) => (x.id === id ? { ...x, status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId, ...(obDoc || {}) } : x)),
+          // The next instance of a recurring bill is only due once this one is done.
+          ...(next && closes ? [next] : []),
+          ...d[kind].map((x) => (x.id === id
+            ? {
+                ...x,
+                paidAmount: paidSoFar,
+                ...(closes
+                  ? { status: "paid", settledOn, settledTxId: tx.id, payMethod, creditId, ...(obDoc || {}) }
+                  : {}),
+              }
+            : x)),
         ],
         // Adopted entries are already in the list, so adding would duplicate.
         transactions: adopted ? d.transactions : [tx, ...d.transactions],
@@ -2115,9 +2155,15 @@ function Ledger({ onSignOut }) {
     const recurring = item.recurrence === "recurring" ? " (next due in " + addInterval(item.dueDate || settledOn, item.frequency || "monthly") + ")" : "";
     addNotification(notify.success(`${label}${recurring}`));
     dbTry(async () => {
-      await db.updateObligation(id, { status: "paid", settledOn, settledTxId: tx.id, amount, payMethod, creditId: creditId || null, ...(obDoc || {}) });
+      // The same decision, written through. A bill still owed on stays open.
+      const owedDb = Math.abs(Number(item.amount) || 0);
+      const paidDb = Math.round(((Number(item.paidAmount) || 0) + Math.abs(amount)) * 100) / 100;
+      const closesDb = paidDb >= owedDb - 0.005;
+      await db.updateObligation(id, closesDb
+        ? { status: "paid", settledOn, settledTxId: tx.id, paidAmount: paidDb, payMethod, creditId: creditId || null, ...(obDoc || {}) }
+        : { paidAmount: paidDb, ...(obDoc || {}) });
       if (!adopted) await db.insertTransaction(tx);
-      if (next) await db.insertObligation(kind, next);
+      if (next && closesDb) await db.insertObligation(kind, next);
     });
 
     /* The entry this created, so a caller can point at it.
@@ -5822,6 +5868,32 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   const [spinning, setSpinning] = useState(false);
   const [schedules, setSchedules] = useState([]);
   const [invites, setInvites] = useState([]);
+
+  /* What a foreign invoice is worth, before you decide about it.
+
+     The row showed PKR 385,000.00 and nothing else, so the only way to learn
+     whether that was three hundred dollars or three thousand was to press
+     Accept and read the dialog. A decision needs the figure in front of it,
+     not behind a button. */
+  const [rates, setRates] = useState({});
+  useEffect(() => {
+    const wanted = [...new Set(
+      [...pending, ...history]
+        .map((i) => i.currency)
+        .filter((c) => c && c !== ledgerCurrency),
+    )];
+    let alive = true;
+    (async () => {
+      for (const ccy of wanted) {
+        if (rates[ccy]) continue;
+        const hit = await lookupRate(ccy, ledgerCurrency);
+        if (!alive || !hit) continue;
+        setRates((prev) => ({ ...prev, [ccy]: hit }));
+      }
+    })();
+    return () => { alive = false; };
+    /* eslint-disable-next-line */
+  }, [pending, history, ledgerCurrency]);
   const [showSent, setShowSent] = useState(false);
   const [correcting, setCorrecting] = useState(null);
   const [reason, setReason] = useState("");
@@ -6094,7 +6166,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
       const suggested = fx ? Math.abs(inv.amount) * fx.rate : null;
 
       const converted = await askAmount({
-        title: `${inv.party} invoiced ${inv.currency} ${fmt(inv.amount)}`,
+        title: `${inv.party} invoiced ${fmtIn(inv.amount, inv.currency, ledgerCcy)}`,
         body: fx
           ? `Your books are in ${ledgerCcy}. This is today's rate, ${fx.rate.toFixed(4)}, and you can change the figure if you were charged a different one.`
           : `Your books are in ${ledgerCcy}. What is this worth in ${ledgerCcy}? The original stays on the record either way.`,
@@ -6120,7 +6192,8 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
         amount: converted,
         description:
           `${inv.description || "Invoice"} ` +
-          `(${inv.currency} ${fmt(Math.abs(inv.amount))} at ${rate.toFixed(4)}${via} = ${ledgerCcy} ${fmt(converted)})`,
+          `(${fmtIn(Math.abs(inv.amount), inv.currency, ledgerCcy)} at ${rate.toFixed(4)}${via} = ` +
+          `${fmtIn(converted, ledgerCcy, ledgerCcy)})`,
       };
     }
 
@@ -6381,7 +6454,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   // `data` here threw on render: AR / AP would not open at all.
   const ledgerCcy = ledgerCurrency || "CAD";
   const foreign = (inv) => inv.currency && inv.currency !== ledgerCcy;
-  const withCcy = (inv) => (foreign(inv) ? `${inv.currency} ${fmt(inv.amount)}` : fmt(inv.amount));
+  const withCcy = (inv) => fmtIn(inv.amount, inv.currency, ledgerCcy);
 
   /* One row, whatever it is describing.
 
@@ -6442,9 +6515,38 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
             style={{ fontFamily: MONO, color: pendingHere ? P.debit : P.faint }}
             className="text-[15.5px] tabular-nums shrink-0 whitespace-nowrap"
           >
-            {foreignHere ? `${inv.currency} ${fmt(row.amount)}` : fmt(row.amount)}
+            {/* Once it is in the books, the books' figure is the truth.
+
+                A foreign invoice kept showing its original amount after being
+                accepted, so the row said PKR 385,000.00 while the payable said
+                $1,920.77. The original belongs underneath as history, not on
+                top as the headline. */}
+            {ob ? fmt(Math.abs(ob.amount)) : foreignHere ? fmtIn(row.amount, inv.currency, ledgerCcy) : fmt(row.amount)}
           </span>
         </div>
+
+        {/* The conversion, at today's rate, with its source.
+
+            An estimate rather than a commitment: nothing is written until you
+            accept, and the dialog still lets you use the rate you were
+            actually charged. */}
+        {/* Before accepting: what it is worth, as an estimate.
+            After: what it was, and the rate it came in at. */}
+        {foreignHere && ob && (
+          <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+            {fmtIn(row.amount, inv.currency, ledgerCcy)} invoiced, at{" "}
+            {(Math.abs(ob.amount) / Math.abs(row.amount)).toFixed(4)}
+          </div>
+        )}
+
+        {foreignHere && !ob && rates[inv.currency] && (
+          <div style={{ color: P.muted }} className="text-[13.5px] mt-0.5">
+            about {fmt(Math.abs(row.amount) * rates[inv.currency].rate)} in {ledgerCcy}
+            <span style={{ color: P.faint }}>
+              {" "}&middot; {rates[inv.currency].rate.toFixed(4)}, {rates[inv.currency].source}
+            </span>
+          </div>
+        )}
 
         <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
           {inv?.invoiceNo ? `${inv.invoiceNo} · ` : ""}
@@ -10664,6 +10766,11 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
   const renderRow = (i, inGroup) => {
     const overdue = i.dueDate && i.dueDate < todayStr();
     /* Not due, and it repeats. See the button below for why this matters. */
+    /* Part paid, so the row says how far along it is. An open bill showing
+       its full amount when half has gone overstates what you owe. */
+    const paidSoFar = Number(i.paidAmount) || 0;
+    const left = Math.max(0, Math.round((Math.abs(i.amount) - paidSoFar) * 100) / 100);
+
     const tooEarly = Boolean(
       i.dueDate && i.dueDate > todayStr() && (i.recurrence === "recurring" || i.frequency),
     );
@@ -10711,7 +10818,20 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
     <div style={{ fontFamily: MONO, color: P.brassText }} className="text-xs">{creditName(data, i.creditId)} credits, no cash moves</div>
           )}
         </button>
-        <div style={{ fontFamily: MONO, color: tone }} className="text-[15px] tabular-nums shrink-0">{fmt(i.amount)}</div>
+        <div className="shrink-0 text-right">
+          {/* What is still owed, with what has gone underneath. A bill
+              showing its full amount when half is paid overstates the debt,
+              and the total at the top of the section is built from the same
+              figure, so they would disagree. */}
+          <div style={{ fontFamily: MONO, color: tone }} className="text-[15px] tabular-nums">
+            {fmt(paidSoFar > 0 ? left : i.amount)}
+          </div>
+          {paidSoFar > 0 && (
+            <div style={{ color: P.faint }} className="text-[12px] tabular-nums">
+              {fmt(paidSoFar)} of {fmt(Math.abs(i.amount))} paid
+            </div>
+          )}
+        </div>
         {i.attachmentId && (
           <button onClick={() => openPreview(i.attachmentId, i.attachmentName, i)} title={`View ${i.attachmentName || "invoice"}`} style={{ color: P.brassText, padding: 6, margin: -6 }}>
     <Paperclip size={13} />
@@ -10935,7 +11055,18 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 
 /* ================= settle confirm: the actuals ================= */
 function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, bankTxns = [] }) {
-  const [amount, setAmount] = useState(String(item.amount));
+  /* What is still owed, which is what the dialog is about.
+
+     A bill half paid should open on the half that is left, not on the original
+     figure. Typing over a number that is already wrong is a small tax on every
+     instalment. */
+  const alreadyPaid = Number(item.paidAmount) || 0;
+  const outstanding = Math.max(0, Math.round((Math.abs(item.amount) - alreadyPaid) * 100) / 100);
+  // Opens on what is left, so an instalment does not start by correcting a
+  // figure that is already wrong.
+  const [amount, setAmount] = useState(
+    String(Math.max(0, Math.round((Math.abs(item.amount) - (Number(item.paidAmount) || 0)) * 100) / 100)),
+  );
   const [date, setDate] = useState(todayStr());
   const [payMethod, setPayMethod] = useState(item.payMethod === "credits" ? "credits" : "cash");
   const [creditId, setCreditId] = useState(item.creditId || null);
@@ -11019,6 +11150,11 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
 
   const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName || bankProof || alreadyInBooks);
 
+  /* Paying less than what is left is a part payment, and the dialog says so
+     rather than letting somebody discover it afterwards. */
+  const partial = parsed > 0 && parsed < outstanding - 0.005;
+  const remaining = partial ? Math.round((outstanding - parsed) * 100) / 100 : 0;
+
   const pickDoc = (file) => {
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
@@ -11089,7 +11225,27 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
             </button>
           )}
 
-          {/* The bank already saw it.
+          {(alreadyPaid > 0 || partial) && (
+          <div
+            style={{ background: P.surface2, borderRadius: 14 }}
+            className="px-3.5 py-3 mt-2 text-[14.5px] leading-relaxed"
+          >
+            {alreadyPaid > 0 && (
+              <div style={{ color: P.muted }}>
+                {fmt(alreadyPaid)} of {fmt(Math.abs(item.amount))} already paid, {fmt(outstanding)} left.
+              </div>
+            )}
+            {partial && (
+              <div style={{ color: P.text }}>
+                This pays part of it. {fmt(remaining)} stays open
+                {item.dueDate ? `, still due ${item.dueDate}` : ""}, and the bill closes when the rest
+                arrives.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* The bank already saw it.
 
               Shown rather than silently accepted, because "why did this let me
               through without a receipt" is a fair question and the answer is a
