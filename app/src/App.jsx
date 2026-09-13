@@ -4870,15 +4870,23 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
            /* The split, under the true figure. Which half is filed matters
               for the tax pack and for anything that reads the books, so it is
               said plainly rather than hidden behind a total. */
+           /* When nothing is outstanding the card says where the figure came
+              from, rather than a bare count. "3 deposits" and "$0.00" together
+              leave you unable to tell a quiet month from a feed that has not
+              arrived, which is the confusion this whole card has been causing. */
            foot: unrecorded.in
              ? `${money(sums.inc)} filed · ${money(unrecorded.inAmount)} still to file, across ${unrecorded.in}`
-             : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}` },
+             : unrecorded.hasBank
+               ? `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, all filed and matched to the bank`
+               : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, from the books only` },
     out: { label: "Money out",
            value: money(trueOut), tone: P.debit,
            delta: unrecorded.out ? null : { now: sums.exp, prev: prevSums?.exp, invert: true },
            foot: unrecorded.out
              ? `${money(sums.exp)} filed · ${money(unrecorded.outAmount)} still to file, across ${unrecorded.out}`
-             : `${outCount} ${outCount === 1 ? "payment" : "payments"}` },
+             : unrecorded.hasBank
+               ? `${outCount} ${outCount === 1 ? "payment" : "payments"}, all filed and matched to the bank`
+               : `${outCount} ${outCount === 1 ? "payment" : "payments"}, from the books only` },
     ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
     ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
     credits: creditsLeft !== null
@@ -8297,6 +8305,19 @@ function Capture({
     return out.slice(0, 3);
   }, [waiting, hasInvoiceLink, contacts, drift, data?.receivables]);
 
+  /* Whether it is your turn.
+
+     The row was gated on a transcript of two messages or fewer, which was
+     true on the day I wrote it and false from the moment the transcript
+     started being stored. Yours has dozens, so it never appeared once.
+
+     The right question is not how long the conversation is, it is whether you
+     are being invited to speak: nothing typed, nothing in flight, and the last
+     thing said was hers. */
+  const lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
+  const showPrompts =
+    quickPrompts.length > 0 && !busy && !input.trim() && lastMsg && lastMsg.role !== "user";
+
   const push = (m) => {
     setMsgs((prev) => [...prev, m]);
     if (threadReady) {
@@ -8775,7 +8796,7 @@ function Capture({
           people to ignore the row. Each of these only appears when it has
           something behind it, at most three, and they go once the
           conversation is underway. */}
-      {quickPrompts.length > 0 && msgs.length <= 2 && !busy && (
+      {showPrompts && (
         <div className="px-3 pt-2 flex flex-wrap gap-1.5">
           {quickPrompts.map((q) => (
             <button
