@@ -1262,50 +1262,6 @@ function Ledger({ onSignOut }) {
     /* eslint-disable-next-line */
   }, [ledgers?.length]);
 
-  /* How far the books are behind the bank, this month.
-
-     An unmatched, unignored line is money that moved and has not been written
-     down. Split by direction so each card can speak for itself. */
-  const unrecordedThisMonth = useMemo(() => {
-    const rows = (bankTxns || []).filter(
-      (b) => b.status !== "matched" && b.status !== "ignored" && String(b.date || "").startsWith(month),
-    );
-    /* The amount, not only the count.
-
-       "16 more on the bank" leaves you to wonder whether that is $50 or
-       $5,000, which is the difference between a tidy-up and a wrong month.
-       September read $700.83 while the bank had taken over $2,000, and the
-       card could not say where the rest was.
-
-       Pending lines are excluded, because the bank has not settled them and
-       they are not part of the month. */
-    const settled = rows.filter((b) => !b.pending);
-    const sum = (list) => list.reduce((n, b) => n + Math.abs(Number(b.amount) || 0), 0);
-    const ins = settled.filter((b) => b.direction === "credit");
-    const outs = settled.filter((b) => b.direction !== "credit");
-
-    /* And what the bank itself says the month was.
-
-       Not the unrecorded part, the whole of it: every settled line that month,
-       matched or not. This is the figure a statement would give you, computed
-       from the same feed the statement comes from, so the card can be checked
-       without opening one. */
-    const all = (bankTxns || []).filter(
-      (b) => !b.pending && b.status !== "ignored" && String(b.date || "").startsWith(month),
-    );
-    const allIn = all.filter((b) => b.direction === "credit");
-    const allOut = all.filter((b) => b.direction !== "credit");
-
-    return {
-      in: ins.length, inAmount: sum(ins),
-      out: outs.length, outAmount: sum(outs),
-      pending: rows.length - settled.length,
-      bankIn: sum(allIn), bankInCount: allIn.length,
-      bankOut: sum(allOut), bankOutCount: allOut.length,
-      hasBank: all.length > 0,
-    };
-  }, [bankTxns, month]);
-
   const morningRan = useRef("");
   const runMorningPass = async () => {
     const today = todayStr();
@@ -1654,6 +1610,59 @@ function Ledger({ onSignOut }) {
     [data, month]
   );
   // ledger line shows CASH flow, entries paid/received in credits don't move money
+  /* How far the books are behind the bank, this month.
+
+     An unmatched, unignored line is money that moved and has not been written
+     down. Split by direction so each card can speak for itself. */
+  const unrecordedThisMonth = useMemo(() => {
+    const rows = (bankTxns || []).filter(
+      (b) => b.status !== "matched" && b.status !== "ignored" && String(b.date || "").startsWith(month),
+    );
+    /* The amount, not only the count.
+
+       "16 more on the bank" leaves you to wonder whether that is $50 or
+       $5,000, which is the difference between a tidy-up and a wrong month.
+       September read $700.83 while the bank had taken over $2,000, and the
+       card could not say where the rest was.
+
+       Pending lines are excluded, because the bank has not settled them and
+       they are not part of the month. */
+    const settled = rows.filter((b) => !b.pending);
+    const sum = (list) => list.reduce((n, b) => n + Math.abs(Number(b.amount) || 0), 0);
+    const ins = settled.filter((b) => b.direction === "credit");
+    const outs = settled.filter((b) => b.direction !== "credit");
+
+    /* And what the bank itself says the month was.
+
+       Not the unrecorded part, the whole of it: every settled line that month,
+       matched or not. This is the figure a statement would give you, computed
+       from the same feed the statement comes from, so the card can be checked
+       without opening one. */
+    const all = (bankTxns || []).filter(
+      (b) => !b.pending && b.status !== "ignored" && String(b.date || "").startsWith(month),
+    );
+
+    // Entries this month that no bank line is paired with.
+    const paired = new Set((bankTxns || []).map((b) => b.matchedTxId).filter(Boolean));
+    const bookOnly = (monthTx || []).filter((t) => !isCredits(t) && !paired.has(t.id));
+    const allIn = all.filter((b) => b.direction === "credit");
+    const allOut = all.filter((b) => b.direction !== "credit");
+
+    return {
+      in: ins.length, inAmount: sum(ins),
+      out: outs.length, outAmount: sum(outs),
+      pending: rows.length - settled.length,
+      bankIn: sum(allIn), bankInCount: allIn.length,
+      bankOut: sum(allOut), bankOutCount: allOut.length,
+      hasBank: all.length > 0,
+      /* Entries with no bank line behind them: cash, credits, anything typed
+         in that the bank never saw. Added to the bank's own figure, because
+         the bank cannot know about them and they are still money that moved. */
+      bookOnlyIn: bookOnly.filter((t) => t.type === "income").reduce((n, t) => n + Math.abs(t.amount), 0),
+      bookOnlyOut: bookOnly.filter((t) => t.type === "expense").reduce((n, t) => n + Math.abs(t.amount), 0),
+    };
+  }, [bankTxns, month, monthTx]);
+
   const sums = useMemo(() => {
     const cash = monthTx.filter((t) => !isCredits(t));
     const inc = cash.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
@@ -4763,8 +4772,18 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
   /* What actually moved this month: filed entries, plus bank lines nothing
      has filed yet. They cannot overlap, because an unrecorded line is one no
      entry accounts for. */
-  const trueIn = unrecorded.in ? unrecorded.bankIn : sums.inc;
-  const trueOut = unrecorded.out ? unrecorded.bankOut : sums.exp;
+  /* What moved this month: the bank, plus anything recorded that never
+     touched it.
+
+     The bank alone would drop cash and anything paid from a credit pool. The
+     books alone miss whatever has not been filed. Adding an entry that has a
+     bank line behind it would count the same money twice, so those are left
+     to the bank side, which is where the date the money actually moved comes
+     from.
+
+     With no feed at all, the books are the only answer there is. */
+  const trueIn = unrecorded.hasBank ? unrecorded.bankIn + (unrecorded.bookOnlyIn || 0) : sums.inc;
+  const trueOut = unrecorded.hasBank ? unrecorded.bankOut + (unrecorded.bookOnlyOut || 0) : sums.exp;
   const trueNet = trueIn - trueOut;
 
   const cards = {
@@ -4874,19 +4893,34 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
               from, rather than a bare count. "3 deposits" and "$0.00" together
               leave you unable to tell a quiet month from a feed that has not
               arrived, which is the confusion this whole card has been causing. */
+           /* Matched is not the same as equal.
+
+              Everything being paired says every bank line has an entry beside
+              it. It says nothing about whether the two months add to the same
+              figure, and they often do not: a deposit dated 31 August paired
+              with an entry dated 1 September sits in different months on each
+              side, and both are correctly matched.
+
+              So the totals are compared whether or not anything is
+              outstanding. Saying "all matched" and stopping there is how a
+              $1,300 gap stayed invisible while the card looked healthy. */
            foot: unrecorded.in
              ? `${money(sums.inc)} filed · ${money(unrecorded.inAmount)} still to file, across ${unrecorded.in}`
-             : unrecorded.hasBank
-               ? `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, all filed and matched to the bank`
-               : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, from the books only` },
+             : !unrecorded.hasBank
+               ? `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, from the books only`
+               : Math.abs(unrecorded.bankIn - sums.inc) > 0.01
+                 ? `Bank shows ${money(unrecorded.bankIn)} this month, ${money(Math.abs(unrecorded.bankIn - sums.inc))} apart. Usually a date on the other side of a month end.`
+                 : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, agrees with the bank` },
     out: { label: "Money out",
            value: money(trueOut), tone: P.debit,
            delta: unrecorded.out ? null : { now: sums.exp, prev: prevSums?.exp, invert: true },
            foot: unrecorded.out
              ? `${money(sums.exp)} filed · ${money(unrecorded.outAmount)} still to file, across ${unrecorded.out}`
-             : unrecorded.hasBank
-               ? `${outCount} ${outCount === 1 ? "payment" : "payments"}, all filed and matched to the bank`
-               : `${outCount} ${outCount === 1 ? "payment" : "payments"}, from the books only` },
+             : !unrecorded.hasBank
+               ? `${outCount} ${outCount === 1 ? "payment" : "payments"}, from the books only`
+               : Math.abs(unrecorded.bankOut - sums.exp) > 0.01
+                 ? `Bank shows ${money(unrecorded.bankOut)} this month, ${money(Math.abs(unrecorded.bankOut - sums.exp))} apart. Usually a date on the other side of a month end.`
+                 : `${outCount} ${outCount === 1 ? "payment" : "payments"}, agrees with the bank` },
     ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
     ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
     credits: creditsLeft !== null
@@ -8274,13 +8308,17 @@ function Capture({
         icon: <Inbox size={13} />,
       });
     }
-    if (hasInvoiceLink || (contacts || []).length) {
-      out.push({
-        label: "Email an invoice link",
-        ask: "Send an invoice request to one of my contractors.",
-        icon: <Mail size={13} />,
-      });
-    }
+    /* Always offered.
+
+       It was conditional on already having a link or a contact, which is
+       exactly backwards: the person who has neither is the one who needs the
+       prompt, and the card creates the link when there is none. A suggestion
+       that only appears once you no longer need it is not a suggestion. */
+    out.push({
+      label: "Email an invoice link",
+      ask: "Send an invoice request. Ask me who it should go to if you do not know.",
+      icon: <Mail size={13} />,
+    });
     if (drift) {
       out.push({
         label: "Explain the bank gap",
