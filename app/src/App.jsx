@@ -4990,8 +4990,22 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
   };
 
   return (
-    <Modal onClose={onClose} size="lg" title={`${label}, ${monthLabel(month)}`}>
-      <ModalBody>
+    /* A full view, with the scrolling inside it.
+
+       The panel had no height of its own, so forty rows simply made the page
+       taller and the total, the header and the close button all went with it.
+       You could not tell whether the list continued or had run out.
+
+       It is now a sheet: it takes the height available, the header stays, and
+       only the rows move. */
+    <Modal
+      onClose={onClose}
+      size="lg"
+      title={`${label}, ${monthLabel(month)}`}
+      panelClass="flex flex-col"
+      panelStyle={{ maxHeight: "88vh" }}
+    >
+      <ModalBody className="overflow-y-auto min-h-0 flex-1">
         {/* The detail proves itself against the card.
 
             These two figures are computed by different code from the same
@@ -5006,9 +5020,9 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
             style={{ background: P.debit + "14", color: P.debit, borderRadius: 14 }}
             className="p-3.5 mb-3 text-[14px] leading-relaxed"
           >
-            These rows come to {fmt(total)} and the card says {fmt(cardValue)}, a difference of{" "}
-            {fmt(Math.abs(total - cardValue))}. One of the two is wrong. Nothing here is filtered by
-            anything you have set, so this is a fault worth reporting rather than something to adjust.
+            These rows come to {fmt(total)} and the card says {fmt(cardValue)}. One of the two is wrong,
+            and nothing here is filtered by anything you set, so it is a fault rather than something to
+            adjust.
           </div>
         )}
 
@@ -5035,7 +5049,7 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
 
         <Group
           title="Through the bank"
-          why="Lines the bank fetched. These are the dates and amounts the money actually moved on."
+          why="What the bank saw."
           rows={bankRows}
           tone={isIn ? P.credit : P.debit}
           describe={(b) => b.description || "bank line"}
@@ -5044,7 +5058,7 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
 
         <Group
           title="Not through the bank"
-          why="Cash, credits, and anything entered by hand that no bank line accounts for. Real money, invisible to the feed."
+          why="Cash and hand-entered. The bank never saw these."
           rows={bookOnly}
           describe={(t) => `${t.description || t.category}${t.category && t.description ? ` · ${t.category}` : ""}`}
           amountOf={(t) => t.amount}
@@ -5052,7 +5066,7 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
 
         <Group
           title="Still to file"
-          why="On the bank and not yet in the books. Already counted above; consolidating is what gives them a category."
+          why="Counted above, but with no category yet. Consolidating files them."
           rows={unfiled}
           describe={(b) => b.description || "bank line"}
           amountOf={(b) => b.amount}
@@ -5072,7 +5086,7 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
 
         <Group
           title="Not settled yet"
-          why="On the bank and still pending, so they are not counted in the figure above. They will be once the bank settles them."
+          why="Not counted yet. The bank has not settled them."
           rows={pendingRows}
           describe={(b) => b.description || "bank line"}
           amountOf={(b) => b.amount}
@@ -5169,8 +5183,14 @@ function ObligationTrail({ kind, rows, onClose, openPreview }) {
   };
 
   return (
-    <Modal onClose={onClose} size="lg" title={isAR ? "Owed to you" : "You owe them"}>
-      <ModalBody>
+    <Modal
+      onClose={onClose}
+      size="lg"
+      title={isAR ? "Owed to you" : "You owe them"}
+      panelClass="flex flex-col"
+      panelStyle={{ maxHeight: "88vh" }}
+    >
+      <ModalBody className="overflow-y-auto min-h-0 flex-1">
         {/* Same as the figure trail: the total is what you are reading the
             rows against, so it does not scroll away from them. */}
         <div
@@ -5190,18 +5210,18 @@ function ObligationTrail({ kind, rows, onClose, openPreview }) {
 
         <Group
           title="Overdue"
-          why={isAR ? "Past their date and not received. These are the ones to chase." : "Past their date and not paid."}
+          why={isAR ? "Chase these." : "Past their date."}
           list={overdue}
           tone={P.debit}
         />
         <Group
           title="Within a fortnight"
-          why="Due in the next fourteen days."
+          why="Next fourteen days."
           list={within}
         />
         <Group
           title="Later"
-          why="Further out, or with no date on them."
+          why="Further out, or undated."
           list={later}
         />
 
