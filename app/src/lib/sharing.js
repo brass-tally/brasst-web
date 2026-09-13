@@ -443,31 +443,42 @@ export async function listLinkInvites(ledgerId) {
       });
     }
 
-    /* And whoever has actually sent something in, however they got the link. */
-    const { data: subs } = await supabase
-      .from("inbound_invoices")
-      .select("link_id, party, contact_email, submitted_at")
-      .eq("ledger_id", ledgerId)
-      .order("submitted_at", { ascending: false });
+    /* And every submission, listed rather than counted.
 
-    const seen = new Set(rows.map((r) => (r.email || "").toLowerCase()));
-    const byPerson = new Map();
-    for (const sub of subs || []) {
-      const key = (sub.contact_email || sub.party || "").toLowerCase();
-      if (!key || seen.has(key)) continue;
-      const at = byPerson.get(key);
-      if (at) { at.submissions += 1; continue; }
-      byPerson.set(key, {
-        id: `sub:${key}`, linkId: sub.link_id,
+       Submissions from an address that had been invited were dropped, because
+       I keyed on the person. So "1 invited, 7 received" showed one row: seven
+       invoices collapsed into the invitation that produced them, and the panel
+       could not answer the only question it exists to answer, which is what
+       came in.
+
+       Each submission is its own row now. An invitation and the invoices that
+       answered it are different things and belong on different lines. */
+    const { data: subs2 } = await supabase
+      .from("inbound_invoices")
+      .select("id, link_id, party, contact_email, amount, currency, status, submitted_at, invoice_no")
+      .eq("ledger_id", ledgerId)
+      .order("submitted_at", { ascending: false })
+      .limit(60);
+
+    const byLink = new Map(rows.map((r) => [r.linkId, r]));
+    for (const sub of subs2 || []) {
+      rows.push({
+        id: `sub:${sub.id}`,
+        linkId: sub.link_id,
+        kind: "submission",
         email: sub.contact_email || sub.party,
         name: sub.party,
+        invoiceNo: sub.invoice_no || undefined,
+        amount: Number(sub.amount) || 0,
+        currency: sub.currency || undefined,
+        status: sub.status,
+        // Which request it answers, when it came through a personal link.
+        reference: byLink.get(sub.link_id)?.reference,
         sentAt: sub.submitted_at,
-        active: linkById.get(sub.link_id)?.active ?? true,
-        submissions: 1,
+        active: true,
         invited: false,
       });
     }
-    rows.push(...byPerson.values());
 
     rows.sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)));
     return rows;

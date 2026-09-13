@@ -15,6 +15,7 @@ import { parseEntryText, normalizeDraft, coerceAmount, coerceDate, todayLocal } 
 import { deriveTreatment, summarise, TAX_CODES, TAX_POLICY, estimateTaxFromGross } from "./lib/tax";
 import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
+import { lookupRate } from "./lib/fx";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
 import { isReadOnly } from "./lib/access";
@@ -214,6 +215,12 @@ function ConfirmHost() {
   const [value, setValue] = useState("");
   const confirmRef = useRef(null);
 
+  /* A dialog that suggests a figure should arrive with it in the box, so
+     accepting the suggestion costs nothing and changing it costs one edit. */
+  useEffect(() => {
+    if (req?.prefill != null && req.prefill !== "") setValue(String(req.prefill));
+  }, [req]);
+
   useEffect(() => {
     confirmHandler = setReq;
     return () => { confirmHandler = null; };
@@ -301,6 +308,17 @@ function ConfirmHost() {
               style={{ background: P.surface2, color: P.text, borderRadius: 13, fontFamily: MONO }}
               className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-3"
             />
+          )}
+
+          {/* Where the figure came from, small, under the field.
+
+              A prefilled number with no provenance is a number somebody has to
+              defend from memory later. Two words and a date are enough to make
+              it checkable. */}
+          {req.amount && req.note && (
+            <p style={{ color: P.faint }} className="text-[12.5px] mt-1.5">
+              {req.note}
+            </p>
           )}
         </div>
       </ModalBody>
@@ -6065,17 +6083,44 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     }
 
     if (foreign(inv)) {
+      /* Fetched, not asked for.
+
+         Typing a rate is the moment somebody reaches for whatever Google
+         shows, which is a retail quote with a spread in it. The Bank of
+         Canada figure is the one the CRA accepts for reporting, so it is
+         offered filled in, with its source and date under the field, and it
+         can be overwritten by anyone who knows better. */
+      const fx = await lookupRate(inv.currency, ledgerCcy);
+      const suggested = fx ? Math.abs(inv.amount) * fx.rate : null;
+
       const converted = await askAmount({
         title: `${inv.party} invoiced ${inv.currency} ${fmt(inv.amount)}`,
-        body: `Your books are in ${ledgerCcy}. What is this worth in ${ledgerCcy}? The original stays on the record either way.`,
-        placeholder: fmt(inv.amount),
+        body: fx
+          ? `Your books are in ${ledgerCcy}. This is today's rate, ${fx.rate.toFixed(4)}, and you can change the figure if you were charged a different one.`
+          : `Your books are in ${ledgerCcy}. What is this worth in ${ledgerCcy}? The original stays on the record either way.`,
+        placeholder: fmt(suggested ?? inv.amount),
+        prefill: suggested != null ? suggested.toFixed(2) : "",
+        note: fx ? `${fx.source}${fx.on ? `, ${fx.on}` : ""}` : "",
         confirmLabel: "Add it",
       });
       if (converted == null) return;
+      /* The original, the rate and the result.
+
+         It recorded the original amount and nothing else, so a year later
+         nobody could check the arithmetic or explain the figure to an
+         accountant. The rate is what makes a conversion auditable, and it
+         costs one division to work out. */
+      const rate = inv.amount ? converted / Math.abs(inv.amount) : 0;
+      /* Where the rate came from goes on the record with it. A conversion
+         whose source is unknown is a number somebody has to defend from
+         memory. */
+      const via = fx && Math.abs(rate - fx.rate) < 0.00005 ? `, ${fx.source}` : "";
       inv = {
         ...inv,
         amount: converted,
-        description: `${inv.description || "Invoice"} (${inv.currency} ${fmt(inv.amount)})`,
+        description:
+          `${inv.description || "Invoice"} ` +
+          `(${inv.currency} ${fmt(Math.abs(inv.amount))} at ${rate.toFixed(4)}${via} = ${ledgerCcy} ${fmt(converted)})`,
       };
     }
 
@@ -6794,12 +6839,27 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                   {iv.email}
                                 </span>
                                 <span style={{ color: P.faint }} className="text-[13px]">
-                                  {iv.invited ? "invited" : "sent in"} {String(iv.sentAt).slice(0, 10)}
-                                  {iv.submissions > 0 ? ` · ${iv.submissions} received` : " · nothing yet"}
-                                  {iv.active ? "" : " · revoked"}
+                                  {/* An invitation and an invoice are different
+                                      things, so they read differently. A request
+                                      says when it went and whether it has been
+                                      answered; an arrival says what it was. */}
+                                  {iv.kind === "submission"
+                                    ? [
+                                        iv.invoiceNo,
+                                        `${iv.currency && iv.currency !== ledgerCcy ? `${iv.currency} ` : ""}${fmt(iv.amount)}`,
+                                        String(iv.sentAt).slice(0, 10),
+                                        iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside",
+                                      ].filter(Boolean).join(" · ")
+                                    : `${iv.reference ? "" : "invited "}${String(iv.sentAt).slice(0, 10)}` +
+                                      (iv.submissions > 0 ? ` · ${iv.submissions} received` : " · nothing back yet") +
+                                      (iv.active ? "" : " · revoked")}
                                 </span>
                               </span>
-                              {iv.active ? (
+                              {iv.kind === "submission" ? (
+                                <span style={{ color: P.faint }} className="text-[13px] shrink-0">
+                                  {iv.reference || "general link"}
+                                </span>
+                              ) : iv.active ? (
                                 <button
                                   onClick={() => revokeInvite(iv)}
                                   disabled={busy === iv.id}
