@@ -11179,6 +11179,25 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
     return new Set(all.map((o) => o.settledTxId).filter(Boolean));
   }, [data?.receivables, data?.payables]);
 
+  /* Matches you have already rejected.
+
+     An entry offered once and waved away should not come back every time the
+     dialog opens. Kept against this obligation, so dismissing a wrong match
+     for one bill does not hide a right one for another. */
+  const [notThis, setNotThis] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(`bt-not-match:${item.id}`) || "[]")); }
+    catch { return new Set(); }
+  });
+
+  const dismissMatch = (txId) => {
+    setNotThis((prev) => {
+      const next = new Set(prev);
+      next.add(txId);
+      try { localStorage.setItem(`bt-not-match:${item.id}`, JSON.stringify([...next])); } catch { /* fine */ }
+      return next;
+    });
+  };
+
   const alreadyInBooks = useMemo(() => {
     const owed = Math.abs(Number(item?.amount) || 0);
     const want = Math.abs(Number(parsed) || 0);
@@ -11189,6 +11208,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
     return (data?.transactions || []).find((t) => {
       if (t.type !== wantType) return false;
       if (claimedTxIds.has(t.id)) return false;
+      if (notThis.has(t.id)) return false;
       const got = Math.abs(Number(t.amount) || 0);
       const matchesEntered = want && Math.abs(got - want) <= 0.005;
       const matchesInvoice = owed && owed - got >= -0.005 && owed - got <= tol;
@@ -11196,7 +11216,23 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
       if (!t.date || !date) return true;
       return Math.abs(new Date(t.date) - new Date(date)) <= 14 * 864e5;
     }) || null;
-  }, [data?.transactions, claimedTxIds, item?.amount, parsed, date, kind]);
+  }, [data?.transactions, claimedTxIds, item?.amount, parsed, date, kind, notThis]);
+
+  /* Does the entry name the same party as the bill?
+
+     The amount matching is what finds a candidate, and the amount alone is a
+     weak signal: two payments of $1,600 in one month is ordinary. An entry
+     for Bilal Shafi offered against a bill from Syed Belal is almost
+     certainly the wrong one, and the dialog should say so rather than present
+     it with confidence. */
+  const matchPartyAgrees = useMemo(() => {
+    if (!alreadyInBooks) return true;
+    const norm = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const want = norm(item.party);
+    const text = `${norm(alreadyInBooks.description)} ${norm(alreadyInBooks.party)}`;
+    if (!want || !text.trim()) return true;
+    return want.split(" ").filter((w) => w.length >= 4).some((w) => text.includes(w));
+  }, [alreadyInBooks, item?.party]);
 
   const bankProof = useMemo(() => {
     if (kind !== "receivables") return null;
@@ -11208,6 +11244,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
     const tol = arrivalTolerance(owed);
     return (bankTxns || []).find((b) => {
       if (b.direction !== "credit" || b.status === "matched" || b.status === "ignored") return false;
+      if (notThis.has(b.id)) return false;
       const got = Math.abs(Number(b.amount) || 0);
       const shortOfEntered = Math.abs(got - want) <= 0.005;
       const shortOfInvoice = owed - got >= -0.005 && owed - got <= tol;
@@ -11215,7 +11252,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
       if (!b.date || !date) return true;
       return Math.abs(new Date(b.date) - new Date(date)) <= 14 * 864e5;
     }) || null;
-  }, [kind, parsed, date, bankTxns]);
+  }, [kind, parsed, date, bankTxns, notThis]);
 
   const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName || bankProof || alreadyInBooks);
 
@@ -11364,9 +11401,34 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
               </span>
               <span style={{ color: P.muted }} className="text-[14px]">
                 {alreadyInBooks.description || alreadyInBooks.category} on {alreadyInBooks.date},{" "}
-                {fmt(Math.abs(alreadyInBooks.amount))}. Marking received will point this invoice at that
+                {fmt(Math.abs(alreadyInBooks.amount))}.{" "}
+                {/* The verb follows the direction. This said "marking
+                    received" on a bill you are paying, which is the wrong
+                    half of the transaction. */}
+                {kind === "receivables" ? "Marking received" : "Marking paid"} will point this at that
                 entry rather than adding a second one.
               </span>
+
+              {/* The amount found it; the amount alone is a weak signal.
+
+                  Two payments of the same figure in one month is ordinary, so
+                  an entry naming a different party is probably a different
+                  payment. Said plainly, above the button that dismisses it. */}
+              {!matchPartyAgrees && (
+                <span style={{ color: P.debit }} className="text-[14px] block mt-1.5">
+                  That entry does not mention {item.party}, so it may well be a different payment of the
+                  same amount.
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={() => dismissMatch(alreadyInBooks.id)}
+                style={{ color: P.brassText }}
+                className="text-[14px] underline decoration-dotted underline-offset-2 mt-1.5 block"
+              >
+                Not this one
+              </button>
               {Math.abs(Math.abs(alreadyInBooks.amount) - parsed) > 0.005 && (
                 <button
                   onClick={() => setAmount(String(Math.abs(alreadyInBooks.amount)))}
@@ -11409,6 +11471,16 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
                   {(bankProof.description || "bank line").slice(0, 46)}. That is the evidence, so no receipt
                   is needed, and the two will be paired.
                 </span>
+                {/* Same reasoning as the entry above: found by amount, and an
+                    amount is a weak signal on its own. */}
+                <button
+                  type="button"
+                  onClick={() => dismissMatch(bankProof.id)}
+                  style={{ color: P.brassText }}
+                  className="text-[14px] underline decoration-dotted underline-offset-2 mt-1.5 block"
+                >
+                  Not this one
+                </button>
               </span>
             </div>
           )}
