@@ -142,8 +142,9 @@ export function invoiceSubmittedEmail({ business, party, amount, description, in
  * cannot be clicked has to still be readable enough to type.
  */
 export function invoiceInviteEmail(
-  { business, fromName, note, link }: {
-    business: string; fromName?: string | null; note?: string | null; link: string;
+  { business, fromName, note, link, reference }: {
+    business: string; fromName?: string | null; note?: string | null;
+    link: string; reference?: string | null;
   },
 ) {
   const brass = "#A9620A";
@@ -152,60 +153,54 @@ export function invoiceInviteEmail(
   const muted = "#5A534E";
   const paper = "#FAF9F7";
 
-  /* The button goes first, above everything that repeats.
+  /* Short, and different every time.
 
      Gmail folds the part of a message that matches earlier ones behind a
-     "..." and calls it trimmed content. Our invitation is close to identical
-     every time it goes out, so the tail was being folded, and the button was
-     in the tail. A supplier opened an email with no button in it and no
-     indication that anything had been hidden.
+     "...". Reordering did not fix it, because the whole message was identical
+     between invitations except a link buried in the middle: heading, button
+     label and two paragraphs of explanation, the same bytes every send. So
+     almost everything was foldable, and the link folded with it.
 
-     Nothing above the action repeats enough to be trimmed, because the
-     business name and the link are in it. The explanation and the footer sit
-     below, where folding them costs nothing. */
+     Two changes. The reference is in the first line, so no two invitations
+     start the same way and there is nothing for the comparison to latch onto.
+     And the explanation is gone, because a contractor does not need two
+     paragraphs to understand "send your invoice here".
+
+     Five lines. There is not enough left to hide. */
+  const tag = reference ? `${reference} · ` : "";
+
   return `<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
-<title>Send your invoice to ${business}</title></head>
+<title>${tag}Send your invoice to ${business}</title></head>
 <body style="margin:0;padding:0;background:${paper};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
 <tr><td align="center">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:32px;
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:28px;
            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
     <tr><td>
-      <div style="font-size:15px;font-weight:600;color:${brass};margin-bottom:14px;">Brasstally</div>
-      <h1 style="margin:0 0 16px;font-size:23px;line-height:1.3;color:${ink};font-weight:600;">
-        Send your invoice to ${business}
+      <h1 style="margin:0 0 6px;font-size:21px;line-height:1.3;color:${ink};font-weight:600;">
+        ${fromName ? `${fromName} at ${business}` : business} needs your invoice
       </h1>
+      ${reference ? `<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${brass};margin-bottom:16px;">${reference}</div>` : ""}
 
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:14px;">
+      ${note ? `<p style="margin:0 0 16px;font-size:15.5px;line-height:1.55;color:${ink};">${note}</p>` : ""}
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
         <tr><td style="border-radius:999px;background:${fill};">
           <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
-            Send your invoice
+            Send it now
           </a>
         </td></tr>
       </table>
 
-      <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">
-        <a href="${link}" style="color:${brass};font-weight:600;text-decoration:underline;word-break:break-all;">
-          ${link}
-        </a>
+      <p style="margin:0 0 14px;font-size:14.5px;line-height:1.5;">
+        <a href="${link}" style="color:${brass};text-decoration:underline;word-break:break-all;">${link}</a>
       </p>
 
-      ${note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="background:#F5F3F0;border-radius:14px;padding:14px 16px;margin-bottom:18px;">
-        <tr><td style="font-size:15px;line-height:1.55;color:${ink};">${note}</td></tr>
-      </table>` : ""}
-
-      <p style="margin:0 0 14px;font-size:16px;line-height:1.6;color:${muted};">
-        ${fromName ? `${fromName} at ${business}` : business} asked you to send invoices through this link. It
-        takes a minute, you can attach the PDF, and you get a copy of what you sent.
-      </p>
-
-      <p style="margin:0;font-size:14px;line-height:1.55;color:#8A827B;">
-        This is not a payment page and nothing is charged. It sends the details straight to their bookkeeping
-        so the invoice does not sit in an inbox.
+      <p style="margin:0;font-size:13.5px;line-height:1.5;color:#8A827B;">
+        Attach the PDF if you have one. Nothing is charged and you get a copy.
       </p>
     </td></tr>
   </table>

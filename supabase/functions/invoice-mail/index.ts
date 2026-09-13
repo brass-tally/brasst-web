@@ -432,12 +432,16 @@ Deno.serve(async (req) => {
 
       const r = await sendMail(
         to,
-        `Send your invoice to ${business}`,
+        /* The reference is in the subject so two invitations are two
+           conversations. Gmail threads by subject and sender, and a thread is
+           what makes it start folding repeated content in the first place. */
+        reference ? `${reference}: send your invoice to ${business}` : `Send your invoice to ${business}`,
         invoiceInviteEmail({
           business,
           fromName: caller.user.email ? caller.user.email.split("@")[0] : null,
           note: note || null,
           link: linkFor(String(target.token), target.slug),
+          reference,
         }),
         caller.user.email ?? undefined,
       );
