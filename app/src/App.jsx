@@ -14331,10 +14331,44 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
       institution: metadata?.institution?.name || null,
     });
     setResumable(false);
+    const list = await refreshConns();
+
+    /* Fetch, rather than ask them to.
+
+       Restoring the sign-in and then saying "tap Sync now" asks somebody to do
+       the only thing they reconnected for. Worse, the daily limit I added to
+       keep Plaid calls down would then skip the automatic refresh, because an
+       attempt had already been recorded that day, so a freshly reconnected
+       bank stayed empty until tomorrow.
+
+       A reconnect is a person asking for their data, which outranks a limit
+       meant for background work. The marker is cleared so the morning pass is
+       not confused by it either. */
+    try {
+      const morning = bank.lastMorningBoundary().toISOString().slice(0, 10);
+      localStorage.removeItem(`bt-bank-pass:${morning}`);
+    } catch { /* no store, nothing to clear */ }
+
+    setNotice(res?.reconnected ? "Sign-in restored. Fetching what you missed." : "Connected. Fetching your transactions.");
+
+    let pulled = 0;
+    for (const c of list || []) {
+      if (res?.connection_id && c.id !== res.connection_id) continue;
+      try {
+        const out = await bank.plaid("sync", { connection_id: c.id });
+        pulled += Number(out?.added) || 0;
+      } catch (e) {
+        setErr(e?.message || "Connected, but the first fetch failed. Try Sync now.");
+      }
+    }
+
     await refreshConns();
-    setNotice(res?.reconnected
-      ? "Bank sign-in restored. Tap Sync now to pick up everything since the last sync."
-      : "Bank connected. Tap Sync now to pull transactions into review.");
+    onSynced?.();
+    setNotice(
+      pulled > 0
+        ? `${pulled} ${pulled === 1 ? "line" : "lines"} fetched. They are in review, nothing is in your books yet.`
+        : "Up to date. Nothing new since the last sync.",
+    );
   };
 
   const handleLinkExit = (exitErr, metadata) => {
