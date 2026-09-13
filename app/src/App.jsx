@@ -1315,6 +1315,7 @@ function Ledger({ onSignOut }) {
       matched: auto.length,
       created: 0,
       removed: 0,
+      // truncation-ok: a payload cap for the agent, not a rendered list.
       items: auto.slice(0, 300).map((p) => ({
         kind: "matched", date: p.bank.date, amount: p.bank.amount,
         description: p.bank.description || "bank line", detail: "paired automatically",
@@ -1512,7 +1513,8 @@ function Ledger({ onSignOut }) {
       addNotification(notify.success(`Money received: ${fmt(total)}`));
       setChatNudge({
         at: Date.now(),
-        received: arrived.slice(0, 5).map((b) => ({ id: b.id, description: b.description, amount: b.amount, date: b.date })),
+        // truncation-ok: a nudge names a few examples, the count sits beside it.
+      received: arrived.slice(0, 5).map((b) => ({ id: b.id, description: b.description, amount: b.amount, date: b.date })),
         total,
       });
       setChatUnread(true);
@@ -1697,6 +1699,19 @@ function Ledger({ onSignOut }) {
       bookOnlyOut: bookOnly.filter((t) => t.type === "expense").reduce((n, t) => n + Math.abs(t.amount), 0),
     };
   }, [bankTxns, month, monthTx]);
+
+  /* What the cards are actually displaying, in one place, so the detail view
+     can be checked against it. Two copies of an arithmetic is how they drift;
+     one copy read by both is how they cannot. */
+  const cardFigures = useMemo(() => {
+    const u = unrecordedThisMonth;
+    if (!u?.hasBank) return { in: sums.inc, out: sums.exp, net: sums.inc - sums.exp };
+    const i = u.bankIn + (u.bookOnlyIn || 0);
+    const o = u.bankOut + (u.bookOnlyOut || 0);
+    return { in: i, out: o, net: i - o };
+    /* eslint-disable-next-line */
+  }, [unrecordedThisMonth, sums]);
+
 
   const sums = useMemo(() => {
     const cash = monthTx.filter((t) => !isCredits(t));
@@ -2362,6 +2377,7 @@ function Ledger({ onSignOut }) {
         deltaBefore: balance.delta,
         unexplainedBefore: recon?.unexplained ?? null,
         note: anchor ? `statement import, anchored to ${fmt(anchor.amount)} on ${anchor.date}` : "statement import",
+        // truncation-ok: a payload cap for the agent, not something rendered.
         items: recs.slice(0, 200).map((t) => ({
           kind: "created", date: t.date, amount: t.amount,
           description: t.description || t.category,
@@ -2654,6 +2670,7 @@ function Ledger({ onSignOut }) {
                               }}
                               className="flex items-center justify-center shrink-0 text-[13px] font-semibold"
                             >
+                              {/* truncation-ok: initials, two letters by design. */}
                               {l.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()}
                             </span>
                             <span className="flex-1 min-w-0">
@@ -3158,6 +3175,14 @@ function Ledger({ onSignOut }) {
           transactions={data.transactions}
           bankTxns={bankTxns}
           obligations={explaining === "ar" ? data.receivables : data.payables}
+          /* The figure the card is showing, so the detail can check itself
+             against it rather than both being believed separately. */
+          cardValue={
+            explaining === "in" ? cardFigures.in
+              : explaining === "out" ? cardFigures.out
+              : explaining === "net" ? cardFigures.net
+              : null
+          }
           ledgerCcy={data.ledger.currency || "CAD"}
           openPreview={openPreview}
           onClose={() => setExplaining(null)}
@@ -4234,7 +4259,9 @@ function MatchView({
                   {plan.uncleared.length === 0 && (
                     <EmptyState compact icon={Check} title="Every entry has cleared" />
                   )}
-                  {plan.uncleared.slice(0, 60).map((t) => (
+                  {/* All of them. A cap here means an entry that never cleared is
+                      invisible to the person trying to clear it. */}
+                  {plan.uncleared.map((t) => (
                     <BookLine key={t.id} t={t} selected={pickedTx === t.id} onSelect={() => setPickedTx(pickedTx === t.id ? null : t.id)} />
                   ))}
                 </div>
@@ -4846,7 +4873,7 @@ function Delta({ now, prev, invert }) {
    Grouped rather than listed flat, because "here are 47 rows" is not an
    explanation. The groups are the sentence: through the bank, not through it,
    still to file. */
-function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerCcy, onClose, openPreview }) {
+function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerCcy, cardValue, onClose, openPreview }) {
   /* Owed and owing follow a different trail.
 
      Money in and out are built from movements, so the question is where the
@@ -4885,12 +4912,32 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
   );
   const unfiled = bankRows.filter((b) => b.status !== "matched");
 
+  /* Lines the bank has not settled.
+
+     These were filtered out and never mentioned, so the newest two days of
+     activity simply were not there: $2,123.00 of it, on the days you would
+     most want to check. Excluding them from the total is right, because the
+     bank has not committed to them and the figure would move under you.
+     Excluding them from the list is not, because their absence looks like
+     missing data. */
+  const pendingRows = (bankTxns || []).filter(
+    (b) => b.pending && inMonth(b.date)
+      && (isNet || (isIn ? b.direction === "credit" : b.direction !== "credit")),
+  );
+
   const sum = (rows, key = "amount") =>
     rows.reduce((n, r) => n + Math.abs(Number(r[key]) || 0), 0);
 
   const signed = (rows, isCredit) => rows.reduce(
     (n, r) => n + (isCredit(r) ? Math.abs(Number(r.amount) || 0) : -Math.abs(Number(r.amount) || 0)), 0,
   );
+
+  // The most recent line the bank has given us, across the whole feed.
+  const newestLine = (bankTxns || [])
+    .map((b) => b.date)
+    .filter(Boolean)
+    .sort()
+    .pop() || "";
 
   const total = isNet
     ? signed(bankRows, (b) => b.direction === "credit") + signed(bookOnly, (t) => t.type === "income")
@@ -4910,7 +4957,10 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
           </span>
         </div>
         <p style={{ color: P.faint }} className="text-[13.5px] mb-1">{why}</p>
-        {rows.slice(0, 40).map((r) => (
+        {/* Every row. The modal scrolls; a detail view that hides rows is
+            not a detail view, and "and 16 more" is the answer to a question
+            nobody asked. */}
+        {rows.map((r) => (
           <div
             key={r.id}
             className="flex items-baseline justify-between gap-3 py-1"
@@ -4927,11 +4977,7 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
             </span>
           </div>
         ))}
-        {rows.length > 40 && (
-          <p style={{ color: P.faint }} className="text-[13px] pt-1">
-            and {rows.length - 40} more
-          </p>
-        )}
+
       </div>
     );
   };
@@ -4939,6 +4985,26 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
   return (
     <Modal onClose={onClose} size="lg" title={`${label}, ${monthLabel(month)}`}>
       <ModalBody>
+        {/* The detail proves itself against the card.
+
+            These two figures are computed by different code from the same
+            data, so they agree only if both filters agree. When they do not,
+            one of them is wrong and the reader deserves to know which screen
+            to distrust rather than finding out from a statement weeks later.
+
+            It is a check that runs in front of the person who cares, which is
+            the only kind that cannot be forgotten. */}
+        {cardValue != null && Math.abs(total - cardValue) > 0.01 && (
+          <div
+            style={{ background: P.debit + "14", color: P.debit, borderRadius: 14 }}
+            className="p-3.5 mb-3 text-[14px] leading-relaxed"
+          >
+            These rows come to {fmt(total)} and the card says {fmt(cardValue)}, a difference of{" "}
+            {fmt(Math.abs(total - cardValue))}. One of the two is wrong. Nothing here is filtered by
+            anything you have set, so this is a fault worth reporting rather than something to adjust.
+          </div>
+        )}
+
         <div className="flex items-baseline justify-between gap-3 pb-3" style={{ borderBottom: `1px solid ${P.line}` }}>
           <span style={{ color: P.muted }} className="text-[15px]">Everything below adds to</span>
           <span
@@ -4974,7 +5040,27 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
           amountOf={(b) => b.amount}
         />
 
-        {!bankRows.length && !bookOnly.length && (
+        {/* How far the feed reaches.
+
+            If a row is missing, there are two reasons and they need different
+            answers: the bank has not settled it, which is above, or the feed
+            has not fetched it, which is here. Without this line an absence
+            looks the same either way and you are left guessing which. */}
+        {newestLine && (
+          <p style={{ color: P.faint }} className="text-[13px] mt-4 pt-3">
+            The feed's newest line is {newestLine}. Anything after that has not been fetched yet.
+          </p>
+        )}
+
+        <Group
+          title="Not settled yet"
+          why="On the bank and still pending, so they are not counted in the figure above. They will be once the bank settles them."
+          rows={pendingRows}
+          describe={(b) => b.description || "bank line"}
+          amountOf={(b) => b.amount}
+        />
+
+        {!bankRows.length && !bookOnly.length && !pendingRows.length && (
           <p style={{ color: P.muted }} className="text-[15px] py-4">
             Nothing this month.
           </p>
@@ -5324,6 +5410,7 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
       <MiniLine
         show={pinned}
         sectionName={sectionName}
+        /* truncation-ok: the pinned bar holds four figures by design. */
         stats={visible.slice(0, 4).map((k) => ({ label: cards[k].label.split(" · ")[0], value: cards[k].value, tone: cards[k].tone }))}
       />
       <div className="flex items-center justify-end gap-3 mb-3 -mt-11">
@@ -7756,6 +7843,7 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
                   style={{ background: P.surface2, color: P.muted, borderRadius: 11 }}
                   className="w-10 h-10 flex items-center justify-center shrink-0 text-[13px] font-semibold"
                 >
+                  {/* truncation-ok: initials, two letters by design. */}
                   {c.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()}
                 </span>
                 <span className="flex-1 min-w-0">
@@ -8772,6 +8860,7 @@ function OptionCard({ options, onPick, title }) {
       {title && (
         <div style={{ color: P.text }} className="text-[15px] font-medium px-4 pt-3.5 pb-1">{title}</div>
       )}
+      {/* truncation-ok: three suggestions, chosen for being few. */}
       {options.slice(0, 3).map((q, i) => (
         <button
           key={q}
@@ -9575,6 +9664,7 @@ function Capture({
             has already put on the table unprompted. */}
         {!msgs.some((m) => m.role === "user") && !busy && (
           <OptionCard
+            /* truncation-ok: three openers, not a list of anything owed. */
             options={[...new Set([...insights.slice(0, 3).map((i) => i.ask), ...DEFAULT_ASKS])]
               .filter((q) => !msgs.some((m) => m.followUp === q))
               .slice(0, 3)}
@@ -11557,8 +11647,19 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 
       {settled.length > 0 && (
         <div className="mt-4" style={{ borderTop: `1px solid ${P.line}`, paddingTop: "12px" }}>
-          <Label>Settled and locked</Label>
-          {settledSeq.slice(0, 6).map((g) => {
+          <Label>
+            Settled and locked
+            <span style={{ color: P.faint }} className="font-normal">
+              {" "}&middot; {settled.length} {settled.length === 1 ? "entry" : "entries"}
+            </span>
+          </Label>
+          {/* Every one of them.
+
+              This was capped at six with nothing to say so, which is how a
+              settled payment can be in your books, correct, and invisible.
+              Somebody hunting for a figure they half remember would have
+              concluded it was not there. */}
+          {settledSeq.map((g) => {
             if (g.items.length > 1) {
               const gTotal = g.items.reduce((s, x) => s + x.amount, 0);
               const gk = "s:" + g.party;
@@ -12198,7 +12299,9 @@ function CreditsCard({ data, addCredit, updateCredit, delCredit, readOnly = fals
             </span>
           </div>
           <div style={cardStyle()} className="px-5 py-2">
-            {spent.slice(0, 12).map((t, i) => (
+            {/* All of them. The count is in the header above; capping the list
+                as well means a credit you spent is simply not on the page. */}
+            {spent.map((t, i) => (
               <div
                 key={t.id}
                 className="flex items-center gap-4 py-3"
