@@ -1554,6 +1554,8 @@ function Ledger({ onSignOut }) {
   /* Bumped after a background sync, so views holding their own copy of the
      connections know to read them again. */
   const [syncedAt, setSyncedAt] = useState(0);
+  // Which figure the reader has asked to see the workings of.
+  const [explaining, setExplaining] = useState(null);
 
   const arrived = useMemo(() => {
     if (!data || readOnly) return [];
@@ -2809,6 +2811,7 @@ function Ledger({ onSignOut }) {
              a count from another month would be worse than none. */
           unrecorded={unrecordedThisMonth}
           carry={carry}
+          onExplain={setExplaining}
         />
         )}
 
@@ -3148,6 +3151,18 @@ function Ledger({ onSignOut }) {
           ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />
       )}
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
+      {explaining && (
+        <FigureTrail
+          side={explaining}
+          month={month}
+          transactions={data.transactions}
+          bankTxns={conns.length ? bankTxns : bankTxns}
+          ledgerCcy={data.ledger.currency || "CAD"}
+          openPreview={openPreview}
+          onClose={() => setExplaining(null)}
+        />
+      )}
+
       {matchOpen && (
         <MatchView
           openGuide={openGuide}
@@ -4820,7 +4835,127 @@ function Delta({ now, prev, invert }) {
   );
 }
 
-function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName, counts, unrecorded = { in: 0, out: 0 }, carry }) {
+/* Where a figure came from, line by line.
+
+   A card gives you a total and the sentence under it gives you the shape. This
+   is the third step: the actual entries, grouped the same way the sentence
+   describes them, so a number you do not recognise can be followed back to the
+   thing that caused it.
+
+   Grouped rather than listed flat, because "here are 47 rows" is not an
+   explanation. The groups are the sentence: through the bank, not through it,
+   still to file. */
+function FigureTrail({ side, month, transactions, bankTxns, ledgerCcy, onClose, openPreview }) {
+  const isIn = side === "in";
+  const label = isIn ? "Money in" : "Money out";
+  const wantType = isIn ? "income" : "expense";
+
+  const inMonth = (d) => String(d || "").startsWith(month);
+  const paired = new Set((bankTxns || []).map((b) => b.matchedTxId).filter(Boolean));
+
+  const bankRows = (bankTxns || []).filter(
+    (b) => !b.pending && b.status !== "ignored" && inMonth(b.date)
+      && (isIn ? b.direction === "credit" : b.direction !== "credit"),
+  );
+  const bookOnly = (transactions || []).filter(
+    (t) => t.type === wantType && inMonth(t.date) && !paired.has(t.id) && t.payMethod !== "credits",
+  );
+  const unfiled = bankRows.filter((b) => b.status !== "matched");
+
+  const sum = (rows, key = "amount") =>
+    rows.reduce((n, r) => n + Math.abs(Number(r[key]) || 0), 0);
+
+  const total = sum(bankRows) + sum(bookOnly);
+
+  const Group = ({ title, why, rows, describe, amountOf, tone }) => {
+    if (!rows.length) return null;
+    return (
+      <div className="mt-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <span style={{ color: P.text }} className="text-[15.5px]">{title}</span>
+          <span
+            style={{ fontFamily: MONO, color: tone || P.text }}
+            className="text-[15.5px] tabular-nums shrink-0"
+          >
+            {fmt(sum(rows))}
+          </span>
+        </div>
+        <p style={{ color: P.faint }} className="text-[13.5px] mb-1">{why}</p>
+        {rows.slice(0, 40).map((r) => (
+          <div
+            key={r.id}
+            className="flex items-baseline justify-between gap-3 py-1"
+            style={{ borderTop: `1px solid ${P.line}` }}
+          >
+            <span style={{ color: P.muted }} className="text-[13.5px] min-w-0 truncate">
+              {String(r.date).slice(5)} &middot; {describe(r)}
+            </span>
+            <span
+              style={{ fontFamily: MONO, color: P.faint }}
+              className="text-[13.5px] tabular-nums shrink-0"
+            >
+              {fmt(amountOf(r))}
+            </span>
+          </div>
+        ))}
+        {rows.length > 40 && (
+          <p style={{ color: P.faint }} className="text-[13px] pt-1">
+            and {rows.length - 40} more
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <Modal onClose={onClose} size="lg" title={`${label}, ${monthLabel(month)}`}>
+      <ModalBody>
+        <div className="flex items-baseline justify-between gap-3 pb-3" style={{ borderBottom: `1px solid ${P.line}` }}>
+          <span style={{ color: P.muted }} className="text-[15px]">Everything below adds to</span>
+          <span
+            style={{ fontFamily: MONO, color: isIn ? P.credit : P.debit }}
+            className="text-[19px] tabular-nums"
+          >
+            {fmt(total)}
+          </span>
+        </div>
+
+        <Group
+          title="Through the bank"
+          why="Lines the bank fetched. These are the dates and amounts the money actually moved on."
+          rows={bankRows}
+          tone={isIn ? P.credit : P.debit}
+          describe={(b) => b.description || "bank line"}
+          amountOf={(b) => b.amount}
+        />
+
+        <Group
+          title="Not through the bank"
+          why="Cash, credits, and anything entered by hand that no bank line accounts for. Real money, invisible to the feed."
+          rows={bookOnly}
+          describe={(t) => `${t.description || t.category}${t.category && t.description ? ` · ${t.category}` : ""}`}
+          amountOf={(t) => t.amount}
+        />
+
+        <Group
+          title="Still to file"
+          why="On the bank and not yet in the books. Already counted above; consolidating is what gives them a category."
+          rows={unfiled}
+          describe={(b) => b.description || "bank line"}
+          amountOf={(b) => b.amount}
+        />
+
+        {!bankRows.length && !bookOnly.length && (
+          <p style={{ color: P.muted }} className="text-[15px] py-4">
+            Nothing this month.
+          </p>
+        )}
+      </ModalBody>
+    </Modal>
+  );
+}
+
+function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLeft, onCredits, onReconcile, needsConsolidation, consolidationSettled, onConsolidate, sectionName, counts, unrecorded = { in: 0, out: 0 }, carry, onExplain }) {
   const fromBank = balance.source === "bank";
 
   // The bar appears when the grid leaves the screen. A sentinel and an observer
@@ -4874,6 +5009,28 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
      from.
 
      With no feed at all, the books are the only answer there is. */
+  /* One sentence explaining a figure, in the same shape for both cards.
+
+     Two parts that add up to the total, and a third only when something is
+     still unfiled, because that is the only part that is actually work. */
+  const cardFoot = (side) => {
+    const viaBank = side === "in" ? unrecorded.bankIn : unrecorded.bankOut;
+    const notBank = side === "in" ? (unrecorded.bookOnlyIn || 0) : (unrecorded.bookOnlyOut || 0);
+    const unfiled = side === "in" ? unrecorded.inAmount : unrecorded.outAmount;
+    const unfiledCount = side === "in" ? unrecorded.in : unrecorded.out;
+    const word = side === "in" ? "deposits" : "payments";
+
+    if (!unrecorded.hasBank) {
+      const n = side === "in" ? inCount : outCount;
+      return `${n} ${n === 1 ? word.slice(0, -1) : word}, none of them through a connected bank`;
+    }
+
+    const parts = [`${money(viaBank)} through the bank`];
+    if (notBank > 0.005) parts.push(`${money(notBank)} not through it`);
+    if (unfiledCount > 0) parts.push(`${money(unfiled)} still to file`);
+    return parts.join(" · ");
+  };
+
   const trueIn = unrecorded.hasBank ? unrecorded.bankIn + (unrecorded.bookOnlyIn || 0) : sums.inc;
   const trueOut = unrecorded.hasBank ? unrecorded.bankOut + (unrecorded.bookOnlyOut || 0) : sums.exp;
   const trueNet = trueIn - trueOut;
@@ -4974,6 +5131,7 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
        set and joins the other. */
     in:  { label: "Money in",
            value: money(trueIn), tone: P.credit,
+           onClick: onExplain ? () => onExplain("in") : undefined,
            delta: unrecorded.in ? null : { now: sums.inc, prev: prevSums?.inc },
            /* The bank's own figure, so this card can be checked against a
               statement without opening one. When the books are complete the
@@ -4996,23 +5154,19 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
               So the totals are compared whether or not anything is
               outstanding. Saying "all matched" and stopping there is how a
               $1,300 gap stayed invisible while the card looked healthy. */
-           foot: unrecorded.in
-             ? `${money(sums.inc)} filed · ${money(unrecorded.inAmount)} still to file, across ${unrecorded.in}`
-             : !unrecorded.hasBank
-               ? `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, from the books only`
-               : Math.abs(unrecorded.bankIn - sums.inc) > 0.01
-                 ? `Bank shows ${money(unrecorded.bankIn)} this month, ${money(Math.abs(unrecorded.bankIn - sums.inc))} apart. Usually a date on the other side of a month end.`
-                 : `${inCount} ${inCount === 1 ? "deposit" : "deposits"}, agrees with the bank` },
+           /* Where the figure came from, in two parts that add up to it.
+
+              This used to compare the card against the bank and report them
+              as "apart", which described a disagreement that does not exist:
+              money that did not go through the bank is not a discrepancy, it
+              is the other half of the total. The old wording sent you looking
+              for an error that was never there. */
+           foot: cardFoot("in") },
     out: { label: "Money out",
            value: money(trueOut), tone: P.debit,
+           onClick: onExplain ? () => onExplain("out") : undefined,
            delta: unrecorded.out ? null : { now: sums.exp, prev: prevSums?.exp, invert: true },
-           foot: unrecorded.out
-             ? `${money(sums.exp)} filed · ${money(unrecorded.outAmount)} still to file, across ${unrecorded.out}`
-             : !unrecorded.hasBank
-               ? `${outCount} ${outCount === 1 ? "payment" : "payments"}, from the books only`
-               : Math.abs(unrecorded.bankOut - sums.exp) > 0.01
-                 ? `Bank shows ${money(unrecorded.bankOut)} this month, ${money(Math.abs(unrecorded.bankOut - sums.exp))} apart. Usually a date on the other side of a month end.`
-                 : `${outCount} ${outCount === 1 ? "payment" : "payments"}, agrees with the bank` },
+           foot: cardFoot("out") },
     ar:  { label: "Owed to you", value: money(openBooks.ar), tone: P.credit, foot: arFoot },
     ap:  { label: "You owe",     value: money(openBooks.ap), tone: P.debit,  foot: apFoot },
     credits: creditsLeft !== null
