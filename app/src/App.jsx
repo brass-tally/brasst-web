@@ -8386,9 +8386,26 @@ function Capture({
       return;
     }
 
+    /* One picker at a time.
+
+       Pressing the prompt three times produced three identical lists, because
+       each press pushed a message and nothing checked whether the last one was
+       still waiting to be answered. A question nobody has answered does not
+       need asking again.
+
+       An unanswered picker is reused: the transcript scrolls to it instead of
+       growing. Once a choice is made it is marked used, so the next press
+       offers a fresh one. */
+    const openPicker = msgs.some((m) => m.pickContacts?.length && !m.pickUsed);
+    if (openPicker) {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      return;
+    }
+
     push({
       role: "assistant",
       text: "Who should it go to?",
+      pickId: `pick-${Date.now()}`,
       pickContacts: [...withEmail, ...withoutEmail].slice(0, 8),
     });
   };
@@ -8803,13 +8820,18 @@ function Capture({
                   question on the table rather than making the user phrase it. */}
               {/* A contact chosen straight into the invitation card, rather
                   than typed back as a sentence for her to interpret. */}
-              {m.pickContacts?.length > 0 && (
+              {m.pickContacts?.length > 0 && !m.pickUsed && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {m.pickContacts.map((c) => (
                     <button
                       key={c.id}
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        // Spent, so the next press offers a fresh list rather
+                        // than reusing one whose answer is already on screen.
+                        setMsgs((prev) =>
+                          prev.map((x) => (x.pickId && x.pickId === m.pickId ? { ...x, pickUsed: true } : x)),
+                        );
                         push({
                           role: "assistant",
                           proposal: {
@@ -8822,8 +8844,8 @@ function Capture({
                                 : `${c.name} has no address on file, so add one below`,
                             },
                           },
-                        })
-                      }
+                        });
+                      }}
                       style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
                       className="h-9 px-3 text-[13.5px] press inline-flex items-center gap-1.5"
                     >
