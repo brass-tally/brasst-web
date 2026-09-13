@@ -6147,6 +6147,27 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     return out.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
   }, [schedules, pending, history]);
 
+  /* Three groups, because they need three different amounts of attention.
+
+     Waiting on a decision, open in your books, and done. A settled invoice is
+     finished business: it should be findable and it should not be occupying a
+     row between two things that still need you. */
+  const [settledOpen, setSettledOpen] = useState(false);
+  const [expanded, setExpanded] = useState("");
+
+  const grouped = useMemo(() => {
+    const live = [];
+    const done = [];
+    for (const row of rows) {
+      const inv = row.last || row.invoice;
+      const ob = inv?.obligationId ? onFindPayable?.(inv.obligationId) : null;
+      // An arrangement is never done: next month is always coming.
+      if (ob && ob.status !== "open" && !row.schedule) done.push({ ...row, ob });
+      else live.push(row);
+    }
+    return { live, done };
+  }, [rows, onFindPayable]);
+
   // Refused, kept, and out of the way.
   const denied = useMemo(
     () => history.filter((h) => h.status === "declined"),
@@ -6528,6 +6549,28 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     const ob = (last || inv)?.obligationId ? onFindPayable?.((last || inv).obligationId) : null;
     const paid = ob && ob.status !== "open";
 
+    /* Paid, part paid, or nothing yet.
+
+       A monthly arrangement names the month it covers, because "Paid" on a
+       bill that repeats leaves you asking which one. The month comes from the
+       invoice's own due date rather than the day the money moved: a September
+       invoice settled in October was still September's work. */
+    const paidStamp = (() => {
+      if (!ob) return null;
+      const billed = Math.abs(Number(ob.amount) || 0);
+      const already = Number(ob.paidAmount) || 0;
+      const month = (last || inv)?.dueDate
+        ? monthLabel(String((last || inv).dueDate).slice(0, 7))
+        : "";
+      const forMonth = row.kind === "monthly" && month ? ` · ${month}` : "";
+
+      if (ob.status !== "open") return { full: true, label: `Paid${forMonth}` };
+      if (already > 0.005) {
+        return { full: false, label: `${fmt(already)} of ${fmt(billed)} paid${forMonth}` };
+      }
+      return null;
+    })();
+
     const state = pendingHere
       ? "waiting on you"
       : sc
@@ -6555,6 +6598,25 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                 className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
               >
                 Monthly
+              </span>
+            )}
+            {/* What has happened to the money.
+
+                An invoice that has been paid looked exactly like one that had
+                not, so the only way to find out was to go to AR / AP and look
+                it up. The stamp says which, and for a part payment it says how
+                much, because "part paid" without a figure is a question
+                rather than an answer. */}
+            {paidStamp && (
+              <span
+                style={{
+                  background: (paidStamp.full ? P.credit : P.brass) + "24",
+                  color: paidStamp.full ? P.credit : P.brassText,
+                  borderRadius: 999,
+                }}
+                className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
+              >
+                {paidStamp.label}
               </span>
             )}
           </span>
@@ -6812,7 +6874,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                 </>
               )}
 
-              {rows.length === 0 && denied.length === 0 && !filed && (
+              {grouped.live.length === 0 && grouped.done.length === 0 && denied.length === 0 && !filed && (
                 <div className="py-2 text-center">
                   <div
                     style={{ background: P.credit + "18", color: P.credit }}
@@ -6848,7 +6910,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                 </div>
               )}
 
-              {!filed && rows.map((row) => (
+              {!filed && grouped.live.map((row) => (
                 <div key={row.key}>
                   <Row row={row} />
                   {/* Both have to exist.
@@ -6908,6 +6970,61 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   cannot see it any more" is not an answer. They sit behind a
                   count rather than in the list, because a decision you have
                   already made is not work. */}
+              {/* Done, and out of the way.
+
+                  A settled invoice is finished business. It should be findable
+                  and it should not occupy a row between two things that still
+                  need you, so each one is a line and the detail is a tap
+                  away. */}
+              {!filed && grouped.done.length > 0 && (
+                <div className="mt-3" style={{ borderTop: `1px solid ${P.line}` }}>
+                  <button
+                    onClick={() => setSettledOpen(!settledOpen)}
+                    style={{ color: P.credit }}
+                    className="text-[14.5px] py-2.5 press inline-flex items-center gap-1.5"
+                    aria-expanded={settledOpen}
+                  >
+                    <Check size={13} />
+                    {grouped.done.length} paid in full
+                    <span style={{ color: P.faint }}>
+                      &middot; {fmt(grouped.done.reduce((n, r) => n + Math.abs(r.ob?.amount || 0), 0))}
+                    </span>
+                    <ChevronDown
+                      size={13}
+                      style={{ transform: settledOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}
+                    />
+                  </button>
+
+                  {settledOpen && grouped.done.map((row) => (
+                    <div key={row.key}>
+                      {expanded === row.key ? (
+                        <Row row={row} />
+                      ) : (
+                        <button
+                          onClick={() => setExpanded(row.key)}
+                          className="w-full flex items-baseline justify-between gap-3 py-2 text-left press"
+                          style={{ borderTop: `1px solid ${P.line}` }}
+                        >
+                          <span style={{ color: P.muted }} className="text-[14px] min-w-0 truncate">
+                            {row.party}
+                            {(row.last || row.invoice)?.invoiceNo
+                              ? ` · ${(row.last || row.invoice).invoiceNo}`
+                              : ""}
+                            {row.ob?.settledOn ? ` · paid ${row.ob.settledOn}` : ""}
+                          </span>
+                          <span
+                            style={{ fontFamily: MONO, color: P.faint }}
+                            className="text-[14px] tabular-nums shrink-0"
+                          >
+                            {fmt(Math.abs(row.ob?.amount || 0))}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {!filed && denied.length > 0 && (
                 <details className="mt-3">
                   <summary style={{ color: P.faint }} className="text-[14px] cursor-pointer press">
