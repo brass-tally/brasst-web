@@ -5556,7 +5556,16 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
     const parts = [`${n} ${word}`];
     if (notBank > 0.005) parts.push(`${money(notBank)} not through the bank`);
     if (unfiledCount > 0) parts.push(`${money(unfiled)} still to file`);
-    if (unrecorded.feedBehind) parts.push(`bank not read since ${unrecorded.newestLine}`);
+
+    /* How far the bank data reaches, always, not only when it is badly stale.
+     *
+     * I hid this behind a two day threshold, so on the day it mattered the
+     * card said nothing and the figure looked simply wrong. The date is what
+     * tells you whether a short figure is a fault or a feed, and that is
+     * worth one phrase on every card rather than an alarm on a few. */
+    if (unrecorded.hasBank && unrecorded.newestLine) {
+      parts.push(`bank read to ${unrecorded.newestLine}`);
+    }
     return parts.join(" · ");
   };
 
