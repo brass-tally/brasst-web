@@ -382,7 +382,13 @@ Deno.serve(async (req) => {
           out.push({ id: c.id, status: statusFor(code), code });
         }
       }
-      return json({ connections: out });
+      /* The environment travels with the answer.
+
+         How long a sign-in lasts depends on it: a development Item is
+         short-lived by design, so an owner watching RBC expire repeatedly
+         needs to know whether that is their bank or their Plaid tier before
+         they go looking for a fault that is not there. */
+      return json({ connections: out, env: Deno.env.get("PLAID_ENV") || "sandbox" });
     }
 
     if (action === "sync") {

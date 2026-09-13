@@ -1679,6 +1679,9 @@ function Ledger({ onSignOut }) {
       (b) => !b.pending && b.status !== "ignored" && String(b.date || "").startsWith(month),
     );
 
+    // The most recent day the bank has given us anything at all.
+    const newest = (bankTxns || []).map((b) => b.date).filter(Boolean).sort().pop() || "";
+
     // Entries this month that no bank line is paired with.
     const paired = new Set((bankTxns || []).map((b) => b.matchedTxId).filter(Boolean));
     const bookOnly = (monthTx || []).filter((t) => !isCredits(t) && !paired.has(t.id));
@@ -1697,6 +1700,24 @@ function Ledger({ onSignOut }) {
          the bank cannot know about them and they are still money that moved. */
       bookOnlyIn: bookOnly.filter((t) => t.type === "income").reduce((n, t) => n + Math.abs(t.amount), 0),
       bookOnlyOut: bookOnly.filter((t) => t.type === "expense").reduce((n, t) => n + Math.abs(t.amount), 0),
+
+      /* Whether the feed has fallen behind.
+
+         A figure computed from a feed that stopped two days ago is not wrong,
+         it is out of date, and those need different reactions. Two days of
+         slack, because a bank releasing yesterday's transfers this afternoon
+         is ordinary and saying so every day would be noise. */
+      /* The count of what the figure is made of, computed here so it cannot
+         disagree with it.
+
+         The foot was counting book entries while the figure counted bank lines
+         plus entries the bank never saw. On a ledger where those differ, the
+         card said one thing and the sentence under it counted another. */
+      countIn: allIn.length + bookOnly.filter((t) => t.type === "income").length,
+      countOut: allOut.length + bookOnly.filter((t) => t.type === "expense").length,
+
+      newestLine: newest,
+      feedBehind: Boolean(newest) && newest < new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10),
     };
   }, [bankTxns, month, monthTx]);
 
@@ -3168,7 +3189,18 @@ function Ledger({ onSignOut }) {
           ledgerName={data.ledger.name} onClose={() => setAccountOpen(false)} />
       )}
       {newLedgerOpen && <NewLedgerModal onCreate={createLedgerAndSwitch} onClose={() => setNewLedgerOpen(false)} />}
-      {explaining && (
+      {explaining === "balance" && (
+        <BalanceTrail
+          balance={balance}
+          transactions={data.transactions}
+          bankTxns={bankTxns}
+          month={month}
+          onConsolidate={readOnly ? null : () => setMatchOpen(true)}
+          onClose={() => setExplaining(null)}
+        />
+      )}
+
+      {explaining && explaining !== "balance" && (
         <FigureTrail
           side={explaining}
           month={month}
@@ -4873,6 +4905,150 @@ function Delta({ now, prev, invert }) {
    Grouped rather than listed flat, because "here are 47 rows" is not an
    explanation. The groups are the sentence: through the bank, not through it,
    still to file. */
+/* Does the balance tie out?
+
+   This is the question the whole product rests on. Everything else is
+   presentation: if the books and the bank disagree and nobody can say why, the
+   figures are decoration.
+
+   A reconciliation in the accounting sense, not a list: start from what the
+   bank says, account for every difference by name, and arrive at what the
+   books say. Anything left over at the end is the amount nobody can explain,
+   and that number should be zero. When it is not, it is stated as plainly as
+   the rest rather than folded into a total.
+*/
+function BalanceTrail({ balance, transactions, bankTxns, month, onClose, onConsolidate }) {
+  const paired = new Set((bankTxns || []).map((b) => b.matchedTxId).filter(Boolean));
+
+  const settled = (bankTxns || []).filter((b) => !b.pending && b.status !== "ignored");
+  const unfiled = settled.filter((b) => b.status !== "matched");
+  const pending = (bankTxns || []).filter((b) => b.pending);
+  const bookOnly = (transactions || []).filter(
+    (t) => !paired.has(t.id) && t.payMethod !== "credits" && t.date && t.date > (balance.anchorDate || ""),
+  );
+  const ignored = (bankTxns || []).filter((b) => b.status === "ignored");
+
+  const signed = (rows, isCredit) =>
+    rows.reduce((n, r) => n + (isCredit(r) ? Math.abs(Number(r.amount) || 0) : -Math.abs(Number(r.amount) || 0)), 0);
+
+  const unfiledNet = signed(unfiled, (b) => b.direction === "credit");
+  const bookOnlyNet = signed(bookOnly, (t) => t.type === "income");
+  const pendingNet = signed(pending, (b) => b.direction === "credit");
+
+  const bankSide = Number(balance.bank) || 0;
+  const bookSide = Number(balance.book) || 0;
+
+  /* The bank's figure, adjusted by everything the books know about that the
+     bank does not, and stripped of everything the bank knows that the books
+     have not filed. What is left should be the books. */
+  const explained = bankSide - unfiledNet + bookOnlyNet;
+  const unexplained = Math.round((bookSide - explained) * 100) / 100;
+
+  const Line = ({ label, why, amount, strong, tone }) => (
+    <div className="py-2" style={{ borderTop: `1px solid ${P.line}` }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span style={{ color: strong ? P.text : P.muted }} className="text-[15px] min-w-0">
+          {label}
+        </span>
+        <span
+          style={{ fontFamily: MONO, color: tone || (strong ? P.text : P.faint) }}
+          className="text-[15px] tabular-nums shrink-0"
+        >
+          {amount == null ? "" : fmt(amount)}
+        </span>
+      </div>
+      {why && <p style={{ color: P.faint }} className="text-[13px] mt-0.5">{why}</p>}
+    </div>
+  );
+
+  return (
+    <Modal
+      onClose={onClose}
+      size="lg"
+      title="Does this tie out?"
+      panelClass="flex flex-col"
+      panelStyle={{ maxHeight: "88vh" }}
+    >
+      <ModalBody className="overflow-y-auto min-h-0 flex-1">
+        <div
+          className="flex items-baseline justify-between gap-3 pb-3 sticky top-0 z-10"
+          style={{ borderBottom: `1px solid ${P.line}`, background: P.surface }}
+        >
+          <span style={{ color: P.muted }} className="text-[15px]">
+            {Math.abs(unexplained) < 0.01 ? "Everything is accounted for" : "Not everything is accounted for"}
+          </span>
+          <span
+            style={{ fontFamily: MONO, color: Math.abs(unexplained) < 0.01 ? P.credit : P.debit }}
+            className="text-[19px] tabular-nums"
+          >
+            {fmt(unexplained)}
+          </span>
+        </div>
+
+        <Line
+          label="The bank says"
+          why={balance.balanceAsOf ? `as of ${balance.balanceAsOf}` : "across every connected account"}
+          amount={bankSide}
+          strong
+        />
+        <Line
+          label={`Less ${unfiled.length} bank ${unfiled.length === 1 ? "line" : "lines"} not yet filed`}
+          why="The bank has them and the books do not, so they are in one figure and not the other."
+          amount={-unfiledNet}
+        />
+        <Line
+          label={`Plus ${bookOnly.length} ${bookOnly.length === 1 ? "entry" : "entries"} the bank never saw`}
+          why="Cash, credits and anything typed in that no bank line accounts for."
+          amount={bookOnlyNet}
+        />
+        <Line label="Which should give the books" amount={explained} strong />
+        <Line
+          label="The books actually say"
+          amount={bookSide}
+          strong
+          tone={Math.abs(unexplained) < 0.01 ? P.credit : P.debit}
+        />
+
+        {Math.abs(unexplained) >= 0.01 && (
+          <div
+            style={{ background: P.debit + "14", color: P.debit, borderRadius: 14 }}
+            className="p-3.5 mt-3 text-[14px] leading-relaxed"
+          >
+            {fmt(Math.abs(unexplained))} cannot be accounted for by anything above. That is usually an
+            entry recorded twice, a bank line matched to the wrong entry, or a starting balance that was
+            never right. Consolidating will name most of it.
+          </div>
+        )}
+
+        {pending.length > 0 && (
+          <Line
+            label={`${pending.length} pending, not counted either side`}
+            why={`${fmt(Math.abs(pendingNet))} the bank has not settled. It affects neither figure yet.`}
+            amount={null}
+          />
+        )}
+        {ignored.length > 0 && (
+          <Line
+            label={`${ignored.length} set aside`}
+            why="Lines you have said are not yours. Excluded on purpose."
+            amount={null}
+          />
+        )}
+
+        {onConsolidate && Math.abs(unexplained) >= 0.01 && (
+          <button
+            onClick={() => { onClose(); onConsolidate(); }}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+            className="h-11 px-4 text-[15px] font-medium press mt-4"
+          >
+            Consolidate
+          </button>
+        )}
+      </ModalBody>
+    </Modal>
+  );
+}
+
 function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerCcy, cardValue, onClose, openPreview }) {
   /* Owed and owing follow a different trail.
 
@@ -5302,21 +5478,31 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
 
      Two parts that add up to the total, and a third only when something is
      still unfiled, because that is the only part that is actually work. */
+  /* Quiet when there is nothing to say.
+
+     The subtext was breaking every figure into its parts whether or not the
+     parts were interesting. On a ledger where everything is filed and matched,
+     "$700.83 through the bank" under a card reading $700.83 is a sentence that
+     restates the number and teaches you to stop reading the line.
+
+     It now says the plain count, and speaks up only for the things that would
+     change what you do: money that did not go through the bank, lines not yet
+     filed, and a feed that has fallen behind. */
   const cardFoot = (side) => {
-    const viaBank = side === "in" ? unrecorded.bankIn : unrecorded.bankOut;
     const notBank = side === "in" ? (unrecorded.bookOnlyIn || 0) : (unrecorded.bookOnlyOut || 0);
     const unfiled = side === "in" ? unrecorded.inAmount : unrecorded.outAmount;
     const unfiledCount = side === "in" ? unrecorded.in : unrecorded.out;
-    const word = side === "in" ? "deposits" : "payments";
+    /* The count of the things the figure adds up, not of book entries. Falls
+       back to the book count only when there is no feed at all. */
+    const n = unrecorded.hasBank
+      ? (side === "in" ? unrecorded.countIn : unrecorded.countOut)
+      : (side === "in" ? inCount : outCount);
+    const word = side === "in" ? (n === 1 ? "deposit" : "deposits") : (n === 1 ? "payment" : "payments");
 
-    if (!unrecorded.hasBank) {
-      const n = side === "in" ? inCount : outCount;
-      return `${n} ${n === 1 ? word.slice(0, -1) : word}, none of them through a connected bank`;
-    }
-
-    const parts = [`${money(viaBank)} through the bank`];
-    if (notBank > 0.005) parts.push(`${money(notBank)} not through it`);
+    const parts = [`${n} ${word}`];
+    if (notBank > 0.005) parts.push(`${money(notBank)} not through the bank`);
     if (unfiledCount > 0) parts.push(`${money(unfiled)} still to file`);
+    if (unrecorded.feedBehind) parts.push(`bank not read since ${unrecorded.newestLine}`);
     return parts.join(" · ");
   };
 
@@ -5342,7 +5528,10 @@ function LedgerLine({ sums, prevSums, entryCount, balance, openBooks, creditsLef
          glitch it was meant to prevent. A mark that is visibly working reads
          as "not yet". */
       value: balance.source === "loading" ? <TallyLoading /> : balance.beforeAnchor ? "·" : money(balance.value),
-      tone: P.text, wide: true, onClick: onReconcile,
+      tone: P.text, wide: true, /* Pressing the balance asks the only question that matters about
+         it: does it tie out. Falling back to the old behaviour where the
+         explainer is not wired, so this cannot leave a dead card. */
+      onClick: onExplain ? () => onExplain("balance") : onReconcile,
       lead: balance.source === "loading"
         ? ""
         : fromBank
@@ -14083,6 +14272,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
 /* ================= live bank feed (Plaid) ================= */
 function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0 }) {
+  const [plaidEnv, setPlaidEnv] = useState("");
   const [conns, setConns] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(null);
@@ -14125,7 +14315,9 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
     }
     try { localStorage.setItem(key, String(Date.now())); } catch { /* fine */ }
     try {
-      await bank.checkStatus(data.ledger.id);
+      const st = await bank.checkStatus(data.ledger.id);
+      if (st?.env) setPlaidEnv(st.env);
+      
       await refreshConns();
     } catch { /* health is a nicety; never block the card on it */ }
   };
@@ -14248,7 +14440,31 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
     setErr(""); setNotice(""); setBusy(true);
     try {
       const redirect_uri = bank.plaidRedirectUri();
-      const { link_token } = await bank.plaid("create_link_token", { redirect_uri, connection_id: id });
+      const { link_token, oauth, oauth_error } = await bank.plaid(
+        "create_link_token", { redirect_uri, connection_id: id },
+      );
+
+      /* An OAuth bank cannot be reconnected without the redirect.
+
+         The server falls back to a link token with no redirect when the URI is
+         not allowlisted, which is right for a bank that authenticates inside
+         Link. RBC and the other Canadian banks send you to their own site and
+         back, so without it the session cannot complete: Link appears to
+         succeed, the item stays in its expired state, and the next sync says
+         sign-in expired again.
+
+         That is a reconnect loop with nothing on screen to explain it, so it
+         stops here and says what to fix rather than opening a door that leads
+         nowhere. */
+      if (!oauth && oauth_error) {
+        setBusy(false);
+        setErr(
+          "This bank sends you to its own site to sign in, and that cannot work until " +
+          `${redirect_uri} is added to the allowed redirect URIs in the Plaid dashboard. ` +
+          "Reconnecting without it will look like it worked and expire again.",
+        );
+        return;
+      }
       bank.saveLinkSession({ link_token, ledger_id: data.ledger.id, connection_id: id });
       setResumable(true);
       await bank.openPlaidLink({
@@ -14395,6 +14611,13 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
                   {c.last_synced
                     ? `${bank.isStale({ lastSyncedAt: c.last_synced }) ? "Last synced" : "Up to date, synced"} ${stamp(c.last_synced)}`
                     : "Never synced"}
+                  {/* A development Item is short-lived by design, so repeated
+                      expiry on this tier is the tier rather than the bank. */}
+                  {plaidEnv && plaidEnv !== "production" && bank.needsReconnect(c) && (
+                    <span style={{ color: P.faint }}>
+                      {" "}&middot; on Plaid {plaidEnv}, where sign-ins expire sooner than in production
+                    </span>
+                  )}
                   {Array.isArray(c.accounts) && c.accounts.length
                     ? ` · ${c.accounts.length} ${c.accounts.length === 1 ? "account" : "accounts"}`
                     : ""}
