@@ -2140,6 +2140,9 @@ function Ledger({ onSignOut }) {
             ? {
                 ...x,
                 paidAmount: paidSoFar,
+                // Cleared when the bill closes: a settled bill has no remainder
+                // to expect, and a date left on it would show up in what is due.
+                balanceDue: closes ? undefined : (actual.balanceDue || x.balanceDue),
                 ...(closes
                   ? { status: "paid", settledOn, settledTxId: tx.id, payMethod, creditId, ...(obDoc || {}) }
                   : {}),
@@ -2160,8 +2163,8 @@ function Ledger({ onSignOut }) {
       const paidDb = Math.round(((Number(item.paidAmount) || 0) + Math.abs(amount)) * 100) / 100;
       const closesDb = paidDb >= owedDb - 0.005;
       await db.updateObligation(id, closesDb
-        ? { status: "paid", settledOn, settledTxId: tx.id, paidAmount: paidDb, payMethod, creditId: creditId || null, ...(obDoc || {}) }
-        : { paidAmount: paidDb, ...(obDoc || {}) });
+        ? { status: "paid", settledOn, settledTxId: tx.id, paidAmount: paidDb, balanceDue: null, payMethod, creditId: creditId || null, ...(obDoc || {}) }
+        : { paidAmount: paidDb, balanceDue: actual.balanceDue || item.balanceDue || null, ...(obDoc || {}) });
       if (!adopted) await db.insertTransaction(tx);
       if (next && closesDb) await db.insertObligation(kind, next);
     });
@@ -6086,9 +6089,22 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
       });
     }
 
-    // Then anything not part of one: pending first, then decided.
+    /* Denied ones leave the list.
+
+       Pressing Deny and watching the invoice stay on the page reads as the
+       button not having worked. The three buttons are three different
+       answers and the list should show three different things:
+
+         Add to what I owe   it joins your books and moves below
+         Needs correction    it stays at the top, still waiting
+         Deny                it goes
+
+       Nothing is destroyed. Denied invoices are behind the count at the
+       bottom, because a supplier who was refused may well ask why, and an
+       answer of "I cannot see it any more" is not one. */
     for (const inv of [...pending, ...history]) {
       if (claimed.has(inv.id)) continue;
+      if (inv.status === "declined") { claimed.add(inv.id); continue; }
       claimed.add(inv.id);
       out.push({
         key: `inv-${inv.id}`,
@@ -6105,6 +6121,12 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
 
     return out.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
   }, [schedules, pending, history]);
+
+  // Refused, kept, and out of the way.
+  const denied = useMemo(
+    () => history.filter((h) => h.status === "declined"),
+    [history],
+  );
   const scheduleFor = (inv) => schedules.find((sc) => sc.id === inv.scheduleId) || null;
 
   /* Has anything ever arrived? The history cannot answer that, because voiding
@@ -6756,16 +6778,16 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   "Nothing waiting" is a card that appears the moment you clear
                   the last one, so the reward for finishing is a box telling you
                   the box is empty. */}
-              {rows.length > 0 && !filed && (
+              {(rows.length > 0 || denied.length > 0) && !filed && (
                 <>
                   <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices sent to you</h3>
                   <p style={{ color: P.muted }} className="text-[15px] mb-2">
-                    One line each. Accepting adds it to what you owe.
+                    One line each. Accepting adds it to what you owe; denying takes it off this list.
                   </p>
                 </>
               )}
 
-              {rows.length === 0 && !filed && (
+              {rows.length === 0 && denied.length === 0 && !filed && (
                 <div className="py-2 text-center">
                   <div
                     style={{ background: P.credit + "18", color: P.credit }}
@@ -6854,6 +6876,41 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   )}
                 </div>
               ))}
+
+              {/* Refused, and still findable.
+
+                  A supplier who was turned down may well ask why, and "I
+                  cannot see it any more" is not an answer. They sit behind a
+                  count rather than in the list, because a decision you have
+                  already made is not work. */}
+              {!filed && denied.length > 0 && (
+                <details className="mt-3">
+                  <summary style={{ color: P.faint }} className="text-[14px] cursor-pointer press">
+                    {denied.length} denied
+                  </summary>
+                  <div className="mt-2">
+                    {denied.map((inv) => (
+                      <div
+                        key={inv.id}
+                        className="flex items-baseline justify-between gap-3 py-2"
+                        style={{ borderTop: `1px solid ${P.line}` }}
+                      >
+                        <span style={{ color: P.faint }} className="text-[14px] min-w-0 truncate">
+                          {inv.party}
+                          {inv.description ? ` · ${inv.description}` : ""}
+                          {inv.invoiceNo ? ` · ${inv.invoiceNo}` : ""}
+                        </span>
+                        <span
+                          style={{ fontFamily: MONO, color: P.faint }}
+                          className="text-[14px] tabular-nums shrink-0"
+                        >
+                          {fmtIn(inv.amount, inv.currency, ledgerCcy)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </>
           )}
 
@@ -10764,7 +10821,14 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
   );
 
   const renderRow = (i, inGroup) => {
-    const overdue = i.dueDate && i.dueDate < todayStr();
+    /* The date that is actually still owed on.
+
+       A bill part paid on an arrangement is not overdue on its original date:
+       that date was met, in part, and the rest is due when you agreed it would
+       be. Judging it on the old date would light up half your list in red for
+       bills nobody is late on. */
+    const effectiveDue = (Number(i.paidAmount) || 0) > 0 && i.balanceDue ? i.balanceDue : i.dueDate;
+    const overdue = effectiveDue && effectiveDue < todayStr() && i.status === "open";
     /* Not due, and it repeats. See the button below for why this matters. */
     /* Part paid, so the row says how far along it is. An open bill showing
        its full amount when half has gone overstates what you owe. */
@@ -10808,7 +10872,12 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
           </div>
           <div style={{ color: overdue ? P.debit : P.faint }} className="text-[13.5px] flex items-center gap-1.5 flex-wrap mt-0.5" data-meta>
             {isRec(i) && <RecMark />}
-            <span>due {i.dueDate}</span>
+            {/* The date that is still owed on. A bill part paid on an
+              arrangement shows when the rest lands, not the date it was
+              originally raised for. */}
+          <span>
+            {paidSoFar > 0 && i.balanceDue ? `rest due ${i.balanceDue}` : `due ${i.dueDate}`}
+          </span>
             {overdue && <span>· overdue</span>}
             {future && <span>· in {daysUntil(i.dueDate)} days</span>}
             {isRec(i) && <span>· {freqLabel(i.frequency || "monthly")}</span>}
@@ -11155,6 +11224,16 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
   const partial = parsed > 0 && parsed < outstanding - 0.005;
   const remaining = partial ? Math.round((outstanding - parsed) * 100) / 100 : 0;
 
+  /* When the rest is expected.
+
+     An arrangement nobody wrote down is a bill that surprises you. Thirty days
+     is a starting point rather than an assumption, and it is only asked for
+     when the payment is actually short. */
+  const [balanceDue, setBalanceDue] = useState(() => {
+    const d = new Date(Date.now() + 30 * 864e5);
+    return d.toISOString().slice(0, 10);
+  });
+
   const pickDoc = (file) => {
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
@@ -11174,6 +11253,7 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
       amount: parsed, date, payMethod, creditId, att: doc,
       bankId: bankProof?.id,
       existingTxId: alreadyInBooks?.id,
+      balanceDue: partial ? balanceDue : undefined,
     });
     } catch (e) {
       setDocErr(e?.message || "Something went wrong filing that. Try again.");
@@ -11236,11 +11316,25 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
               </div>
             )}
             {partial && (
-              <div style={{ color: P.text }}>
-                This pays part of it. {fmt(remaining)} stays open
-                {item.dueDate ? `, still due ${item.dueDate}` : ""}, and the bill closes when the rest
-                arrives.
-              </div>
+              <>
+                <div style={{ color: P.text }}>
+                  This pays part of it. {fmt(remaining)} stays open and the bill closes when the rest
+                  arrives.
+                </div>
+                <label
+                  style={{ color: P.muted }}
+                  className="text-[14px] flex flex-wrap items-center gap-2 mt-2.5"
+                >
+                  The rest is due
+                  <input
+                    type="date"
+                    value={balanceDue}
+                    onChange={(e) => setBalanceDue(e.target.value)}
+                    style={{ background: P.surface, color: P.text, borderRadius: 11 }}
+                    className="h-10 px-2.5 text-[14.5px] outline-none border-none"
+                  />
+                </label>
+              </>
             )}
           </div>
         )}
