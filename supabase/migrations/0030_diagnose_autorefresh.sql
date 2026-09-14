@@ -22,7 +22,7 @@ from pg_extension where extname in ('pg_cron', 'pg_net');
 select '2. cron job' as check,
        coalesce(string_agg(jobname || ' at ' || schedule || case when active then '' else ' (INACTIVE)' end, ', '), 'NONE') as found,
        case when count(*) filter (where active) > 0 then 'ok' else 'FAIL: run 0018' end as verdict
-from cron.job where jobname = 'bank-autorefresh-hourly';
+from cron.job where jobname like 'bank-autorefresh%';
 
 -- 3. The three config rows. A missing one is the most likely cause, because
 --    0018 leaves them as an instruction in a comment rather than inserting them.
@@ -41,13 +41,13 @@ select '4. recent runs' as check,
             when count(*) filter (where status <> 'succeeded') > 0 then 'FAIL: see the errors below'
             else 'ok' end as verdict
 from cron.job_run_details
-where jobid in (select jobid from cron.job where jobname = 'bank-autorefresh-hourly')
+where jobid in (select jobid from cron.job where jobname like 'bank-autorefresh%')
   and start_time > now() - interval '24 hours';
 
 -- 5. Any error text from the last day.
 select '5. errors' as check, coalesce(string_agg(distinct return_message, ' | '), 'none') as found, '' as verdict
 from cron.job_run_details
-where jobid in (select jobid from cron.job where jobname = 'bank-autorefresh-hourly')
+where jobid in (select jobid from cron.job where jobname like 'bank-autorefresh%')
   and status <> 'succeeded' and start_time > now() - interval '24 hours';
 
 -- 6. Every connection, on every ledger, including personal. This is the one

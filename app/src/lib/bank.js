@@ -304,8 +304,13 @@ export function lastMorningBoundary(at = new Date()) {
 }
 
 export function isStale(conn, at = new Date()) {
-  if (!conn?.lastSyncedAt) return true;
-  return new Date(conn.lastSyncedAt) < lastMorningBoundary(at);
+  /* `listConnections` returns the database row, which spells this
+     `last_synced`. Reading only the camel-case name meant this always said
+     stale, which was harmless in one direction and hid the field mismatch
+     from anybody reading it. Both are accepted now. */
+  const last = conn?.lastSyncedAt || conn?.last_synced;
+  if (!last) return true;
+  return new Date(last) < lastMorningBoundary(at);
 }
 
 /* Sync every connection that is behind, across every ledger.
@@ -316,20 +321,31 @@ export function isStale(conn, at = new Date()) {
 export async function refreshStale(ledgerIds, { onDone } = {}) {
   const ids = [...new Set((ledgerIds || []).filter(Boolean))];
   let synced = 0;
+  let skipped = 0;
   for (const ledgerId of ids) {
     let conns = [];
     try { conns = await listConnections(ledgerId); } catch { continue; }
     for (const c of conns) {
-      if (!isStale(c) || needsReconnect(c)) continue;
+      if (!isStale(c)) continue;
+      /* A connection that needs signing in again is skipped, and that is
+         reported rather than swallowed.
+
+         The caller writes a once-a-day marker so Plaid is not called
+         repeatedly. That marker was being spent even when every connection
+         had been skipped, so a bank repaired later the same day waited until
+         tomorrow to fetch anything: the day's attempt had already been used
+         up by a pass that did no work. */
+      if (needsReconnect(c)) { skipped += 1; continue; }
       try {
         await plaid("sync", { connection_id: c.id });
         synced += 1;
       } catch (e) {
         // A bank that refuses today should not stop the next one.
-        console.warn("morning sync failed for", c.institutionName || c.id, e?.message || e);
+        console.warn("morning sync failed for", c.institution || c.id, e?.message || e);
+        skipped += 1;
       }
     }
   }
   if (synced) onDone?.(synced);
-  return synced;
+  return { synced, skipped };
 }

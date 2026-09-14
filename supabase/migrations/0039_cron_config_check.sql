@@ -25,10 +25,10 @@ select
   (select count(*) from private.cron_config
     where key in ('project_url','anon_key','cron_secret')
       and value not like 'PASTE%') as config_rows_set,
-  (select count(*) from cron.job where jobname = 'bank-autorefresh-hourly' and active) as job_active,
+  (select count(*) from cron.job where jobname like 'bank-autorefresh%' and active) as job_active,
   (select count(*) from cron.job_run_details d
      join cron.job j on j.jobid = d.jobid
-    where j.jobname = 'bank-autorefresh-hourly'
+    where j.jobname like 'bank-autorefresh%'
       and d.start_time > now() - interval '24 hours') as runs_last_24h;
 
 -- Every connection and how old it is, on every ledger.

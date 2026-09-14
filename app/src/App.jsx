@@ -1279,7 +1279,19 @@ function Ledger({ onSignOut }) {
     try { localStorage.setItem(key, String(Date.now())); } catch { /* no store */ }
 
     (async () => {
-      const n = await bank.refreshStale(ledgers.map((l) => l.id));
+      const { synced: n, skipped } = await bank.refreshStale(ledgers.map((l) => l.id));
+
+      /* If anything was skipped, the day's attempt was not really taken.
+
+         A pass that reached no connection has done no work and should not
+         consume the one chance to do it. That is how a bank repaired at
+         lunchtime sat until the next morning: the marker had been spent at
+         breakfast by a pass that skipped it for needing a sign-in. */
+      if (skipped > 0) {
+        try { localStorage.removeItem(key); } catch { /* no store */ }
+        syncedToday.current = "";
+      }
+
       if (!n) return;
       addNotification(notify.info(
         n === 1 ? "Bank refreshed." : `${n} bank connections refreshed.`,
