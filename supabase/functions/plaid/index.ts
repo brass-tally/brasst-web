@@ -631,6 +631,46 @@ Deno.serve(async (req) => {
       return json({ ok: true, accounts: out });
     }
 
+    /* Make Plaid go and ask the bank, now.
+     *
+     * Everything so far has read what Plaid already had. `/transactions/refresh`
+     * is different: it tells Plaid to fetch from the institution on demand
+     * rather than waiting for its own schedule.
+     *
+     * This is the remaining explanation for two healthy Items on one bank
+     * disagreeing. Plaid refreshes an Item on its own cadence, and an Item
+     * whose cadence has stalled looks exactly like a bank holding data back:
+     * the Item is fine, the product is granted, and the data is simply old.
+     *
+     * It returns before the fetch completes, so the sync runs after a pause
+     * and the webhook covers anything that lands later.
+     */
+    if (action === "force_refresh") {
+      const { data: conns } = await supabase
+        .from("bank_connections").select("id, institution, access_token")
+        .eq("ledger_id", body.ledger_id);
+
+      const out: Array<Record<string, unknown>> = [];
+      for (const c of conns || []) {
+        try {
+          await plaid("/transactions/refresh", { access_token: c.access_token });
+          // Plaid returns immediately and fetches behind it. A short wait
+          // catches the common case; the webhook catches the rest.
+          await new Promise((r) => setTimeout(r, 6000));
+          const { data: fresh } = await supabase
+            .from("bank_connections").select("*").eq("id", c.id).single();
+          const r = fresh ? await syncOne(supabase, plaid, fresh) : { added: 0 };
+          out.push({ institution: c.institution, asked: true, added: r.added });
+        } catch (e) {
+          /* A plan without on-demand refresh says so plainly, and that is
+             worth reporting rather than swallowing: it is the difference
+             between "we cannot ask" and "we asked and the bank said no". */
+          out.push({ institution: c.institution, asked: false, error: String((e as Error).message || e) });
+        }
+      }
+      return json({ ok: true, results: out });
+    }
+
     if (action === "disconnect") {
       const { error } = await supabase.from("bank_connections").delete().eq("id", body.connection_id);
       if (error) throw error;
