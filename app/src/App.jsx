@@ -1333,6 +1333,21 @@ function Ledger({ onSignOut }) {
           } catch { /* a failed refresh is not worth interrupting anybody over */ }
         },
       )
+      /* Entries and obligations too, so a phone shows what a laptop just did.
+         Debounced together: settling a bill writes a transaction and an
+         obligation within milliseconds of each other, and reloading the whole
+         ledger twice for one action is waste nobody sees but everybody pays
+         for. */
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "transactions", filter: `ledger_id=eq.${currentLedger.id}` },
+        () => bumpLedgerReload(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "obligations", filter: `ledger_id=eq.${currentLedger.id}` },
+        () => bumpLedgerReload(),
+      )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [currentLedger?.id]);
@@ -1344,6 +1359,83 @@ function Ledger({ onSignOut }) {
     if (theme !== "system") return;
     return onSystemThemeChange((next) => setPalette(currentPalette(), next));
   }, [theme]);
+
+  /* Come back to the app and it is current, without being asked.
+   *
+   * How this is normally done, and why:
+   *
+   *   on focus and on becoming visible again. This is the one that matters.
+   *   You look at a phone in the morning, the tab has been asleep for eight
+   *   hours, and the moment you look is the moment the figures should be
+   *   right. Every app you would compare this to does exactly this.
+   *
+   *   when the network comes back, because anything that failed while you
+   *   were on a train should not stay failed.
+   *
+   *   on a quiet interval while you are actually looking, for the case where
+   *   you leave it open on a desk all afternoon.
+   *
+   * What it does NOT do is poll the bank. This re-reads what is already
+   * stored, which is a database query and costs nothing. Plaid is still
+   * fetched once a morning, because those calls are metered and refreshing a
+   * screen is not a reason to pay for one.
+   *
+   * Throttled so a tab switched between twice in ten seconds does not reload
+   * twice, and skipped entirely while a dialog is open: reloading data under
+   * somebody who is halfway through a form is worse than being slightly
+   * stale.
+   */
+  const lastReload = useRef(0);
+
+  /* One reload for a burst of changes.
+
+     A single action often writes to two tables, and a subscription fires per
+     table. Without this, settling one bill would reload the whole ledger
+     twice. */
+  const reloadTimer = useRef(null);
+  const bumpLedgerReload = () => {
+    clearTimeout(reloadTimer.current);
+    reloadTimer.current = setTimeout(async () => {
+      if (!currentLedger?.id) return;
+      if (document.querySelector("[role=dialog]")) return;
+      try { setData(await db.loadAll(currentLedger)); } catch { /* leave what is there */ }
+    }, 400);
+  };
+  useEffect(() => {
+    if (!currentLedger?.id) return;
+
+    const reload = async (why) => {
+      if (Date.now() - lastReload.current < 20000) return;
+      if (document.querySelector("[role=dialog]")) return;
+      lastReload.current = Date.now();
+      try {
+        const fresh = await db.loadAll(currentLedger);
+        setData(fresh);
+        setBankTxns(await bank.listBankTransactions(currentLedger.id));
+        setBankConns(await bank.listConnections(currentLedger.id));
+        setSyncedAt(Date.now());
+      } catch (e) {
+        console.warn("background reload failed:", why, e?.message || e);
+      }
+    };
+
+    const onVisible = () => { if (document.visibilityState === "visible") reload("visible"); };
+    const onFocus = () => reload("focus");
+    const onOnline = () => reload("online");
+    const tick = setInterval(() => {
+      if (document.visibilityState === "visible") reload("interval");
+    }, 5 * 60 * 1000);
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+    return () => {
+      clearInterval(tick);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [currentLedger?.id]);
 
   const morningRan = useRef("");
   const runMorningPass = async () => {
