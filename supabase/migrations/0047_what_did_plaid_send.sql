@@ -1,40 +1,45 @@
 -- ============================================================
 -- What did the bank actually send us?
 -- Run in: Supabase Dashboard -> SQL Editor -> New query
--- Read only. Changes nothing. Takes a second.
+-- Read only. Changes nothing.
 --
--- Everything else is downstream of this. If a transaction is not in this
--- table, no amount of work on a card will make it appear, and if it is here
--- then the fault is ours and I can find it in one look.
+-- No ledger name to fill in. The first version asked you to edit 'Personal'
+-- in three places, your ledger is called something else, and the result was a
+-- query that ran perfectly and returned nothing. A diagnostic that can be
+-- silently wrong about which rows it is reading is worse than no diagnostic.
+--
+-- Run the statements one at a time: the SQL editor shows only the last
+-- result when several are run together.
 -- ============================================================
 
--- 1. The last ten lines the feed holds, newest first.
-select b.date, b.direction, b.amount, b.pending, b.status,
-       left(b.description, 44) as description
+-- 1. The last five lines per ledger, newest first.
+select ledger, date, direction, amount, pending, status, description
+from (
+  select g.name as ledger, b.date, b.direction, b.amount, b.pending, b.status,
+         left(b.description, 40) as description,
+         row_number() over (partition by g.name order by b.date desc, b.amount desc) as rn
+  from public.bank_transactions b
+  join public.ledgers g on g.id = b.ledger_id
+) ranked
+where rn <= 5
+order by ledger, date desc;
+
+-- 2. This month, day by day, per ledger.
+select g.name as ledger, b.date,
+       count(*)                                                  as lines,
+       count(*) filter (where b.pending)                         as pending,
+       sum(b.amount) filter (where b.direction = 'credit')        as money_in,
+       sum(abs(b.amount)) filter (where b.direction <> 'credit')  as money_out
 from public.bank_transactions b
 join public.ledgers g on g.id = b.ledger_id
-where g.name = 'Personal'
-order by b.date desc, b.amount desc
-limit 10;
+where b.date >= date_trunc('month', current_date)
+group by g.name, b.date
+order by g.name, b.date desc;
 
--- 2. Day by day for September: how many, how much, how many pending.
-select b.date,
-       count(*)                                           as lines,
-       count(*) filter (where b.pending)                  as pending,
-       sum(b.amount) filter (where b.direction = 'credit') as money_in,
-       sum(abs(b.amount)) filter (where b.direction <> 'credit') as money_out
-from public.bank_transactions b
-join public.ledgers g on g.id = b.ledger_id
-where g.name = 'Personal'
-  and to_char(b.date, 'YYYY-MM') = '2026-09'
-group by b.date
-order by b.date desc;
-
--- 3. The connection itself: when it was last synced and what it says.
---    The column is `institution`, not `institution_name`. My mistake, and the
---    kind a schema check would have caught before you ran it.
-select c.institution, c.last_synced, c.status, c.status_code, c.status_error,
-       c.current_balance, c.balance_as_of, c.cursor is not null as has_cursor
+-- 3. Every connection, and what it says about itself.
+select g.name as ledger, c.institution, c.last_synced, c.status, c.status_code,
+       c.status_error, c.current_balance, c.balance_as_of,
+       c.cursor is not null as has_cursor
 from public.bank_connections c
 join public.ledgers g on g.id = c.ledger_id
-where g.name = 'Personal';
+order by g.name;
