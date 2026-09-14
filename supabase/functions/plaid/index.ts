@@ -681,10 +681,39 @@ Deno.serve(async (req) => {
       return json({ ok: true, results: out });
     }
 
+    /* Removing a bank has to tell Plaid, not just forget it here.
+     *
+     * This deleted our row and stopped there. The Item carried on existing at
+     * Plaid: still live, still refreshing on their schedule, still signing in
+     * to the bank. At an institution that permits one session per login, those
+     * orphans knock out whichever Item is currently yours, which looks exactly
+     * like a connection that will not stay signed in.
+     *
+     * Plaid offers no way to list the Items you have lost track of, so every
+     * one of these is permanent until somebody asks their support to find
+     * them. Removing on the way out is the only moment it can be done.
+     *
+     * The row is deleted whatever Plaid says. A failed removal should not
+     * leave somebody stuck with a bank they have asked to be rid of.
+     */
     if (action === "disconnect") {
+      const { data: conn } = await supabase
+        .from("bank_connections").select("access_token, item_id")
+        .eq("id", body.connection_id).maybeSingle();
+
+      let removed = false;
+      if (conn?.access_token) {
+        try {
+          await plaid("/item/remove", { access_token: conn.access_token });
+          removed = true;
+        } catch (e) {
+          console.warn("could not remove the item at Plaid:", (e as Error).message);
+        }
+      }
+
       const { error } = await supabase.from("bank_connections").delete().eq("id", body.connection_id);
       if (error) throw error;
-      return json({ ok: true });
+      return json({ ok: true, removed_at_plaid: removed, item_id: conn?.item_id ?? null });
     }
 
     return json({ error: "Unknown action" }, 400);
