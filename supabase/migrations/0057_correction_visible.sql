@@ -57,7 +57,12 @@ begin
     from public.inbound_invoices i
     left join public.obligations o on o.id = i.obligation_id
     where i.ledger_id = v.ledger_id
-      and i.status <> 'voided'
+      /* Voided ones stay, marked.
+
+         They were filtered out, so an invoice a supplier sent simply vanished
+         from their page with no explanation. Disappearing is the one outcome
+         that cannot be asked about: they do not know whether it was withdrawn,
+         lost, or never arrived. */
       and (
         lower(trim(i.contact_email)) = lower(trim(coalesce(v_contact.email, '')))
         or lower(trim(i.party)) = lower(trim(v_contact.name))

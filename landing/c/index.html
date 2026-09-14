@@ -4,84 +4,98 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 <meta name="robots" content="noindex, nofollow"/>
-<title>Your account</title>
+<link rel="icon" href="https://www.brasstally.com/app/favicon.ico"/>
+<link rel="apple-touch-icon" href="https://www.brasstally.com/app/apple-touch-icon.png"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<title>Your account · Brasstally</title>
 <style>
-  /* The app's own tokens, not an approximation of them.
-     Lifted from ui/tokens.js so a supplier and an owner are demonstrably
-     looking at the same product rather than two things in similar colours. */
+  /* The site's own tokens, read from brasstally.com rather than guessed.
+     I built this against the app's ember palette first, which is a different
+     set: the marketing site and the supplier page are what an outsider sees
+     together, so they have to match each other. */
   :root{
-    --bg:#FAFAF9; --surface:#FFFFFF; --surface2:#F4F4F2; --line:#EAE9E5;
-    --text:#1A1A17; --muted:#57564F; --faint:#86847C;
-    --brass:#1C1C19; --onbrass:#FFFFFF; --fill:#B45309;
-    --credit:#08805A; --debit:#C4442F;
-    --serif:ui-serif,Georgia,'Iowan Old Style','Times New Roman',serif;
-    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --bg:#FAF9F7; --surface:#FFFFFF; --sunk:#F5F3F0; --line:#EDEAE5; --line2:#E2DDD6;
+    --text:#1C1917; --muted:#5A534E; --faint:#8A827B;
+    --accent:#F59E0B; --accentText:#A9620A; --onAccent:#241703;
+    --tint:rgba(245,158,11,.12); --credit:#08805A; --debit:#C4442F;
+    --sh:0 1px 2px rgba(28,25,23,.05),0 10px 26px -14px rgba(28,25,23,.14);
+    --sans:'Inter',ui-sans-serif,system-ui,sans-serif;
+    --mono:'Geist Mono',ui-monospace,monospace;
+  }
+  html[data-t="dark"], :root:has(#darkpref:checked){
+    --bg:#100E0C; --surface:#1A1714; --sunk:#141210; --line:#2A2521; --line2:#37312B;
+    --text:#F5F1EC; --muted:#B0A79F; --faint:#877E76;
+    --accent:#FBBF24; --accentText:#FBBF24; --onAccent:#1C1200;
+    --tint:rgba(251,191,36,.13); --credit:#34D399; --debit:#FB7185;
+    --sh:0 1px 2px rgba(0,0,0,.3),0 12px 30px -16px rgba(0,0,0,.5);
   }
   @media (prefers-color-scheme: dark){
-    :root{ --bg:#0C0C0B; --surface:#151513; --surface2:#1E1E1B; --line:#242320;
-           --text:#F5F4F0; --muted:#ADABA3; --faint:#807E76;
-           --brass:#F5F4F0; --onbrass:#14140F; --fill:#E9A23B;
-           --credit:#34D399; --debit:#FB7185; }
+    :root{
+      --bg:#100E0C; --surface:#1A1714; --sunk:#141210; --line:#2A2521; --line2:#37312B;
+      --text:#F5F1EC; --muted:#B0A79F; --faint:#877E76;
+      --accent:#FBBF24; --accentText:#FBBF24; --onAccent:#1C1200;
+      --tint:rgba(251,191,36,.13); --credit:#34D399; --debit:#FB7185;
+      --sh:0 1px 2px rgba(0,0,0,.3),0 12px 30px -16px rgba(0,0,0,.5);
+    }
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-    font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
-    padding:26px 16px 72px;-webkit-font-smoothing:antialiased}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    font-size:16px;line-height:1.55;padding:22px 16px 72px;-webkit-font-smoothing:antialiased}
   .wrap{max-width:620px;margin:0 auto}
 
-  /* The masthead: wordmark, and the tally the app is named for. */
   .mast{display:flex;align-items:center;gap:10px;margin:0 auto 18px;max-width:620px}
-  .tally{display:flex;gap:3px;align-items:flex-end;height:17px}
-  .tally i{display:block;width:2px;height:15px;background:var(--fill);border-radius:1px}
-  .tally i:nth-child(5){height:19px;transform:rotate(-24deg);transform-origin:bottom;margin-left:-11px}
-  .mark{font-family:var(--serif);font-size:17px;letter-spacing:.01em}
-  .mast .small{margin-left:auto}
+  .mast img{width:26px;height:26px;border-radius:7px}
+  .mark{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .mark span{color:var(--accentText)}
 
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;
-    padding:22px;margin-bottom:14px}
-  h1{font-family:var(--serif);font-size:24px;line-height:1.25;margin:0 0 6px;font-weight:500}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:18px;
+    padding:22px;margin-bottom:14px;box-shadow:var(--sh)}
+  h1{font-size:23px;line-height:1.25;margin:0 0 6px;font-weight:600;letter-spacing:-.015em}
   .sub{color:var(--muted);font-size:15px;margin:0 0 18px}
-  .eyebrow{font-family:var(--serif);font-size:17px;margin-bottom:12px}
+  .eyebrow{font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--accentText);margin-bottom:12px}
   .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
     padding:11px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:none}
-  .m{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .m{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:500}
   .small{font-size:13px;color:var(--faint)}
   b{font-weight:600}
   .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;margin-top:4px}
   .paid{background:color-mix(in srgb,var(--credit) 15%,transparent);color:var(--credit)}
-  .part{background:color-mix(in srgb,var(--fill) 20%,transparent);color:var(--fill)}
-  .wait{background:var(--surface2);color:var(--muted)}
+  .part{background:var(--tint);color:var(--accentText)}
+  .wait{background:var(--sunk);color:var(--muted)}
   .stop{background:color-mix(in srgb,var(--debit) 14%,transparent);color:var(--debit)}
+  .gone{background:var(--sunk);color:var(--faint);text-decoration:line-through}
   .none{color:var(--muted);font-size:15px;padding:8px 0}
 
   .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
   .tab{padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
     color:var(--muted);font:inherit;font-size:14.5px;cursor:pointer}
-  .tab.on{background:var(--fill);color:#241703;border-color:transparent;font-weight:600}
+  .tab.on{background:var(--accent);color:var(--onAccent);border-color:transparent;font-weight:600}
 
   input,select,textarea{width:100%;min-height:46px;padding:0 13px;margin:6px 0 2px;
-    background:var(--surface2);border:1px solid transparent;border-radius:13px;color:var(--text);
+    background:var(--sunk);border:1px solid var(--line);border-radius:12px;color:var(--text);
     font:inherit;font-size:16px}
-  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--fill)}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
   label{display:block;font-size:14px;color:var(--muted);margin-top:12px}
-  button.go{background:var(--fill);color:#241703;border:none;padding:13px 22px;border-radius:999px;
-    font:inherit;font-weight:600;font-size:15.5px;cursor:pointer;margin-top:14px}
-  button.ghost{background:transparent;color:var(--muted);border:none;font:inherit;font-size:14.5px;
-    cursor:pointer;padding:10px 4px;text-decoration:underline}
+  button.go{background:var(--accent);color:var(--onAccent);border:none;padding:13px 22px;
+    border-radius:999px;font:inherit;font-weight:600;font-size:15.5px;cursor:pointer;margin-top:14px}
+  button.ghost{background:transparent;color:var(--accentText);border:none;font:inherit;
+    font-size:14.5px;cursor:pointer;padding:10px 4px;text-decoration:underline}
   .err{color:var(--debit);font-size:14.5px;margin-top:10px}
   .ok{color:var(--credit);font-size:14.5px;margin-top:10px}
-  .drop{border:1.5px dashed var(--line);border-radius:14px;padding:18px 14px;text-align:center;
+  .drop{border:1.5px dashed var(--line2);border-radius:12px;padding:18px 14px;text-align:center;
     color:var(--muted);font-size:15px;cursor:pointer;margin-top:6px;
     transition:border-color .15s,background .15s}
-  .drop.over{border-color:var(--fill);background:color-mix(in srgb,var(--fill) 8%,transparent)}
+  .drop.over{border-color:var(--accent);background:var(--tint)}
   .drop b{color:var(--text)}
 
-  /* Help sits behind a mark rather than on the page. */
   .helpbtn{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);
     background:var(--surface);color:var(--muted);font:inherit;font-size:14px;cursor:pointer;
-    display:inline-flex;align-items:center;justify-content:center;flex:none}
-  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;
+    display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:auto}
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;
     justify-content:center;padding:16px;z-index:50}
   .sheet .card{max-width:560px;width:100%;margin:0;max-height:86vh;overflow:auto}
   @media (min-width:640px){ .sheet{align-items:center} }
@@ -93,8 +107,8 @@
 </head>
 <body>
 <div class="mast">
-  <span class="tally" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-  <span class="mark">Brasstally</span>
+  <img src="https://www.brasstally.com/app/icon-192.png" alt="" width="26" height="26"/>
+  <span class="mark">Brass<span>tally</span></span>
   <button class="helpbtn" id="help" aria-label="How this page works">?</button>
 </div>
 <div class="wrap" id="wrap">
@@ -166,17 +180,22 @@ function openHelp(business) {
   sheet.querySelector("#closehelp").onclick = () => sheet.remove();
 }
 
+/* One label per outcome, and none of them a guess.
+ *
+ * The old version fell through to "Set aside" for anything it did not
+ * recognise, so an invoice in an unexpected state was reported as declined.
+ * Telling a supplier their work was refused when it was not is the worst
+ * thing this page could get wrong, so an unknown state now says it is unknown.
+ */
 function statusOf(inv) {
+  if (inv.status === "voided") return ["gone", "Withdrawn by them"];
   if (inv.payable_status && inv.payable_status !== "open") return ["paid", "Paid"];
-  /* A correction leaves the invoice pending, which is right in their books and
-     wrong on this page: it is waiting on you, not on them. */
-  if (inv.correction_at) return ["stop", "Correction asked for"];
+  if (inv.correction_at) return ["stop", "They asked for a change"];
   if ((Number(inv.paid_amount) || 0) > 0.005) return ["part", "Part paid"];
   if (inv.status === "accepted") return ["wait", "Accepted, not yet paid"];
-  if (inv.status === "correction") return ["stop", "Correction asked for"];
-  if (inv.status === "declined") return ["stop", "Set aside"];
+  if (inv.status === "declined") return ["stop", "Declined"];
   if (inv.status === "pending") return ["wait", "With them for review"];
-  return ["wait", "Set aside"];
+  return ["wait", `Status: ${esc(inv.status || "unknown")}`];
 }
 
 /* ---------- signing in ---------- */
@@ -273,7 +292,10 @@ async function showPortal(t, { anonymous = false } = {}) {
         /* Their words, not a paraphrase. Somebody being asked to change
            something needs to know what. */
         const asked = i.correction_note
-          ? `<div class="small" style="color:var(--debit)">They asked: ${esc(i.correction_note)}</div>` : "";
+          ? `<div class="small" style="color:var(--debit)">They asked: ${esc(i.correction_note)}</div>
+             <button class="ghost" data-fix="${esc(i.invoice_no || "")}"
+               data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
+               >Send a corrected one</button>` : "";
         return `<div class="row">
           <span>
             <div>${esc(i.invoice_no || i.description || "Invoice")}</div>
@@ -370,6 +392,19 @@ async function showPortal(t, { anonymous = false } = {}) {
 
   for (const b of wrap.querySelectorAll(".tab")) {
     b.onclick = () => showPortal(b.dataset.token);
+  }
+
+  /* Answering a correction fills the form from the invoice being corrected.
+     Retyping something they already sent, to fix one line of it, is the kind
+     of small friction that makes people email a PDF instead. */
+  for (const b of wrap.querySelectorAll("[data-fix]")) {
+    b.onclick = () => {
+      document.getElementById("desc").value = b.dataset.desc || "";
+      document.getElementById("amt").value = b.dataset.amt || "";
+      document.getElementById("num").value = b.dataset.fix || "";
+      document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("desc").focus();
+    };
   }
   window.__business = d.business;
   const help2 = document.getElementById("help2");
@@ -475,6 +510,24 @@ async function showPortal(t, { anonymous = false } = {}) {
 
 /* The mark opens help from anywhere, including before anything has loaded. */
 document.getElementById("help").onclick = () => openHelp(window.__business);
+
+/* Current when they look at it.
+ *
+ * A supplier leaves this open, gets paid on Tuesday, and looks again on
+ * Thursday at a page that still says "accepted, not yet paid". The same rule
+ * as the app: refresh on returning to it, and quietly while it is in front of
+ * somebody. */
+let lastLook = Date.now();
+const refreshIfStale = () => {
+  if (!active || document.visibilityState !== "visible") return;
+  if (Date.now() - lastLook < 20000) return;
+  if (document.querySelector(".sheet")) return;
+  lastLook = Date.now();
+  showPortal(active, { anonymous: !portals.length });
+};
+document.addEventListener("visibilitychange", refreshIfStale);
+window.addEventListener("focus", refreshIfStale);
+setInterval(refreshIfStale, 5 * 60 * 1000);
 
 async function start() {
   const { data: { session } } = await sb.auth.getSession();
