@@ -196,6 +196,108 @@ Deno.serve(async (req) => {
     return r.ok ? json({ ok: true, to }) : json({ ok: false, error: r.error });
   }
 
+    /* The portal actions answer before an intake token is resolved.
+
+       Everything below the resolver is for somebody holding an intake link.
+       These two carry a portal token or a session instead, so falling
+       through produced "No intake link with that token" for a button that
+       had never mentioned one. */
+
+    /* Give a contact their own page, and email them the address.
+     *
+     * One portal per contact per ledger, reused rather than reissued: sending
+     * twice should not leave two live addresses to keep track of, and somebody
+     * who has bookmarked the first should not find it dead.
+     */
+    /* An upload slot for somebody holding a portal token.
+     *
+     * The public form's `upload` resolves the ledger from an intake token. A
+     * portal token resolves the same ledger, so the same door serves both
+     * rather than a second one being cut beside it.
+     *
+     * The browser never chooses the path. The server writes it under a prefix
+     * derived from the resolved ledger, exactly as the public form does, so a
+     * portal cannot be used to put a file anywhere else. */
+    if (action === "portal-upload") {
+      const { data: portal } = await db
+        .from("contact_portals").select("ledger_id")
+        .eq("token", String(body.token || "")).eq("active", true).maybeSingle();
+      if (!portal) return json({ ok: false, error: "This link is not active." });
+
+      const raw = String(body.filename || "invoice.pdf");
+      const ext = (raw.match(/\.(pdf|png|jpe?g|heic|webp)$/i)?.[1] || "pdf").toLowerCase();
+      const path = `inbound/${portal.ledger_id}/${crypto.randomUUID()}.${ext}`;
+      const { data, error } = await db.storage.from(BUCKET).createSignedUploadUrl(path);
+      if (error) throw error;
+      return json({ ok: true, path, signedUrl: data.signedUrl });
+    }
+
+    if (action === "portal-invite") {
+      /* `bearer` is a string in this file, read once at the top, not a
+         function. Calling it threw, and a thrown error carries no CORS
+         headers, so the browser reported a CORS failure for what was a plain
+         crash. Two rounds looking at links and headers for a typo. */
+      const token_ = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      if (!token_) return json({ ok: false, error: "Sign in first." }, 401);
+      const caller = await db.auth.getUser(token_);
+      if (!caller?.data?.user) return json({ ok: false, error: "Sign in first." }, 401);
+
+      const { data: contact } = await db
+        .from("contacts").select("id, ledger_id, name, email")
+        .eq("id", String(body.contact_id || "")).maybeSingle();
+      if (!contact) return json({ ok: false, error: "No such contact." });
+      if (!contact.email) return json({ ok: false, error: "That contact has no email address." });
+
+      const { data: led } = await db
+        .from("ledgers").select("id, name, user_id, currency").eq("id", contact.ledger_id).maybeSingle();
+      if (!led || led.user_id !== caller.data.user.id) {
+        return json({ ok: false, error: "That is not your contact." }, 403);
+      }
+
+      let { data: portal } = await db
+        .from("contact_portals").select("token")
+        .eq("ledger_id", contact.ledger_id).eq("contact_id", contact.id).maybeSingle();
+
+      if (!portal) {
+        const token = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
+        const { data: made, error } = await db
+          .from("contact_portals")
+          /* The column is `user_id`, and it has to be given explicitly.
+           *
+           * I wrote `owner_id`, which does not exist, and the default on
+           * `user_id` is `auth.uid()`, which is null under the service role.
+           * So the insert failed on every press and the only sign of it was a
+           * console line nobody would connect to a button doing nothing. */
+          .insert({
+            ledger_id: contact.ledger_id,
+            contact_id: contact.id,
+            token,
+            user_id: led.user_id,
+          })
+          .select("token").single();
+        if (error) return json({ ok: false, error: error.message });
+        portal = made;
+      }
+
+      const base = (Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "");
+      const link = `${base}/c/${portal.token}`;
+
+      const r = await sendMail(
+        contact.email,
+        `${led.name}: your account`,
+        portalInviteEmail({
+          business: led.name,
+          name: contact.name,
+          link,
+          outstanding: Number(body.outstanding) || null,
+          currency: led.currency || "CAD",
+        }),
+        caller.data.user.email ?? undefined,
+      );
+      return r.ok ? json({ ok: true, to: contact.email, link }) : json({ ok: false, error: r.error });
+    }
+
+
   const link = await resolveLink(db, token);
   if (!link) {
     /* Two different problems wore one sentence. A supplier holding a
@@ -276,7 +378,13 @@ Deno.serve(async (req) => {
       if (!inv) return json({ ok: true, skipped: "not from an invitation" });
       if (!inv.contact_email) return json({ ok: true, skipped: "no address on file" });
 
-      const caller = await db.auth.getUser(bearer(req));
+      /* `bearer` is a string in this file, read once at the top, not a
+         function. Calling it threw, and a thrown error carries no CORS
+         headers, so the browser reported a CORS failure for what was a plain
+         crash. Two rounds looking at links and headers for a typo. */
+      const token_ = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      if (!token_) return json({ ok: false, error: "Sign in first." }, 401);
+      const caller = await db.auth.getUser(token_);
       if (!caller?.data?.user) return json({ ok: false, error: "Sign in first." }, 401);
 
       const { data: led } = await db
@@ -320,93 +428,7 @@ Deno.serve(async (req) => {
         : json({ ok: false, error: r.error });
     }
 
-    /* Give a contact their own page, and email them the address.
-     *
-     * One portal per contact per ledger, reused rather than reissued: sending
-     * twice should not leave two live addresses to keep track of, and somebody
-     * who has bookmarked the first should not find it dead.
-     */
-    /* An upload slot for somebody holding a portal token.
-     *
-     * The public form's `upload` resolves the ledger from an intake token. A
-     * portal token resolves the same ledger, so the same door serves both
-     * rather than a second one being cut beside it.
-     *
-     * The browser never chooses the path. The server writes it under a prefix
-     * derived from the resolved ledger, exactly as the public form does, so a
-     * portal cannot be used to put a file anywhere else. */
-    if (action === "portal-upload") {
-      const { data: portal } = await db
-        .from("contact_portals").select("ledger_id")
-        .eq("token", String(body.token || "")).eq("active", true).maybeSingle();
-      if (!portal) return json({ ok: false, error: "This link is not active." });
 
-      const raw = String(body.filename || "invoice.pdf");
-      const ext = (raw.match(/\.(pdf|png|jpe?g|heic|webp)$/i)?.[1] || "pdf").toLowerCase();
-      const path = `inbound/${portal.ledger_id}/${crypto.randomUUID()}.${ext}`;
-      const { data, error } = await db.storage.from(BUCKET).createSignedUploadUrl(path);
-      if (error) throw error;
-      return json({ ok: true, path, signedUrl: data.signedUrl });
-    }
-
-    if (action === "portal-invite") {
-      const caller = await db.auth.getUser(bearer(req));
-      if (!caller?.data?.user) return json({ ok: false, error: "Sign in first." }, 401);
-
-      const { data: contact } = await db
-        .from("contacts").select("id, ledger_id, name, email")
-        .eq("id", String(body.contact_id || "")).maybeSingle();
-      if (!contact) return json({ ok: false, error: "No such contact." });
-      if (!contact.email) return json({ ok: false, error: "That contact has no email address." });
-
-      const { data: led } = await db
-        .from("ledgers").select("id, name, user_id, currency").eq("id", contact.ledger_id).maybeSingle();
-      if (!led || led.user_id !== caller.data.user.id) {
-        return json({ ok: false, error: "That is not your contact." }, 403);
-      }
-
-      let { data: portal } = await db
-        .from("contact_portals").select("token")
-        .eq("ledger_id", contact.ledger_id).eq("contact_id", contact.id).maybeSingle();
-
-      if (!portal) {
-        const token = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
-        const { data: made, error } = await db
-          .from("contact_portals")
-          /* The column is `user_id`, and it has to be given explicitly.
-           *
-           * I wrote `owner_id`, which does not exist, and the default on
-           * `user_id` is `auth.uid()`, which is null under the service role.
-           * So the insert failed on every press and the only sign of it was a
-           * console line nobody would connect to a button doing nothing. */
-          .insert({
-            ledger_id: contact.ledger_id,
-            contact_id: contact.id,
-            token,
-            user_id: led.user_id,
-          })
-          .select("token").single();
-        if (error) return json({ ok: false, error: error.message });
-        portal = made;
-      }
-
-      const base = (Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "");
-      const link = `${base}/c/${portal.token}`;
-
-      const r = await sendMail(
-        contact.email,
-        `${led.name}: your account`,
-        portalInviteEmail({
-          business: led.name,
-          name: contact.name,
-          link,
-          outstanding: Number(body.outstanding) || null,
-          currency: led.currency || "CAD",
-        }),
-        caller.data.user.email ?? undefined,
-      );
-      return r.ok ? json({ ok: true, to: contact.email, link }) : json({ ok: false, error: r.error });
-    }
 
     if (action === "preview-invite") {
       /* Send yourself the exact email a supplier gets.
