@@ -326,6 +326,29 @@ Deno.serve(async (req) => {
      * twice should not leave two live addresses to keep track of, and somebody
      * who has bookmarked the first should not find it dead.
      */
+    /* An upload slot for somebody holding a portal token.
+     *
+     * The public form's `upload` resolves the ledger from an intake token. A
+     * portal token resolves the same ledger, so the same door serves both
+     * rather than a second one being cut beside it.
+     *
+     * The browser never chooses the path. The server writes it under a prefix
+     * derived from the resolved ledger, exactly as the public form does, so a
+     * portal cannot be used to put a file anywhere else. */
+    if (action === "portal-upload") {
+      const { data: portal } = await db
+        .from("contact_portals").select("ledger_id")
+        .eq("token", String(body.token || "")).eq("active", true).maybeSingle();
+      if (!portal) return json({ ok: false, error: "This link is not active." });
+
+      const raw = String(body.filename || "invoice.pdf");
+      const ext = (raw.match(/\.(pdf|png|jpe?g|heic|webp)$/i)?.[1] || "pdf").toLowerCase();
+      const path = `inbound/${portal.ledger_id}/${crypto.randomUUID()}.${ext}`;
+      const { data, error } = await db.storage.from(BUCKET).createSignedUploadUrl(path);
+      if (error) throw error;
+      return json({ ok: true, path, signedUrl: data.signedUrl });
+    }
+
     if (action === "portal-invite") {
       const caller = await db.auth.getUser(bearer(req));
       if (!caller?.data?.user) return json({ ok: false, error: "Sign in first." }, 401);

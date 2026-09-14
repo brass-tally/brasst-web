@@ -3051,7 +3051,7 @@ function Ledger({ onSignOut }) {
             contacts={contacts}
             onChanged={refreshContacts}
             readOnly={readOnly}
-          data={data} inbound={inbound} openPreview={openPreview} />
+          data={data} inbound={inbound} openPreview={openPreview} onConfirmVoid={askConfirm} />
         )}
         {tab === "taxpack" && (
           <TaxPack data={data} month={month} openPreview={openPreview} ledgerName={data.ledger.name} />
@@ -8544,11 +8544,21 @@ function ContactHistory({ contact, data, inbound, onClose, openPreview }) {
   );
 }
 
-function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound = [], openPreview }) {
+function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound = [], openPreview , onConfirmVoid }) {
   /* Whose history is open. */
   const [historyFor, setHistoryFor] = useState(null);
   const [inviting, setInviting] = useState("");
   const [invited, setInvited] = useState(() => new Set());
+
+  /* Who already has a page, so the row offers the right control rather than
+     inviting somebody who was invited last week. */
+  const [portals, setPortals] = useState([]);
+  const refreshPortals = useCallback(async () => {
+    if (!ledgerId) return;
+    setPortals(await share.listPortals(ledgerId));
+  }, [ledgerId]);
+  useEffect(() => { refreshPortals(); }, [refreshPortals]);
+  const portalFor = (id) => portals.find((p) => p.contactId === id);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", phone: "", role: "vendor", note: "" });
@@ -8745,22 +8755,81 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                     Only for somebody with an address, because there is nowhere
                     to send it otherwise, and the button would be a promise the
                     row cannot keep. */}
-                {!readOnly && c.email && (
-                  <button
-                    onClick={async () => {
-                      setInviting(c.id);
-                      const res = await share.invitePortal(c.id);
-                      setInviting("");
-                      setInvited((prev) => (res?.ok ? new Set(prev).add(c.id) : prev));
-                      if (res?.ok === false && res?.error) setErr(res.error);
-                    }}
-                    disabled={inviting === c.id}
-                    style={{ color: invited.has(c.id) ? P.credit : P.brassText }}
-                    className="h-11 px-2 text-[14px] shrink-0 press"
-                  >
-                    {inviting === c.id ? "Sending" : invited.has(c.id) ? "Sent" : "Give them a page"}
-                  </button>
-                )}
+                {!readOnly && c.email && (() => {
+                  const portal = portalFor(c.id);
+
+                  /* Three states, three different words. Nobody has a page,
+                     somebody has one and is using it, somebody had one and it
+                     is switched off. Offering "invite" to all three would be
+                     the button lying about what it does. */
+                  if (portal?.active) {
+                    return (
+                      <span className="flex items-center gap-1 shrink-0">
+                        <span
+                          style={{ color: P.faint }}
+                          className="text-[13px]"
+                          title={portal.openedAt ? `Last opened ${String(portal.openedAt).slice(0, 10)}` : "Never opened"}
+                        >
+                          {portal.opens > 0 ? `account · ${portal.opens} opens` : "account · unopened"}
+                        </span>
+                        <button
+                          onClick={async () => {
+                            if (!(await onConfirmVoid?.({
+                              title: `Turn off ${c.name}'s account?`,
+                              body: "Their address stops working immediately. Nothing they have sent you is affected, and you can turn it back on.",
+                              confirmLabel: "Turn it off",
+                            }))) return;
+                            setInviting(c.id);
+                            await share.setPortalActive(c.id, false);
+                            setInviting("");
+                            refreshPortals();
+                          }}
+                          disabled={inviting === c.id}
+                          style={{ color: P.debit }}
+                          className="h-11 px-2 text-[14px] press"
+                        >
+                          Turn off
+                        </button>
+                      </span>
+                    );
+                  }
+
+                  if (portal && !portal.active) {
+                    return (
+                      <button
+                        onClick={async () => {
+                          setInviting(c.id);
+                          await share.setPortalActive(c.id, true);
+                          setInviting("");
+                          refreshPortals();
+                        }}
+                        disabled={inviting === c.id}
+                        style={{ color: P.brassText }}
+                        className="h-11 px-2 text-[14px] shrink-0 press"
+                      >
+                        {inviting === c.id ? "Turning on" : "Turn their account back on"}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <button
+                      onClick={async () => {
+                        setInviting(c.id);
+                        const res = await share.invitePortal(c.id);
+                        setInviting("");
+                        setInvited((prev) => (res?.ok ? new Set(prev).add(c.id) : prev));
+                        if (res?.ok === false && res?.error) setErr(res.error);
+                        refreshPortals();
+                      }}
+                      disabled={inviting === c.id}
+                      style={{ color: invited.has(c.id) ? P.credit : P.brassText }}
+                      className="h-11 px-2 text-[14px] shrink-0 press"
+                    >
+                      {inviting === c.id ? "Sending" : invited.has(c.id) ? "Sent" : "Send their account"}
+                    </button>
+                  );
+                })()}
 
                 {!readOnly && (
                   <>

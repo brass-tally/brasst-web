@@ -559,3 +559,33 @@ export async function invitePortal(contactId, { outstanding } = {}) {
     return data;
   }, { ok: false });
 }
+
+/* Which contacts have a page, so the row can offer the right control. */
+export async function listPortals(ledgerId) {
+  return soft("portals", async () => {
+    const { data, error } = await supabase
+      .from("contact_portals")
+      .select("contact_id, token, active, opens, opened_at")
+      .eq("ledger_id", ledgerId);
+    if (error) throw error;
+    return (data || []).map((r) => ({
+      contactId: r.contact_id, token: r.token, active: r.active,
+      opens: r.opens || 0, openedAt: r.opened_at || undefined,
+    }));
+  }, []);
+}
+
+/* Turn a contact's page off, or back on.
+ *
+ * Off rather than deleted: the row records whether it was ever opened, and
+ * deleting it loses that. Somebody turning a page off usually wants to know
+ * later whether it had been read. */
+export async function setPortalActive(contactId, active) {
+  assertWritable();
+  return soft("portal access", async () => {
+    const { error } = await supabase
+      .from("contact_portals").update({ active }).eq("contact_id", contactId);
+    if (error) throw error;
+    return { ok: true };
+  }, { ok: false });
+}

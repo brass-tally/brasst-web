@@ -38,6 +38,24 @@
     padding:13px 22px;border-radius:999px;font-weight:600;font-size:15.5px;margin-top:6px}
   .total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
     padding-top:12px;margin-top:6px;border-top:1px solid var(--line);font-size:16px}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .tab{padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
+    color:var(--muted);font:inherit;font-size:14.5px;cursor:pointer}
+  .tab.on{background:var(--brass);color:#241703;border-color:transparent;font-weight:600}
+  input,select,textarea{width:100%;min-height:46px;padding:0 13px;margin:6px 0 2px;
+    background:var(--sunk);border:none;border-radius:13px;color:var(--ink);font:inherit;font-size:16px}
+  textarea{padding:12px 13px;min-height:78px;resize:vertical}
+  label{display:block;font-size:14px;color:var(--muted);margin-top:12px}
+  button.go{background:var(--brass);color:#241703;border:none;padding:13px 22px;border-radius:999px;
+    font:inherit;font-weight:600;font-size:15.5px;cursor:pointer;margin-top:14px}
+  button.ghost{background:transparent;color:var(--muted);border:none;font:inherit;font-size:14.5px;
+    cursor:pointer;padding:10px 4px}
+  .err{color:var(--debit);font-size:14.5px;margin-top:10px}
+  .drop{border:2px dashed var(--line);border-radius:14px;padding:18px 14px;text-align:center;
+    color:var(--muted);font-size:15px;cursor:pointer;margin-top:6px;transition:border-color .15s,background .15s}
+  .drop.over{border-color:var(--brass);background:color-mix(in srgb,var(--brass) 8%,transparent)}
+  .drop b{color:var(--ink);font-weight:600}
+  .ok{color:var(--credit);font-size:14.5px;margin-top:10px}
   footer{color:var(--faint);font-size:12.5px;text-align:center;margin-top:22px;line-height:1.5}
 </style>
 </head>
@@ -46,74 +64,140 @@
   <div class="card"><p class="none" id="loading">Opening your account…</p></div>
 </div>
 
-<script>
-/* One contact's view of one business's books, and nothing else.
+<script type="module">
+/* A supplier's own view.
  *
- * Read only, by token, no account. The server returns only rows naming this
- * contact: no balances, no other suppliers, no bank. */
-const el = (id) => document.getElementById(id);
+ * Two ways in, and the difference matters. A token link is one relationship,
+ * no sign-in, and anybody holding the address can read it. Signing in with
+ * your own address gathers every business that has invited you, and a
+ * forwarded link cannot reach it.
+ *
+ * Signing in is an upgrade, not a gate: the token link keeps working for
+ * somebody who does not want an account, because most suppliers do not.
+ */
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 const PROJECT = "https://xwoccmgppjmgficvmogr.supabase.co";
 const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh3b2NjbWdwcGptZ2ZpY3Ztb2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3MDkwNjEsImV4cCI6MjEwMDI4NTA2MX0.B8rEqFhe53_URqHQHpWpW5JIIENsFqJ4o95o10gL6Hw";
+const sb = createClient(PROJECT, ANON);
+
+const wrap = document.getElementById("wrap");
+const esc = (v) => String(v ?? "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+const money = (n, ccy) =>
+  `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0)
+    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const token =
   (location.pathname.match(/^\/c\/([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
   new URLSearchParams(location.search).get("t") || "";
 
-const money = (n, ccy) =>
-  `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0)
-    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-const esc = (s) => String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+let portals = [];   // every business, when signed in
+let active = null;  // the token being viewed
 
 function statusOf(inv) {
   if (inv.payable_status && inv.payable_status !== "open") return ["paid", "Paid"];
-  const paid = Number(inv.paid_amount) || 0;
-  if (paid > 0.005) return ["part", "Part paid"];
+  if ((Number(inv.paid_amount) || 0) > 0.005) return ["part", "Part paid"];
   if (inv.status === "accepted") return ["wait", "Accepted, not yet paid"];
   if (inv.status === "pending") return ["wait", "With them for review"];
   return ["wait", "Set aside"];
 }
 
-(async () => {
-  if (!token) { el("loading").textContent = "This address is missing its code."; return; }
-  let d;
-  try {
-    const r = await fetch(`${PROJECT}/rest/v1/rpc/contact_portal_view`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
-      body: JSON.stringify({ p_token: token }),
-    });
-    d = await r.json();
-  } catch {
-    el("loading").textContent = "Could not reach the server. Try again in a moment.";
-    return;
-  }
+/* ---------- signing in ---------- */
+
+function askForEmail(message) {
+  wrap.innerHTML = `
+    <div class="card">
+      <div class="eyebrow">Brasstally</div>
+      <h1>Your invoices, in one place</h1>
+      <p class="sub">Every business that has invited you, what they owe you, and a way to send the next
+        invoice. Your address, a six digit code, no password.</p>
+      <label for="em">Your email address</label>
+      <input id="em" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"/>
+      <button class="go" id="send">Send me a code</button>
+      ${message ? `<p class="err">${esc(message)}</p>` : ""}
+      ${token ? `<p><button class="ghost" id="skip">Just show me this one invoice link</button></p>` : ""}
+    </div>`;
+  document.getElementById("send").onclick = async () => {
+    const email = document.getElementById("em").value.trim();
+    if (!email) return;
+    const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    if (error) return askForEmail(error.message);
+    askForCode(email);
+  };
+  if (token) document.getElementById("skip").onclick = () => showPortal(token, { anonymous: true });
+}
+
+function askForCode(email) {
+  wrap.innerHTML = `
+    <div class="card">
+      <div class="eyebrow">Brasstally</div>
+      <h1>Check your email</h1>
+      <p class="sub">A six digit code is on its way to ${esc(email)}. It expires in an hour.</p>
+      <label for="code">The code</label>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"/>
+      <button class="go" id="go">Open my account</button>
+      <p><button class="ghost" id="back">Use a different address</button></p>
+      <p class="err" id="err"></p>
+    </div>`;
+  document.getElementById("back").onclick = () => askForEmail();
+  document.getElementById("go").onclick = async () => {
+    const code = document.getElementById("code").value.trim();
+    const { error } = await sb.auth.verifyOtp({ email, token: code, type: "email" });
+    if (error) { document.getElementById("err").textContent = error.message; return; }
+    start();
+  };
+}
+
+/* ---------- the businesses ---------- */
+
+async function loadPortals() {
+  const { data } = await sb.rpc("my_supplier_portals");
+  if (!data || data.ok === false) return [];
+  return data.portals || [];
+}
+
+function businessTabs() {
+  if (portals.length < 2) return "";
+  return `<div class="tabs">${portals.map((p) =>
+    `<button class="tab ${p.token === active ? "on" : ""}" data-token="${esc(p.token)}">
+       ${esc(p.business)}${p.outstanding > 0.005 ? ` · ${money(p.outstanding, p.currency)}` : ""}
+     </button>`).join("")}</div>`;
+}
+
+/* ---------- one business ---------- */
+
+async function showPortal(t, { anonymous = false } = {}) {
+  active = t;
+  const r = await fetch(`${PROJECT}/rest/v1/rpc/contact_portal_view`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
+    body: JSON.stringify({ p_token: t }),
+  });
+  const d = await r.json().catch(() => null);
   if (!d || d.ok === false) {
-    el("loading").textContent = (d && d.error) || "This link is not active.";
+    wrap.innerHTML = `<div class="card"><p class="none">${esc((d && d.error) || "This link is not active.")}</p></div>`;
     return;
   }
 
   const ccy = d.currency || "CAD";
-  const owed = (d.invoices || []).reduce((n, i) => {
-    if (!i.payable_status || i.payable_status !== "open") return n;
-    return n + Math.max(0, Math.abs(Number(i.payable_amount) || 0) - (Number(i.paid_amount) || 0));
-  }, 0);
+  const owed = (d.invoices || []).reduce((n, i) =>
+    i.payable_status === "open"
+      ? n + Math.max(0, Math.abs(Number(i.payable_amount) || 0) - (Number(i.paid_amount) || 0))
+      : n, 0);
 
-  const invoiceRows = (d.invoices || []).length
+  const invoices = (d.invoices || []).length
     ? d.invoices.map((i) => {
         const [cls, label] = statusOf(i);
         const amount = i.payable_amount != null ? i.payable_amount : i.amount;
         const foreign = i.currency && i.currency !== ccy
-          ? `<div class="small m">${esc(i.currency)} ${(Math.abs(i.amount)).toLocaleString(undefined,{minimumFractionDigits:2})}</div>` : "";
-        const paidLine = (Number(i.paid_amount) || 0) > 0.005 && i.payable_status === "open"
+          ? `<div class="small m">${esc(i.currency)} ${Math.abs(i.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>` : "";
+        const part = (Number(i.paid_amount) || 0) > 0.005 && i.payable_status === "open"
           ? `<div class="small">${money(i.paid_amount, ccy)} received${i.balance_due ? `, rest due ${i.balance_due}` : ""}</div>` : "";
-        const settled = i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : "";
         return `<div class="row">
           <span>
             <div>${esc(i.invoice_no || i.description || "Invoice")}</div>
-            <div class="small">${String(i.submitted_at || "").slice(0, 10)}
-              ${i.has_file ? " · attachment on file" : ""}</div>
-            ${paidLine}${settled}
+            <div class="small">${String(i.submitted_at || "").slice(0, 10)}${i.has_file ? " · attachment on file" : ""}</div>
+            ${part}${i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : ""}
             <span class="pill ${cls}">${label}</span>
           </span>
           <span class="m">${money(amount, ccy)}${foreign}</span>
@@ -121,45 +205,174 @@ function statusOf(inv) {
       }).join("")
     : `<p class="none">Nothing yet.</p>`;
 
-  const paymentRows = (d.payments || []).length
+  const payments = (d.payments || []).length
     ? d.payments.map((p) => `<div class="row">
-         <span><div>${esc(p.description || "Payment")}</div><div class="small">${p.date}</div></span>
-         <span class="m">${money(p.amount, ccy)}</span>
-       </div>`).join("")
+        <span><div>${esc(p.description || "Payment")}</div><div class="small">${p.date}</div></span>
+        <span class="m">${money(p.amount, ccy)}</span></div>`).join("")
     : `<p class="none">Nothing has been paid out yet.</p>`;
 
-  el("wrap").innerHTML = `
+  wrap.innerHTML = `
+    ${businessTabs()}
     <div class="card">
       <div class="eyebrow">${esc(d.business)}</div>
       <h1>Your account</h1>
-      <p class="sub">Everything between you and ${esc(d.business)}. Read only, and always current.</p>
+      <p class="sub">Everything between you and ${esc(d.business)}. Always current.</p>
       <div class="total"><span>Outstanding to you</span><span class="m">${money(owed, ccy)}</span></div>
     </div>
 
-    <div class="card">
-      <div class="eyebrow">Invoices you have sent</div>
-      ${invoiceRows}
-    </div>
+    <div class="card"><div class="eyebrow">Invoices you have sent</div>${invoices}</div>
+    <div class="card"><div class="eyebrow">Payments received</div>${payments}</div>
 
     <div class="card">
-      <div class="eyebrow">Payments received</div>
-      ${paymentRows}
+      <div class="eyebrow">Send a new invoice</div>
+      <p class="sub">It arrives in their books for review. Nothing is owed until they accept it.</p>
+      <label for="desc">What it is for</label>
+      <input id="desc" placeholder="Framing, second floor"/>
+      <label for="amt">Amount</label>
+      <input id="amt" inputmode="decimal" placeholder="1250.00"/>
+      <label for="ccy">Currency</label>
+      <select id="ccy">
+        ${["CAD","USD","EUR","GBP","PKR","INR","AED","AUD"].map((c) =>
+          `<option value="${c}" ${c === ccy ? "selected" : ""}>${c}</option>`).join("")}
+      </select>
+      <label for="num">Your invoice number, if you use one</label>
+      <input id="num" placeholder="INV-014"/>
+      <label for="due">Due by</label>
+      <input id="due" type="date"/>
+
+      <label for="file">The invoice itself, if you have a PDF</label>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Attach a file, or drop one here">
+        <b>Drop a file here</b> or tap to choose<br/>
+        <span class="small">Optional. The details above are enough on their own.</span>
+      </div>
+      <input id="file" type="file" accept=".pdf,image/*" style="position:absolute;width:1px;height:1px;opacity:0"/>
+      <div class="small" id="fname"></div>
+
+      <button class="go" id="send">Send it</button>
+      <p class="err" id="serr"></p><p class="ok" id="sok"></p>
     </div>
 
-    <div class="card" style="text-align:center">
-      <p class="sub" style="margin-bottom:10px">Something new to bill for?</p>
-      <a class="btn" id="send" href="#">Send an invoice</a>
-    </div>
+    ${anonymous ? `<div class="card" style="text-align:center">
+      <p class="sub" style="margin:0 0 6px">Working with more than one business on Brasstally?</p>
+      <button class="ghost" id="signin">Sign in to see them all</button></div>` : ""}
 
     <footer>
-      This page belongs to ${esc(d.contact.name || "you")}. Anyone with the address can read it,
-      so treat it like an account statement.<br/>Sent by ${esc(d.business)} through Brasstally.
+      ${anonymous
+        ? "Anyone with this address can read this page, so treat it like a statement."
+        : `Signed in as ${esc(d.contact.email || "")}. <button class="ghost" id="out">Sign out</button>`}
     </footer>`;
 
-  /* The intake link is a separate thing with its own token, so this points at
-     the business rather than pretending to carry one. */
-  el("send").href = `mailto:?subject=${encodeURIComponent("Invoice for " + d.business)}`;
-})();
+  for (const b of wrap.querySelectorAll(".tab")) {
+    b.onclick = () => showPortal(b.dataset.token);
+  }
+  const signin = document.getElementById("signin");
+  if (signin) signin.onclick = () => askForEmail();
+  const out = document.getElementById("out");
+  if (out) out.onclick = async () => { await sb.auth.signOut(); start(); };
+
+  /* The file, on the same terms as the public form: one target for dropping
+     and tapping, because a drop zone that is not clickable is a trap on a
+     phone. */
+  const drop = document.getElementById("drop");
+  const fileInput = document.getElementById("file");
+  const showFile = () => {
+    const f = fileInput.files && fileInput.files[0];
+    document.getElementById("fname").textContent = f ? `${f.name}, ${(f.size / 1048576).toFixed(1)} MB` : "";
+    drop.querySelector("b").textContent = f ? "Attached" : "Drop a file here";
+  };
+  drop.onclick = () => fileInput.click();
+  drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } };
+  fileInput.onchange = showFile;
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    const dt = new DataTransfer(); dt.items.add(f);
+    fileInput.files = dt.files; showFile();
+  });
+
+  document.getElementById("send").onclick = async () => {
+    const amount = Number(String(document.getElementById("amt").value).replace(/[^0-9.]/g, ""));
+    const err = document.getElementById("serr");
+    const ok = document.getElementById("sok");
+    err.textContent = ""; ok.textContent = "";
+    if (!(amount > 0)) { err.textContent = "Enter an amount greater than zero."; return; }
+
+    /* Upload first, so an invoice never arrives promising an attachment that
+       failed on the way. */
+    let filePath = null;
+    const file = fileInput.files && fileInput.files[0];
+    if (file) {
+      if (file.size > 8 * 1024 * 1024) {
+        err.textContent = `That file is ${(file.size / 1048576).toFixed(1)} MB, and 8 MB is the limit.`;
+        return;
+      }
+      ok.textContent = "Uploading the file…";
+      try {
+        const slot = await fetch(`${PROJECT}/functions/v1/invoice-mail`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` },
+          body: JSON.stringify({ action: "portal-upload", token: active, filename: file.name }),
+        }).then((r) => r.json());
+        if (!slot?.ok) throw new Error(slot?.error || "Could not prepare the upload.");
+        const put = await fetch(slot.signedUrl, { method: "PUT", body: file });
+        if (!put.ok) throw new Error("The file did not upload.");
+        filePath = slot.path;
+      } catch (e) {
+        ok.textContent = "";
+        err.textContent = e.message || "The file did not upload. Try again, or send without it.";
+        return;
+      }
+      ok.textContent = "";
+    }
+
+    const { data, error } = await sb.rpc("portal_submit_invoice", {
+      p_token: active,
+      p_amount: amount,
+      p_description: document.getElementById("desc").value.trim() || null,
+      p_invoice_no: document.getElementById("num").value.trim() || null,
+      p_due_date: document.getElementById("due").value || null,
+      p_currency: document.getElementById("ccy").value,
+      p_lines: null,
+      p_file_path: filePath,
+    });
+    if (error) { err.textContent = error.message; return; }
+    if (data && data.ok === false) { err.textContent = data.error; return; }
+    ok.textContent = "Sent. It is with them for review.";
+    setTimeout(() => showPortal(active, { anonymous }), 1200);
+  };
+}
+
+/* ---------- where we begin ---------- */
+
+async function start() {
+  const { data: { session } } = await sb.auth.getSession();
+
+  if (session) {
+    portals = await loadPortals();
+    if (portals.length) {
+      /* If they arrived by link, open that business; otherwise the first. */
+      const wanted = portals.find((p) => p.token === token) || portals[0];
+      return showPortal(wanted.token);
+    }
+    /* Signed in, but no business has invited this address. Saying so beats an
+       empty page that looks broken. */
+    wrap.innerHTML = `<div class="card">
+      <h1>Nothing here yet</h1>
+      <p class="sub">No business has given this address an account. If you were sent a link, open that
+      instead, or ask them to invite this address.</p>
+      <button class="ghost" id="out">Sign out</button></div>`;
+    document.getElementById("out").onclick = async () => { await sb.auth.signOut(); start(); };
+    return;
+  }
+
+  /* Not signed in. A link gets you straight in; without one, ask. */
+  if (token) return showPortal(token, { anonymous: true });
+  askForEmail();
+}
+
+start();
 </script>
 </body>
 </html>
