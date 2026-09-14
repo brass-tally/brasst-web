@@ -211,8 +211,33 @@ async function showPortal(t, { anonymous = false } = {}) {
         <span class="m">${money(p.amount, ccy)}</span></div>`).join("")
     : `<p class="none">Nothing has been paid out yet.</p>`;
 
+  /* An empty account is a first visit, not a failure.
+   *
+   * Three cards reading "Nothing yet" under a total of $0.00 tells somebody
+   * who has just followed an invitation that they have arrived somewhere
+   * broken. What they need is what this is, what happens when they use it, and
+   * the one thing there is to do.
+   *
+   * Once anything exists the ledger view is the right one, so this replaces it
+   * only while there is genuinely nothing to show. */
+  const brandNew = !(d.invoices || []).length && !(d.payments || []).length;
+
   wrap.innerHTML = `
     ${businessTabs()}
+    ${brandNew ? `
+    <div class="card">
+      <div class="eyebrow">${esc(d.business)}</div>
+      <h1>You have not sent anything yet</h1>
+      <p class="sub">${esc(d.business)} has given you this page so you can invoice them and see where
+        each one stands, without emailing anybody to ask.</p>
+      <div class="row"><span><b>Send an invoice</b><div class="small">It arrives in their books for
+        review. Nothing is owed until they accept it.</div></span></div>
+      <div class="row"><span><b>Watch it move</b><div class="small">Waiting, accepted, part paid,
+        paid. The page updates itself, so there is nothing to chase.</div></span></div>
+      <div class="row"><span><b>Keep the address</b><div class="small">Bookmark it. It stays live
+        until ${esc(d.business)} turns it off.</div></span></div>
+    </div>
+    ` : `
     <div class="card">
       <div class="eyebrow">${esc(d.business)}</div>
       <h1>Your account</h1>
@@ -222,10 +247,13 @@ async function showPortal(t, { anonymous = false } = {}) {
 
     <div class="card"><div class="eyebrow">Invoices you have sent</div>${invoices}</div>
     <div class="card"><div class="eyebrow">Payments received</div>${payments}</div>
+    `}
 
     <div class="card">
-      <div class="eyebrow">Send a new invoice</div>
-      <p class="sub">It arrives in their books for review. Nothing is owed until they accept it.</p>
+      <div class="eyebrow">${brandNew ? "Your first invoice" : "Send a new invoice"}</div>
+      <p class="sub">${brandNew
+        ? `Fill this in and it goes straight to ${esc(d.business)}. A description and an amount are enough.`
+        : "It arrives in their books for review. Nothing is owed until they accept it."}</p>
       <label for="desc">What it is for</label>
       <input id="desc" placeholder="Framing, second floor"/>
       <label for="amt">Amount</label>

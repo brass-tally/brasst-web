@@ -33,6 +33,14 @@
       "trailingSlash": false,
       "rewrites": [
         {
+          "source": "/c/:token",
+          "destination": "/c/index.html"
+        },
+        {
+          "source": "/c/:token/",
+          "destination": "/c/index.html"
+        },
+        {
           "source": "/i/:slug/:token",
           "destination": "/i/index.html"
         },
