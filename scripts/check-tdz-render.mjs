@@ -54,6 +54,13 @@ for (const file of report) {
          walk would otherwise attribute it to the wrong hook. */
       if (/useEffect\(/.test(t)) break;
       if (/=\s*use(Memo|State)\(/.test(t)) { verdict = t.trim(); break; }
+
+      /* A plain assignment was tried here and removed.
+
+         Matching `const a = b` walking backwards cannot tell a component body
+         from any other function body, so it flagged helpers in tax.js and
+         tokens.js that run only when called. A check with false positives
+         blocks a build for no reason, which is worse than the gap it closes. */
       if (/=\s*(async\s*)?\(?[\w\s,{}]*\)?\s*=>/.test(t) && !/use(Memo|State)\(/.test(t)) break;
       if (/^\s*(function|const .* = function)/.test(t)) break;
     }

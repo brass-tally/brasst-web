@@ -6798,9 +6798,20 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
    * holds the rate actually used; today's rate, for one not yet accepted; and
    * failing both, nothing, because a guessed conversion in a total is worse
    * than a total that admits it is short. */
+  /* The books' currency, resolved here rather than borrowed from below.
+   *
+   * `ledgerCcy` is declared much further down, inside the part of this
+   * component that renders a single invoice. Reading it from a memo that runs
+   * on every render reached it before it existed: "Cannot access ... before
+   * initialization", and the whole app failed to render rather than one
+   * section failing.
+   *
+   * The prop is the real source, so this reads the prop. */
+  const booksCcy = ledgerCurrency || "CAD";
+
   const inLedgerCcy = (iv) => {
     const amount = Math.abs(Number(iv.amount) || 0);
-    if (!iv.currency || iv.currency === ledgerCcy) return amount;
+    if (!iv.currency || iv.currency === booksCcy) return amount;
 
     const ob = iv.obligationId ? onFindPayable?.(iv.obligationId) : null;
     if (ob) return Math.abs(Number(ob.amount) || 0);
@@ -6839,7 +6850,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
       return aw - bw || b.total - a.total;
     });
     /* eslint-disable-next-line */
-  }, [invites, rates, ledgerCcy]);
+  }, [invites, rates, booksCcy]);
   const [correcting, setCorrecting] = useState(null);
   const [reason, setReason] = useState("");
 
