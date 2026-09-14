@@ -218,6 +218,76 @@ Deno.serve(async (req) => {
      * The browser never chooses the path. The server writes it under a prefix
      * derived from the resolved ledger, exactly as the public form does, so a
      * portal cannot be used to put a file anywhere else. */
+    /* Tell the business an invoice has landed.
+     *
+     * The public form does this through `notify`, which needs an intake token.
+     * A portal submission has none, so without this an invoice raised from a
+     * supplier's own page arrived in the tray silently and waited for somebody
+     * to happen to look.
+     *
+     * The supplier gets their copy in the same call, because a submission they
+     * cannot see a receipt for is one they will send again. */
+    if (action === "portal-submitted") {
+      const { data: portal } = await db
+        .from("contact_portals").select("ledger_id, contact_id")
+        .eq("token", String(body.token || "")).eq("active", true).maybeSingle();
+      if (!portal) return json({ ok: false, error: "This link is not active." });
+
+      const { data: led } = await db
+        .from("ledgers").select("id, name, user_id").eq("id", portal.ledger_id).maybeSingle();
+      const { data: contact } = await db
+        .from("contacts").select("name, email").eq("id", portal.contact_id).maybeSingle();
+      if (!led || !contact) return json({ ok: false, error: "Nothing to notify about." });
+
+      const { data: owner } = await db.auth.admin.getUserById(led.user_id);
+      const ownerEmail = owner?.user?.email;
+
+      const amount = Number(body.amount) || 0;
+      const desc = String(body.description || "an invoice");
+
+      if (ownerEmail) {
+        await sendMail(
+          ownerEmail,
+          `${contact.name} sent you an invoice`,
+          /* The template's own fields, not fields I assumed it had.
+             `currency` and `link` were being passed and silently ignored: the
+             amount would have rendered in dollars whatever the supplier
+             invoiced in. The currency goes in the description instead, where
+             the template will actually print it. */
+          invoiceReceivedEmail({
+            business: led.name,
+            party: contact.name,
+            amount,
+            description: body.currency && body.currency !== "CAD"
+              ? `${desc} (invoiced in ${String(body.currency)})`
+              : desc,
+            invoiceNo: body.invoice_no ? String(body.invoice_no) : null,
+            dueDate: body.due_date ? String(body.due_date) : null,
+            appUrl: `${(Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "")}/app`,
+          }),
+        );
+      }
+
+      if (contact.email) {
+        await sendMail(
+          contact.email,
+          `${led.name}: invoice received`,
+          invoiceSubmittedEmail({
+            business: led.name,
+            party: contact.name,
+            amount,
+            description: body.currency && body.currency !== "CAD"
+              ? `${desc} (invoiced in ${String(body.currency)})`
+              : desc,
+            invoiceNo: body.invoice_no ? String(body.invoice_no) : null,
+            dueDate: body.due_date ? String(body.due_date) : null,
+          }),
+        );
+      }
+
+      return json({ ok: true, told: [ownerEmail, contact.email].filter(Boolean).length });
+    }
+
     if (action === "portal-upload") {
       const { data: portal } = await db
         .from("contact_portals").select("ledger_id")
@@ -563,6 +633,16 @@ Deno.serve(async (req) => {
 
       const reason = String(body.reason || "").slice(0, 400)
         .replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]!));
+
+      /* Write the request down, not only send it.
+      *
+      * The email is the notification; the record is what lets the supplier's
+      * own page say "correction asked for" with the reason, days later, when
+      * the email has been buried. A notification nobody kept is a notification
+      * nobody has. */
+      await db.from("inbound_invoices")
+        .update({ correction_note: reason, correction_at: new Date().toISOString() })
+        .eq("id", body.id);
 
       const r = await sendMail(
         inv.contact_email,

@@ -6,60 +6,97 @@
 <meta name="robots" content="noindex, nofollow"/>
 <title>Your account</title>
 <style>
+  /* The app's own tokens, not an approximation of them.
+     Lifted from ui/tokens.js so a supplier and an owner are demonstrably
+     looking at the same product rather than two things in similar colours. */
   :root{
-    --paper:#FAF9F7; --surface:#FFFFFF; --sunk:#F1EEE9; --line:#E7E2DA;
-    --ink:#1C1917; --muted:#5A534E; --faint:#8A827B;
-    --brass:#A9620A; --credit:#15803D; --debit:#B91C1C;
+    --bg:#FAFAF9; --surface:#FFFFFF; --surface2:#F4F4F2; --line:#EAE9E5;
+    --text:#1A1A17; --muted:#57564F; --faint:#86847C;
+    --brass:#1C1C19; --onbrass:#FFFFFF; --fill:#B45309;
+    --credit:#08805A; --debit:#C4442F;
+    --serif:ui-serif,Georgia,'Iowan Old Style','Times New Roman',serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   }
   @media (prefers-color-scheme: dark){
-    :root{ --paper:#12110F; --surface:#1A1816; --sunk:#221F1C; --line:#2C2824;
-           --ink:#F5F3EF; --muted:#A8A099; --faint:#7A736C; --brass:#E9A23B; }
+    :root{ --bg:#0C0C0B; --surface:#151513; --surface2:#1E1E1B; --line:#242320;
+           --text:#F5F4F0; --muted:#ADABA3; --faint:#807E76;
+           --brass:#F5F4F0; --onbrass:#14140F; --fill:#E9A23B;
+           --credit:#34D399; --debit:#FB7185; }
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--ink);
+  body{margin:0;background:var(--bg);color:var(--text);
     font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
-    padding:28px 16px 64px}
+    padding:26px 16px 72px;-webkit-font-smoothing:antialiased}
   .wrap{max-width:620px;margin:0 auto}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:22px;margin-bottom:14px}
-  h1{font-size:22px;margin:0 0 4px;font-weight:600}
+
+  /* The masthead: wordmark, and the tally the app is named for. */
+  .mast{display:flex;align-items:center;gap:10px;margin:0 auto 18px;max-width:620px}
+  .tally{display:flex;gap:3px;align-items:flex-end;height:17px}
+  .tally i{display:block;width:2px;height:15px;background:var(--fill);border-radius:1px}
+  .tally i:nth-child(5){height:19px;transform:rotate(-24deg);transform-origin:bottom;margin-left:-11px}
+  .mark{font-family:var(--serif);font-size:17px;letter-spacing:.01em}
+  .mast .small{margin-left:auto}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;
+    padding:22px;margin-bottom:14px}
+  h1{font-family:var(--serif);font-size:24px;line-height:1.25;margin:0 0 6px;font-weight:500}
   .sub{color:var(--muted);font-size:15px;margin:0 0 18px}
-  .eyebrow{color:var(--brass);font-size:14px;font-weight:600;margin-bottom:12px}
+  .eyebrow{font-family:var(--serif);font-size:17px;margin-bottom:12px}
   .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
     padding:11px 0;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:none}
-  .m{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .m{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
   .small{font-size:13px;color:var(--faint)}
-  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
-  .paid{background:color-mix(in srgb,var(--credit) 16%,transparent);color:var(--credit)}
-  .part{background:color-mix(in srgb,var(--brass) 20%,transparent);color:var(--brass)}
-  .wait{background:var(--sunk);color:var(--muted)}
+  b{font-weight:600}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;margin-top:4px}
+  .paid{background:color-mix(in srgb,var(--credit) 15%,transparent);color:var(--credit)}
+  .part{background:color-mix(in srgb,var(--fill) 20%,transparent);color:var(--fill)}
+  .wait{background:var(--surface2);color:var(--muted)}
+  .stop{background:color-mix(in srgb,var(--debit) 14%,transparent);color:var(--debit)}
   .none{color:var(--muted);font-size:15px;padding:8px 0}
-  a.btn{display:inline-block;background:var(--brass);color:#241703;text-decoration:none;
-    padding:13px 22px;border-radius:999px;font-weight:600;font-size:15.5px;margin-top:6px}
-  .total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
-    padding-top:12px;margin-top:6px;border-top:1px solid var(--line);font-size:16px}
+
   .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
   .tab{padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
     color:var(--muted);font:inherit;font-size:14.5px;cursor:pointer}
-  .tab.on{background:var(--brass);color:#241703;border-color:transparent;font-weight:600}
+  .tab.on{background:var(--fill);color:#241703;border-color:transparent;font-weight:600}
+
   input,select,textarea{width:100%;min-height:46px;padding:0 13px;margin:6px 0 2px;
-    background:var(--sunk);border:none;border-radius:13px;color:var(--ink);font:inherit;font-size:16px}
-  textarea{padding:12px 13px;min-height:78px;resize:vertical}
+    background:var(--surface2);border:1px solid transparent;border-radius:13px;color:var(--text);
+    font:inherit;font-size:16px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--fill)}
   label{display:block;font-size:14px;color:var(--muted);margin-top:12px}
-  button.go{background:var(--brass);color:#241703;border:none;padding:13px 22px;border-radius:999px;
+  button.go{background:var(--fill);color:#241703;border:none;padding:13px 22px;border-radius:999px;
     font:inherit;font-weight:600;font-size:15.5px;cursor:pointer;margin-top:14px}
   button.ghost{background:transparent;color:var(--muted);border:none;font:inherit;font-size:14.5px;
-    cursor:pointer;padding:10px 4px}
+    cursor:pointer;padding:10px 4px;text-decoration:underline}
   .err{color:var(--debit);font-size:14.5px;margin-top:10px}
-  .drop{border:2px dashed var(--line);border-radius:14px;padding:18px 14px;text-align:center;
-    color:var(--muted);font-size:15px;cursor:pointer;margin-top:6px;transition:border-color .15s,background .15s}
-  .drop.over{border-color:var(--brass);background:color-mix(in srgb,var(--brass) 8%,transparent)}
-  .drop b{color:var(--ink);font-weight:600}
   .ok{color:var(--credit);font-size:14.5px;margin-top:10px}
+  .drop{border:1.5px dashed var(--line);border-radius:14px;padding:18px 14px;text-align:center;
+    color:var(--muted);font-size:15px;cursor:pointer;margin-top:6px;
+    transition:border-color .15s,background .15s}
+  .drop.over{border-color:var(--fill);background:color-mix(in srgb,var(--fill) 8%,transparent)}
+  .drop b{color:var(--text)}
+
+  /* Help sits behind a mark rather than on the page. */
+  .helpbtn{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);
+    background:var(--surface);color:var(--muted);font:inherit;font-size:14px;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;flex:none}
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;
+    justify-content:center;padding:16px;z-index:50}
+  .sheet .card{max-width:560px;width:100%;margin:0;max-height:86vh;overflow:auto}
+  @media (min-width:640px){ .sheet{align-items:center} }
+
+  .total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding-top:12px;margin-top:6px;border-top:1px solid var(--line);font-size:16px}
   footer{color:var(--faint);font-size:12.5px;text-align:center;margin-top:22px;line-height:1.5}
 </style>
 </head>
 <body>
+<div class="mast">
+  <span class="tally" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+  <span class="mark">Brasstally</span>
+  <button class="helpbtn" id="help" aria-label="How this page works">?</button>
+</div>
 <div class="wrap" id="wrap">
   <div class="card"><p class="none" id="loading">Opening your account…</p></div>
 </div>
@@ -94,10 +131,50 @@ const token =
 let portals = [];   // every business, when signed in
 let active = null;  // the token being viewed
 
+/* Help behind a mark.
+ *
+ * The explanations used to sit on the page, which is right once and clutter
+ * every time after. Somebody who needs them can ask; somebody who does not
+ * never sees them again. */
+function openHelp(business) {
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+  sheet.innerHTML = `
+    <div class="card">
+      <h1>How this page works</h1>
+      <p class="sub">Your side of the books you share with ${esc(business || "them")}.</p>
+      <div class="row"><span><b>Sending an invoice</b><div class="small">It arrives in their books for
+        review. Nothing is owed until they accept it, and you are emailed either way.</div></span></div>
+      <div class="row"><span><b>What the labels mean</b><div class="small">
+        <b>With them for review</b> is waiting on them.
+        <b>Accepted</b> is in their books and owed.
+        <b>Part paid</b> shows what has arrived and when the rest is due.
+        <b>Paid</b> is settled.
+        <b>Correction asked for</b> means they want it resent with a change.
+        <b>Set aside</b> means they have declined it.</div></span></div>
+      <div class="row"><span><b>Attachments</b><div class="small">A PDF or a photo is optional. The
+        description and amount are enough on their own.</div></span></div>
+      <div class="row"><span><b>Who can see this</b><div class="small">Anyone holding the address, so
+        treat it like a statement. Signing in with your own email means a forwarded link cannot reach
+        it, and gathers every business that has invited you.</div></span></div>
+      <div class="row"><span><b>If something looks wrong</b><div class="small">Tell them directly.
+        This page reflects their books, so a correction has to happen there.</div></span></div>
+      <button class="go" id="closehelp">Close</button>
+    </div>`;
+  sheet.onclick = (e) => { if (e.target === sheet) sheet.remove(); };
+  document.body.appendChild(sheet);
+  sheet.querySelector("#closehelp").onclick = () => sheet.remove();
+}
+
 function statusOf(inv) {
   if (inv.payable_status && inv.payable_status !== "open") return ["paid", "Paid"];
+  /* A correction leaves the invoice pending, which is right in their books and
+     wrong on this page: it is waiting on you, not on them. */
+  if (inv.correction_at) return ["stop", "Correction asked for"];
   if ((Number(inv.paid_amount) || 0) > 0.005) return ["part", "Part paid"];
   if (inv.status === "accepted") return ["wait", "Accepted, not yet paid"];
+  if (inv.status === "correction") return ["stop", "Correction asked for"];
+  if (inv.status === "declined") return ["stop", "Set aside"];
   if (inv.status === "pending") return ["wait", "With them for review"];
   return ["wait", "Set aside"];
 }
@@ -193,11 +270,15 @@ async function showPortal(t, { anonymous = false } = {}) {
           ? `<div class="small m">${esc(i.currency)} ${Math.abs(i.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>` : "";
         const part = (Number(i.paid_amount) || 0) > 0.005 && i.payable_status === "open"
           ? `<div class="small">${money(i.paid_amount, ccy)} received${i.balance_due ? `, rest due ${i.balance_due}` : ""}</div>` : "";
+        /* Their words, not a paraphrase. Somebody being asked to change
+           something needs to know what. */
+        const asked = i.correction_note
+          ? `<div class="small" style="color:var(--debit)">They asked: ${esc(i.correction_note)}</div>` : "";
         return `<div class="row">
           <span>
             <div>${esc(i.invoice_no || i.description || "Invoice")}</div>
             <div class="small">${String(i.submitted_at || "").slice(0, 10)}${i.has_file ? " · attachment on file" : ""}</div>
-            ${part}${i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : ""}
+            ${part}${asked}${i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : ""}
             <span class="pill ${cls}">${label}</span>
           </span>
           <span class="m">${money(amount, ccy)}${foreign}</span>
@@ -230,12 +311,9 @@ async function showPortal(t, { anonymous = false } = {}) {
       <h1>You have not sent anything yet</h1>
       <p class="sub">${esc(d.business)} has given you this page so you can invoice them and see where
         each one stands, without emailing anybody to ask.</p>
-      <div class="row"><span><b>Send an invoice</b><div class="small">It arrives in their books for
-        review. Nothing is owed until they accept it.</div></span></div>
-      <div class="row"><span><b>Watch it move</b><div class="small">Waiting, accepted, part paid,
-        paid. The page updates itself, so there is nothing to chase.</div></span></div>
-      <div class="row"><span><b>Keep the address</b><div class="small">Bookmark it. It stays live
-        until ${esc(d.business)} turns it off.</div></span></div>
+      <p class="sub" style="margin:0">Send one below and you will see it here, from review through to
+        paid. Bookmark the address: it stays live until ${esc(d.business)} turns it off.
+        <button class="ghost" id="help2">How this works</button></p>
     </div>
     ` : `
     <div class="card">
@@ -293,6 +371,9 @@ async function showPortal(t, { anonymous = false } = {}) {
   for (const b of wrap.querySelectorAll(".tab")) {
     b.onclick = () => showPortal(b.dataset.token);
   }
+  window.__business = d.business;
+  const help2 = document.getElementById("help2");
+  if (help2) help2.onclick = () => openHelp(d.business);
   const signin = document.getElementById("signin");
   if (signin) signin.onclick = () => askForEmail();
   const out = document.getElementById("out");
@@ -367,12 +448,33 @@ async function showPortal(t, { anonymous = false } = {}) {
     });
     if (error) { err.textContent = error.message; return; }
     if (data && data.ok === false) { err.textContent = data.error; return; }
-    ok.textContent = "Sent. It is with them for review.";
+    /* Tell them, then say so.
+     *
+     * Fired without waiting: a slow mail service should not hold up the
+     * confirmation for something that has already been recorded. */
+    fetch(`${PROJECT}/functions/v1/invoice-mail`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` },
+      body: JSON.stringify({
+        action: "portal-submitted",
+        token: active,
+        amount,
+        description: document.getElementById("desc").value.trim() || null,
+        invoice_no: document.getElementById("num").value.trim() || null,
+        due_date: document.getElementById("due").value || null,
+        currency: document.getElementById("ccy").value,
+      }),
+    }).catch(() => {});
+
+    ok.textContent = "Sent. It is with them for review, and they have been emailed.";
     setTimeout(() => showPortal(active, { anonymous }), 1200);
   };
 }
 
 /* ---------- where we begin ---------- */
+
+/* The mark opens help from anywhere, including before anything has loaded. */
+document.getElementById("help").onclick = () => openHelp(window.__business);
 
 async function start() {
   const { data: { session } } = await sb.auth.getSession();
