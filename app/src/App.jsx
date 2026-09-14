@@ -43,7 +43,7 @@ import { TallyPeek } from "./shell/Peek";
 import { useNudges } from "./shell/useNudges";
 import { notify, createNotification } from "./lib/notifications";
 import {
-  P, PALETTES, THEMES, PALETTE_NAMES, currentPalette, setPalette,
+  P, PALETTES, THEMES, PALETTE_NAMES, currentPalette, setPalette, systemTheme, onSystemThemeChange,
   elev, R, MONO, SANS, SERIF, applyThemeVars, THEME_KEY,
   Card, cardStyle, Panel, SectionHeading, Stat,
   Btn, IconButton,
@@ -1337,6 +1337,14 @@ function Ledger({ onSignOut }) {
     return () => { supabase.removeChannel(channel); };
   }, [currentLedger?.id]);
 
+  /* Follow the device, while it is set to follow.
+     Nothing is stored on a change: the preference is still "system", and what
+     it resolves to is a fact about the phone rather than a decision. */
+  useEffect(() => {
+    if (theme !== "system") return;
+    return onSystemThemeChange((next) => setPalette(currentPalette(), next));
+  }, [theme]);
+
   const morningRan = useRef("");
   const runMorningPass = async () => {
     const today = todayStr();
@@ -1494,7 +1502,7 @@ function Ledger({ onSignOut }) {
         // The palette is a separate choice from the mode, so both are applied
         // together. Doing only the mode is how a chosen palette silently
         // reverted to Ember on every reload.
-        setPalette(currentPalette(), t);
+        setPalette(currentPalette(), t === "system" ? systemTheme() : t);
         try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode */ }
         setThemeState(t);
         setMonth(thisMonth());
@@ -8568,7 +8576,14 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
               <div style={{ color: P.faint }} className="text-[14px]">Everyone starts on paper</div>
             </div>
             <button
-              onClick={() => { const next = theme === "dark" ? "light" : "dark"; setTheme(next); setPalette(pal, next); }}
+              onClick={() => {
+                /* Three states, not two: dark, light, and whatever the device
+                   says. A phone that dims itself at sunset should take the app
+                   with it, and somebody who wants it fixed can still fix it. */
+                const next = theme === "dark" ? "light" : theme === "light" ? "system" : "dark";
+                setTheme(next);
+                setPalette(pal, next === "system" ? systemTheme() : next);
+              }}
               role="switch"
               aria-checked={theme === "dark"}
               aria-label="Night theme"
@@ -12934,8 +12949,22 @@ function CashCalendar({ data }) {
      The two figures belong to the page, not to whichever way you are reading
      it. They used to live inside the list branch, so switching to the month
      grid dropped them. */
-  const horizonEnd = (() => { const d = new Date(); d.setDate(d.getDate() + span); return d.toISOString().slice(0, 10); })();
-  const horizonOcc = occurrencesBetween(data, today, horizonEnd, today);
+  /* The horizon starts from the day you are looking at.
+
+     It was anchored on today whatever you clicked, so the figures sat
+     unchanged while the calendar moved underneath them, which reads as broken
+     rather than deliberate. Clicking the 20th should answer "what happens in
+     the month after the 20th".
+
+     And it was a plain expression, so a new horizon was built on every render
+     and the cards flickered for no reason. */
+  const horizonFrom = selectedDay || today;
+  const { horizonEnd, horizonOcc } = useMemo(() => {
+    const d = new Date(`${horizonFrom}T00:00:00`);
+    d.setDate(d.getDate() + span);
+    const end = d.toISOString().slice(0, 10);
+    return { horizonEnd: end, horizonOcc: occurrencesBetween(data, horizonFrom, end, today) };
+  }, [data, horizonFrom, span, today]);
   const ahead = horizonOcc.filter((o) => !o.overdue);
   const aheadIn = ahead.filter((o) => o.kind === "receivables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
   const aheadOut = ahead.filter((o) => o.kind === "payables" && !isCredits(o)).reduce((s, o) => s + o.amount, 0);
@@ -12945,14 +12974,20 @@ function CashCalendar({ data }) {
   const HorizonCards = () => (
     <div className="grid sm:grid-cols-2 gap-3">
       <div style={cardStyle()} className="p-5">
-        <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected in, next {span} days</div>
+        <div style={{ color: P.text }} className="text-[15px] mb-2.5">
+            {/* Say which day it counts from, or the figure looks like it is
+                ignoring you. */}
+            Expected in, {span} days from {horizonFrom === today ? "today" : horizonFrom}
+          </div>
         <div style={{ fontFamily: MONO, color: P.credit }} className="text-[30px] tabular-nums leading-none">{fmt0(aheadIn)}</div>
         <div style={{ color: P.faint }} className="text-[14px] mt-4">
           {aheadInCount} {aheadInCount === 1 ? "receivable" : "receivables"}
         </div>
       </div>
       <div style={cardStyle()} className="p-5">
-        <div style={{ color: P.text }} className="text-[15px] mb-2.5">Expected out, next {span} days</div>
+        <div style={{ color: P.text }} className="text-[15px] mb-2.5">
+            Expected out, {span} days from {horizonFrom === today ? "today" : horizonFrom}
+          </div>
         <div style={{ fontFamily: MONO, color: P.debit }} className="text-[30px] tabular-nums leading-none">{fmt0(aheadOut)}</div>
         <div style={{ color: P.faint }} className="text-[14px] mt-4">
           {aheadOutCount} {aheadOutCount === 1 ? "payable and recurring cost" : "payables and recurring costs"}

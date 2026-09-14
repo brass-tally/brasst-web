@@ -221,3 +221,29 @@ export function setTheme(mode) {
 }
 
 applyThemeVars(P);
+
+/* What the device is set to.
+ *
+ * Separate from the stored preference: "system" is a choice to follow, and
+ * this is what it resolves to right now. Kept here so the app and the landing
+ * page answer the question the same way.
+ */
+export function systemTheme() {
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "dark";
+  }
+}
+
+/** Call back when the device changes its mind. Returns an unsubscribe. */
+export function onSystemThemeChange(fn) {
+  try {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e) => fn(e.matches ? "dark" : "light");
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  } catch {
+    return () => {};
+  }
+}
