@@ -2959,7 +2959,7 @@ function Ledger({ onSignOut }) {
             contacts={contacts}
             onChanged={refreshContacts}
             readOnly={readOnly}
-          />
+          data={data} inbound={inbound} openPreview={openPreview} />
         )}
         {tab === "taxpack" && (
           <TaxPack data={data} month={month} openPreview={openPreview} ledgerName={data.ledger.name} />
@@ -6598,7 +6598,7 @@ function ArrivedCard({ items, onApprove, onDismiss, busyId }) {
   );
 }
 
-function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [] }) {
+function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [], trailing = null }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
@@ -7484,38 +7484,15 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
             : "Invoices sent to you"}
         </span>
 
-        {/* Pushed to the right, away from the two that open something. A
-            control that changes what you are looking at and controls that
-            change nothing should not sit in the same run of icons. */}
-        <span className="flex-1" />
+        {/* Whatever the section wants beside its icons: same line, far end.
+            Rendered here rather than wrapped around this component, so an
+            expanding panel below cannot squeeze the row and push them onto a
+            line of their own. */}
+        {trailing && (
+          <span className="flex items-center gap-2 shrink-0 ml-auto">{trailing}</span>
+        )}
 
-        <button
-          onClick={manualRefresh}
-          onMouseEnter={() => setHint("refresh")}
-          onMouseLeave={() => setHint(null)}
-          onFocus={() => setHint("refresh")}
-          onBlur={() => setHint(null)}
-          aria-label="Check for new invoices"
-          disabled={spinning}
-          style={{ background: P.surface, color: P.text, boxShadow: elev(1), borderRadius: 14 }}
-          className="relative w-11 h-11 flex items-center justify-center shrink-0 press"
-        >
-          <RefreshCw size={17} className={spinning ? "spin-once" : undefined} />
-          {hint === "refresh" && (
-            <span
-              role="tooltip"
-              className="hint-bubble"
-              style={{
-                position: "absolute", top: "calc(100% + 7px)", right: 0,
-                background: P.text, color: P.bg, borderRadius: 9, padding: "5px 9px",
-                fontSize: 12.5, whiteSpace: "nowrap", zIndex: 30, pointerEvents: "none",
-                boxShadow: elev(2),
-              }}
-            >
-              Check for new invoices
-            </span>
-          )}
-        </button>
+        
       </div>
 
       {voided && (
@@ -7588,7 +7565,42 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   the box is empty. */}
               {(rows.length > 0 || denied.length > 0) && !filed && (
                 <>
-                  <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices sent to you</h3>
+                  {/* Check for new ones, inside the thing it refreshes.
+
+                  It sat on the icon row outside the panel, which put a control
+                  for the tray next to two controls that open things, and left
+                  it visible when the tray was shut and there was nothing to
+                  refresh. */}
+              <div className="flex items-start justify-between gap-3">
+                <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices sent to you</h3>
+                <button
+                          onClick={manualRefresh}
+                          onMouseEnter={() => setHint("refresh")}
+                          onMouseLeave={() => setHint(null)}
+                          onFocus={() => setHint("refresh")}
+                          onBlur={() => setHint(null)}
+                          aria-label="Check for new invoices"
+                          disabled={spinning}
+                          style={{ background: P.surface, color: P.text, boxShadow: elev(1), borderRadius: 14 }}
+                          className="relative w-11 h-11 flex items-center justify-center shrink-0 press"
+                        >
+                          <RefreshCw size={17} className={spinning ? "spin-once" : undefined} />
+                          {hint === "refresh" && (
+                            <span
+                              role="tooltip"
+                              className="hint-bubble"
+                              style={{
+                                position: "absolute", top: "calc(100% + 7px)", right: 0,
+                                background: P.text, color: P.bg, borderRadius: 9, padding: "5px 9px",
+                                fontSize: 12.5, whiteSpace: "nowrap", zIndex: 30, pointerEvents: "none",
+                                boxShadow: elev(2),
+                              }}
+                            >
+                              Check for new invoices
+                            </span>
+                          )}
+                        </button>
+              </div>
                   <p style={{ color: P.muted }} className="text-[15px] mb-2">
                     One line each. Accepting adds it to what you owe; denying takes it off this list.
                   </p>
@@ -7779,7 +7791,36 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
 
           {open === "link" && (
             <>
-              <h3 style={{ fontFamily: SERIF }} className="text-xl">Let them send it to you</h3>
+              <div className="flex items-start justify-between gap-3">
+                <h3 style={{ fontFamily: SERIF }} className="text-xl">Let them send it to you</h3>
+                <button
+                          onClick={manualRefresh}
+                          onMouseEnter={() => setHint("refresh")}
+                          onMouseLeave={() => setHint(null)}
+                          onFocus={() => setHint("refresh")}
+                          onBlur={() => setHint(null)}
+                          aria-label="Check for new invoices"
+                          disabled={spinning}
+                          style={{ background: P.surface, color: P.text, boxShadow: elev(1), borderRadius: 14 }}
+                          className="relative w-11 h-11 flex items-center justify-center shrink-0 press"
+                        >
+                          <RefreshCw size={17} className={spinning ? "spin-once" : undefined} />
+                          {hint === "refresh" && (
+                            <span
+                              role="tooltip"
+                              className="hint-bubble"
+                              style={{
+                                position: "absolute", top: "calc(100% + 7px)", right: 0,
+                                background: P.text, color: P.bg, borderRadius: 9, padding: "5px 9px",
+                                fontSize: 12.5, whiteSpace: "nowrap", zIndex: 30, pointerEvents: "none",
+                                boxShadow: elev(2),
+                              }}
+                            >
+                              Check for new invoices
+                            </span>
+                          )}
+                        </button>
+              </div>
               <p style={{ color: P.muted }} className="text-[15px] mb-3">
                 Send a contractor this link. Their invoice arrives in the tray, and becomes something you owe
                 only when you accept it.
@@ -8012,7 +8053,157 @@ function ContactField({ label, value, onChange, type, placeholder, id }) {
 
 /* The list itself. Reached from the menu, because it is a place you set up
    once and then mostly meet through the pickers elsewhere. */
-function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
+/* Everything that has passed between you and one person.
+ *
+ * The contact row held a name and an address, which is a rolodex rather than a
+ * ledger. The question people actually bring to a contact is "what have I paid
+ * them, and what is outstanding", and that was three screens away.
+ *
+ * Matched on name and address rather than by a stored link, because most of
+ * this history predates contacts existing. An exact name match is the spine;
+ * the address catches the rest.
+ */
+function ContactHistory({ contact, data, inbound, onClose, openPreview }) {
+  const norm = (v) => String(v || "").trim().toLowerCase();
+  const name = norm(contact.name);
+  const email = norm(contact.email);
+
+  const isTheirs = (party, addr) =>
+    (name && norm(party) === name) || (email && addr && norm(addr) === email);
+
+  const obligations = [
+    ...(data.receivables || []).map((o) => ({ ...o, kind: "receivables" })),
+    ...(data.payables || []).map((o) => ({ ...o, kind: "payables" })),
+  ].filter((o) => isTheirs(o.party));
+
+  const invoices = (inbound || []).filter((i) => isTheirs(i.party, i.contactEmail));
+
+  const settledTxIds = new Set(obligations.map((o) => o.settledTxId).filter(Boolean));
+  const payments = (data.transactions || [])
+    .filter((t) => settledTxIds.has(t.id) || isTheirs(t.description))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const open = obligations.filter((o) => o.status === "open");
+  const owed = open.reduce(
+    (n, o) => n + (o.kind === "payables" ? 1 : -1)
+      * Math.max(0, Math.abs(o.amount) - (Number(o.paidAmount) || 0)),
+    0,
+  );
+  const paidToThem = payments
+    .filter((t) => t.type === "expense")
+    .reduce((n, t) => n + Math.abs(t.amount), 0);
+
+  const Row = ({ left, right, sub, tone }) => (
+    <div className="flex items-baseline justify-between gap-3 py-2" style={{ borderTop: `1px solid ${P.line}` }}>
+      <span className="min-w-0">
+        <span style={{ color: P.muted }} className="text-[14px] block truncate">{left}</span>
+        {sub && <span style={{ color: P.faint }} className="text-[12.5px]">{sub}</span>}
+      </span>
+      <span
+        style={{ fontFamily: MONO, color: tone || P.faint }}
+        className="text-[14px] tabular-nums shrink-0"
+      >
+        {right}
+      </span>
+    </div>
+  );
+
+  return (
+    <Modal
+      onClose={onClose}
+      size="lg"
+      title={contact.name}
+      panelClass="flex flex-col"
+      panelStyle={{ maxHeight: "88vh" }}
+    >
+      <ModalBody className="overflow-y-auto min-h-0 flex-1">
+        <div
+          className="flex items-baseline justify-between gap-3 pb-3 sticky top-0 z-10"
+          style={{ borderBottom: `1px solid ${P.line}`, background: P.surface }}
+        >
+          <span style={{ color: P.muted }} className="text-[15px]">
+            {paidToThem > 0 ? `${fmt(paidToThem)} paid to them` : "Nothing paid yet"}
+          </span>
+          {Math.abs(owed) > 0.005 && (
+            <span
+              style={{ fontFamily: MONO, color: owed > 0 ? P.debit : P.credit }}
+              className="text-[17px] tabular-nums"
+            >
+              {owed > 0 ? `${fmt(owed)} owed` : `${fmt(Math.abs(owed))} owed to you`}
+            </span>
+          )}
+        </div>
+
+        {open.length > 0 && (
+          <div className="mt-4">
+            <div style={{ color: P.text }} className="text-[15.5px] mb-1">Still open</div>
+            {open.map((o) => (
+              <Row
+                key={o.id}
+                left={o.description || (o.kind === "payables" ? "A bill" : "An invoice")}
+                sub={`${o.kind === "payables" ? "you owe" : "owed to you"} · due ${o.dueDate || "no date"}${
+                  (Number(o.paidAmount) || 0) > 0 ? ` · ${fmt(o.paidAmount)} of ${fmt(Math.abs(o.amount))} paid` : ""
+                }`}
+                right={fmt(Math.max(0, Math.abs(o.amount) - (Number(o.paidAmount) || 0)))}
+                tone={o.kind === "payables" ? P.debit : P.credit}
+              />
+            ))}
+          </div>
+        )}
+
+        {payments.length > 0 && (
+          <div className="mt-4">
+            <div style={{ color: P.text }} className="text-[15.5px] mb-1">Payments</div>
+            {payments.map((t) => (
+              <Row
+                key={t.id}
+                left={t.description || t.category}
+                sub={`${t.date}${t.category && t.description ? ` · ${t.category}` : ""}`}
+                right={`${t.type === "income" ? "+" : "−"}${fmt(t.amount)}`}
+                tone={t.type === "income" ? P.credit : P.text}
+              />
+            ))}
+          </div>
+        )}
+
+        {invoices.length > 0 && (
+          <div className="mt-4">
+            <div style={{ color: P.text }} className="text-[15.5px] mb-1">Invoices they sent</div>
+            {invoices.map((i) => (
+              <Row
+                key={i.id}
+                left={`${i.invoiceNo ? `${i.invoiceNo} · ` : ""}${i.description || "Invoice"}`}
+                sub={`${String(i.submittedAt || "").slice(0, 10)} · ${
+                  i.status === "accepted" ? "accepted" : i.status === "pending" ? "waiting on you" : "set aside"
+                }`}
+                right={i.currency && i.currency !== (data.ledger.currency || "CAD")
+                  ? `${i.currency} ${fmt(i.amount)}`
+                  : fmt(i.amount)}
+              />
+            ))}
+          </div>
+        )}
+
+        {!open.length && !payments.length && !invoices.length && (
+          <p style={{ color: P.muted }} className="text-[15px] py-4">
+            Nothing has passed between you yet. Anything you file against this name will show here.
+          </p>
+        )}
+
+        {(open.length > 0 || payments.length > 0 || invoices.length > 0) && (
+          <p style={{ color: P.faint }} className="text-[12.5px] mt-4">
+            Matched on name and address, because most of this predates the contact being saved. An entry
+            filed under a different spelling will not appear.
+          </p>
+        )}
+      </ModalBody>
+    </Modal>
+  );
+}
+
+function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound = [], openPreview }) {
+  /* Whose history is open. */
+  const [historyFor, setHistoryFor] = useState(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", phone: "", role: "vendor", note: "" });
@@ -8190,6 +8381,20 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
                     {[c.email, c.phone, c.note].filter(Boolean).join(" · ") || "No details"}
                   </span>
                 </span>
+
+                {/* Before Edit, and outside the readOnly guard.
+
+                    Reading what has passed between you and somebody is not an
+                    edit, and an accountant with read access has more reason to
+                    want it than anyone. */}
+                <button
+                  onClick={() => setHistoryFor(c)}
+                  style={{ color: P.brassText }}
+                  className="h-11 px-2 text-[14px] shrink-0 press"
+                >
+                  History
+                </button>
+
                 {!readOnly && (
                   <>
                     <button
@@ -8210,12 +8415,23 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly }) {
                     </button>
                   </>
                 )}
-              </div>
+                {/* Rendered inside the returned tree, not after it. */}
+      {historyFor && (
+        <ContactHistory
+          contact={historyFor}
+          data={data}
+          inbound={inbound}
+          openPreview={openPreview}
+          onClose={() => setHistoryFor(null)}
+        />
+      )}
+    </div>
             ))}
           </section>
         ))
       )}
     </div>
+
   );
 }
 
@@ -11447,10 +11663,24 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
           below them down a row and left the icons floating with nothing
           beside them. Same line, opposite ends, and the section starts higher
           up the page. */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="min-w-0">
-          {!readOnly && (
-            <InvoiceTools
+      {/* The panel must not live inside a flex row.
+
+          I put the icons and these two buttons on one line, and the expanding
+          panel came with them: opening the intake link squeezed the row, and
+          the buttons wrapped to the bottom.
+
+          InvoiceTools now takes what belongs beside its icons and renders it
+          on its own row, so the panel below is full width whatever is open. */}
+      {!readOnly && (
+        <InvoiceTools
+          trailing={
+            <>
+              <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
+              <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
+                <Download size={14} /> Export CSV
+              </Btn>
+            </>
+          }
           ledgerId={data.ledger.id}
           ledgerCurrency={data.ledger.currency}
           openPreview={openPreview}
@@ -11463,15 +11693,6 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
           onConfirmVoid={askConfirm}
         />
       )}
-        </span>
-
-        <span className="flex items-center gap-2 shrink-0">
-          <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
-          <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
-            <Download size={14} /> Export CSV
-          </Btn>
-        </span>
-      </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis.map((k) => (
           <div key={k.label} style={cardStyle()} className="p-4 flex flex-col">
