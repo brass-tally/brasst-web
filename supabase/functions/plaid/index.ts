@@ -500,6 +500,59 @@ Deno.serve(async (req) => {
       return json({ ok: true, reset: ids.length, added });
     }
 
+    /* Ask Plaid what it has, without our cursor in the way.
+     *
+     * `/transactions/sync` is incremental and depends on state we store.
+     * `/transactions/get` takes a date range and depends on nothing: it is
+     * Plaid answering "what do you hold for this account between these
+     * dates", which is the question nobody has actually put to it yet.
+     *
+     * Stores nothing. This exists to tell two possibilities apart:
+     *
+     *   Plaid has the 12th and our sync is not delivering it, which is ours
+     *   Plaid does not have it, which is the bank's
+     */
+    if (action === "probe") {
+      const { data: conns } = await supabase
+        .from("bank_connections").select("id, institution, access_token")
+        .eq("ledger_id", body.ledger_id);
+
+      const days = Number(body.days) || 10;
+      const end = new Date().toISOString().slice(0, 10);
+      const start = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+
+      const out: Array<Record<string, unknown>> = [];
+      for (const c of conns || []) {
+        try {
+          const d = await plaid("/transactions/get", {
+            access_token: c.access_token,
+            start_date: start,
+            end_date: end,
+            options: { count: 100, offset: 0 },
+          });
+          const txns = (d.transactions || []) as Array<Record<string, unknown>>;
+          const dates = [...new Set(txns.map((t) => String(t.date)))].sort().reverse();
+          out.push({
+            institution: c.institution,
+            window: `${start} to ${end}`,
+            total_available: d.total_transactions ?? txns.length,
+            returned: txns.length,
+            newest: dates[0] || null,
+            dates: dates.slice(0, 6),
+            sample: txns.slice(0, 5).map((t) => ({
+              date: t.date,
+              name: String(t.name || "").slice(0, 40),
+              amount: t.amount,
+              pending: t.pending,
+            })),
+          });
+        } catch (e) {
+          out.push({ institution: c.institution, error: String((e as Error).message || e) });
+        }
+      }
+      return json({ ok: true, accounts: out });
+    }
+
     if (action === "disconnect") {
       const { error } = await supabase.from("bank_connections").delete().eq("id", body.connection_id);
       if (error) throw error;
