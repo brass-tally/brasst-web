@@ -465,6 +465,41 @@ Deno.serve(async (req) => {
       return json({ ok: true, updated: done, webhook: url });
     }
 
+    /* Forget the cursor and read the account again from the beginning.
+     *
+     * `/transactions/sync` is incremental: it returns what has changed since a
+     * cursor, and the cursor is stored on the connection. A cursor that has
+     * gone stale returns an empty page and reports success, so every check
+     * says the sync worked, because it did. The feed simply stops moving and
+     * nothing anywhere says why.
+     *
+     * Clearing it makes the next sync re-read the account from the start.
+     * That is safe: every line is keyed on (connection_id, plaid_txn_id), so
+     * a replay updates what is there rather than duplicating it, which is the
+     * same property that makes a failed sync safe to retry.
+     */
+    if (action === "reset_cursor") {
+      const { data: conns } = await supabase
+        .from("bank_connections").select("id").eq("ledger_id", body.ledger_id);
+      const ids = (conns || []).map((c) => c.id);
+      if (!ids.length) return json({ ok: true, reset: 0 });
+
+      const { error } = await supabase
+        .from("bank_connections").update({ cursor: null }).in("id", ids);
+      if (error) throw error;
+
+      // Re-read immediately, so the answer arrives with the request.
+      let added = 0;
+      for (const id of ids) {
+        const { data: conn } = await supabase
+          .from("bank_connections").select("*").eq("id", id).single();
+        if (!conn) continue;
+        const r = await syncOne(supabase, plaid, conn);
+        added += Number(r.added) || 0;
+      }
+      return json({ ok: true, reset: ids.length, added });
+    }
+
     if (action === "disconnect") {
       const { error } = await supabase.from("bank_connections").delete().eq("id", body.connection_id);
       if (error) throw error;
