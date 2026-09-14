@@ -513,9 +513,18 @@ Deno.serve(async (req) => {
      *   Plaid does not have it, which is the bank's
      */
     if (action === "probe") {
-      const { data: conns } = await supabase
-        .from("bank_connections").select("id, institution, access_token")
-        .eq("ledger_id", body.ledger_id);
+      /* Every ledger when none is named, so two Items on the same bank can be
+         compared side by side. One working and one not is the most useful
+         evidence there is, and it is invisible while you look at them one at a
+         time. */
+      let q = supabase
+        .from("bank_connections")
+        .select("id, institution, access_token, ledger_id, last_synced, cursor, status, status_code");
+      if (body.ledger_id) q = q.eq("ledger_id", body.ledger_id);
+      const { data: conns } = await q;
+
+      const { data: ledgerRows } = await supabase.from("ledgers").select("id, name");
+      const ledgerName = new Map((ledgerRows || []).map((l) => [l.id, l.name]));
 
       const days = Number(body.days) || 10;
       const end = new Date().toISOString().slice(0, 10);
@@ -524,6 +533,37 @@ Deno.serve(async (req) => {
       const out: Array<Record<string, unknown>> = [];
       for (const c of conns || []) {
         try {
+          /* The Item first: its status, its products, and what consent it
+             holds. A transactions product that was never granted, or an Item
+             in an error state, explains an empty range better than anything
+             the range itself can say. */
+          let item: Record<string, unknown> = {};
+          try {
+            const it = await plaid("/item/get", { access_token: c.access_token });
+            item = {
+              item_id: it.item?.item_id,
+              error: it.item?.error?.error_code || null,
+              available_products: it.item?.available_products,
+              billed_products: it.item?.billed_products,
+              consent_expiration: it.item?.consent_expiration_time || null,
+              update_type: it.item?.update_type,
+            };
+          } catch (e) {
+            item = { item_error: String((e as Error).message || e) };
+          }
+
+          let accounts: unknown[] = [];
+          try {
+            const a = await plaid("/accounts/get", { access_token: c.access_token });
+            accounts = (a.accounts || []).map((x: Record<string, unknown>) => ({
+              name: x.name,
+              type: x.type,
+              subtype: x.subtype,
+              current: (x.balances as Record<string, unknown>)?.current,
+              last_updated: (x.balances as Record<string, unknown>)?.last_updated_datetime || null,
+            }));
+          } catch { /* balances are a nicety here */ }
+
           const d = await plaid("/transactions/get", {
             access_token: c.access_token,
             start_date: start,
@@ -533,7 +573,14 @@ Deno.serve(async (req) => {
           const txns = (d.transactions || []) as Array<Record<string, unknown>>;
           const dates = [...new Set(txns.map((t) => String(t.date)))].sort().reverse();
           out.push({
+            ledger: ledgerName.get(c.ledger_id) || c.ledger_id,
             institution: c.institution,
+            stored_status: c.status,
+            stored_status_code: c.status_code,
+            last_synced: c.last_synced,
+            has_cursor: Boolean(c.cursor),
+            item,
+            accounts,
             window: `${start} to ${end}`,
             total_available: d.total_transactions ?? txns.length,
             returned: txns.length,
@@ -547,7 +594,11 @@ Deno.serve(async (req) => {
             })),
           });
         } catch (e) {
-          out.push({ institution: c.institution, error: String((e as Error).message || e) });
+          out.push({
+            ledger: ledgerName.get(c.ledger_id) || c.ledger_id,
+            institution: c.institution,
+            error: String((e as Error).message || e),
+          });
         }
       }
       return json({ ok: true, accounts: out });
