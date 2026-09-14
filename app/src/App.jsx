@@ -14952,7 +14952,7 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
  * thing under suspicion. What Plaid says it holds, what products the Item was
  * granted, and what the sync actually delivered, side by side.
  */
-function FeedDiagnosis({ rows, onClose }) {
+function FeedDiagnosis({ rows, env, onClose }) {
   const Verdict = ({ r }) => {
     const products = r.item?.billed_products || [];
     const noTransactions = Array.isArray(products) && products.length > 0
@@ -14991,8 +14991,16 @@ function FeedDiagnosis({ rows, onClose }) {
       panelStyle={{ maxHeight: "88vh" }}
     >
       <ModalBody className="overflow-y-auto min-h-0 flex-1">
-        <p style={{ color: P.muted }} className="text-[15px] pb-3" >
+        <p style={{ color: P.muted }} className="text-[15px] pb-3">
           Read from Plaid just now, not from our records, because our records are the thing in doubt.
+          {env && (
+            <span style={{ color: P.faint }} className="block text-[13.5px] mt-1">
+              {/* The tier is on screen because a masked secret cannot be read
+                  in the dashboard, and it changes how long a sign-in lasts. */}
+              Plaid {env}
+              {env !== "production" && ", where sign-ins expire sooner than in production"}
+            </span>
+          )}
         </p>
 
         {(rows || []).map((r, i) => (
@@ -15086,6 +15094,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
       // behaving differently is the most useful thing the answer can contain.
       const out = await bank.plaid("probe", { days: 10 });
       setDiagnosis(out?.accounts || []);
+      setPlaidEnv(out?.env || "");
     } catch (e) {
       setErr(e?.message || "Could not reach Plaid just now.");
     }
@@ -15491,7 +15500,7 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
       )}
 
       {diagnosis && (
-        <FeedDiagnosis rows={diagnosis} onClose={() => setDiagnosis(null)} />
+        <FeedDiagnosis rows={diagnosis} env={plaidEnv} onClose={() => setDiagnosis(null)} />
       )}
 
       {/* Connecting is a one-time act. Once a bank is on the card, offering

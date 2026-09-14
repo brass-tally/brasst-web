@@ -628,7 +628,17 @@ Deno.serve(async (req) => {
           });
         }
       }
-      return json({ ok: true, accounts: out });
+      /* The environment travels with the answer.
+
+         Supabase masks a secret's value in the dashboard, so PLAID_ENV cannot
+         be read by looking at it, and the tier changes how long a sign-in
+         lasts. Reporting it here is not a leak: it is one of three known
+         words, and the caller has already proved they own the ledger. */
+      return json({
+        ok: true,
+        env: Deno.env.get("PLAID_ENV") || "sandbox (not set)",
+        accounts: out,
+      });
     }
 
     /* Make Plaid go and ask the bank, now.
