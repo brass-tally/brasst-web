@@ -11441,8 +11441,16 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         />
       )}
 
-      {!readOnly && (
-        <InvoiceTools
+      {/* One row: the tray and link icons on the left, these on the right.
+
+          They were on a line of their own underneath, which pushed everything
+          below them down a row and left the icons floating with nothing
+          beside them. Same line, opposite ends, and the section starts higher
+          up the page. */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="min-w-0">
+          {!readOnly && (
+            <InvoiceTools
           ledgerId={data.ledger.id}
           ledgerCurrency={data.ledger.currency}
           openPreview={openPreview}
@@ -11455,13 +11463,15 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
           onConfirmVoid={askConfirm}
         />
       )}
-      <div className="flex items-center justify-end gap-2">
-        <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
-        <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
-          <Download size={14} /> Export CSV
-        </Btn>
-      </div>
+        </span>
 
+        <span className="flex items-center gap-2 shrink-0">
+          <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
+          <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
+            <Download size={14} /> Export CSV
+          </Btn>
+        </span>
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis.map((k) => (
           <div key={k.label} style={cardStyle()} className="p-4 flex flex-col">
@@ -12973,6 +12983,26 @@ function CashCalendar({ data }) {
 
   const HorizonCards = () => (
     <div className="grid sm:grid-cols-2 gap-3">
+      {/* The day you picked, above the grid rather than below it.
+          A month of boxes is tall, so a detail card underneath sits off the
+          bottom of the screen on a phone: you tap a date and nothing appears
+          to happen. The answer belongs between the question and the thing you
+          asked it of. */}
+      {selectedDay && (
+        <section style={cardStyle()} className="p-5">
+          <h2 style={{ fontFamily: SERIF }} className="text-xl mb-1">
+            {new Date(selectedDay + "T00:00:00").toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}
+          </h2>
+          {dayItems.length === 0 ? (
+            <EmptyState compact icon={CalendarDays} title="Nothing due this day" />
+          ) : (
+            <div className="divide-y" style={{ borderColor: P.line }}>
+              {dayItems.map((o, i) => <div key={i} style={{ borderColor: P.line }}><Row o={o} /></div>)}
+            </div>
+          )}
+        </section>
+      )}
+
       <div style={cardStyle()} className="p-5">
         <div style={{ color: P.text }} className="text-[15px] mb-2.5">
             {/* Say which day it counts from, or the figure looks like it is
@@ -13170,21 +13200,6 @@ function CashCalendar({ data }) {
           })}
         </div>
       </div>
-
-      {selectedDay && (
-        <section style={cardStyle()} className="p-5">
-          <h2 style={{ fontFamily: SERIF }} className="text-xl mb-1">
-            {new Date(selectedDay + "T00:00:00").toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}
-          </h2>
-          {dayItems.length === 0 ? (
-            <EmptyState compact icon={CalendarDays} title="Nothing due this day" />
-          ) : (
-            <div className="divide-y" style={{ borderColor: P.line }}>
-              {dayItems.map((o, i) => <div key={i} style={{ borderColor: P.line }}><Row o={o} /></div>)}
-            </div>
-          )}
-        </section>
-      )}
       {!selectedDay && (
         <p style={{ color: P.faint, fontFamily: MONO }} className="text-xs text-center">tap a day to see what's due · brass underline = credits involved</p>
       )}
