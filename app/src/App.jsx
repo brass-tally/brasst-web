@@ -8769,21 +8769,55 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                 {!readOnly && c.email && (() => {
                   const portal = portalFor(c.id);
 
-                  /* Three states, three different words. Nobody has a page,
-                     somebody has one and is using it, somebody had one and it
-                     is switched off. Offering "invite" to all three would be
-                     the button lying about what it does. */
+                  /* Real buttons, and each says what pressing it does.
+
+                     These were bare text that happened to be clickable, which
+                     on a row full of other text reads as a label rather than a
+                     control. And once somebody has an account, "send" is the
+                     wrong word: the address already exists, so sending again
+                     is a reminder rather than a first invitation. */
+                  const Pill = ({ onClick, busy, label, tone }) => (
+                    <button
+                      onClick={onClick}
+                      disabled={busy}
+                      style={{
+                        background: tone === "danger" ? "transparent" : P.surface2,
+                        color: tone === "danger" ? P.debit : P.text,
+                        border: tone === "danger" ? `1px solid ${P.line}` : "none",
+                        borderRadius: R.pill,
+                      }}
+                      className="h-10 px-3.5 text-[13.5px] font-medium shrink-0 press"
+                    >
+                      {busy ? "Working" : label}
+                    </button>
+                  );
+
                   if (portal?.active) {
                     return (
-                      <span className="flex items-center gap-1 shrink-0">
+                      <span className="flex items-center gap-1.5 shrink-0">
                         <span
                           style={{ color: P.faint }}
-                          className="text-[13px]"
+                          className="text-[12.5px] hidden sm:inline"
                           title={portal.openedAt ? `Last opened ${String(portal.openedAt).slice(0, 10)}` : "Never opened"}
                         >
-                          {portal.opens > 0 ? `account · ${portal.opens} opens` : "account · unopened"}
+                          {portal.opens > 0 ? `${portal.opens} opens` : "unopened"}
                         </span>
-                        <button
+                        <Pill
+                          busy={inviting === c.id}
+                          label={invited.has(c.id) ? "Sent again" : "Reinvite"}
+                          onClick={async () => {
+                            setInviting(c.id);
+                            const res = await share.invitePortal(c.id);
+                            setInviting("");
+                            if (res?.ok) setInvited((prev) => new Set(prev).add(c.id));
+                            else if (res?.error) setErr(res.error);
+                            refreshPortals();
+                          }}
+                        />
+                        <Pill
+                          tone="danger"
+                          busy={inviting === c.id}
+                          label="Turn off"
                           onClick={async () => {
                             if (!(await onConfirmVoid?.({
                               title: `Turn off ${c.name}'s account?`,
@@ -8795,50 +8829,39 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                             setInviting("");
                             refreshPortals();
                           }}
-                          disabled={inviting === c.id}
-                          style={{ color: P.debit }}
-                          className="h-11 px-2 text-[14px] press"
-                        >
-                          Turn off
-                        </button>
+                        />
                       </span>
                     );
                   }
 
                   if (portal && !portal.active) {
                     return (
-                      <button
+                      <Pill
+                        busy={inviting === c.id}
+                        label="Turn account back on"
                         onClick={async () => {
                           setInviting(c.id);
                           await share.setPortalActive(c.id, true);
                           setInviting("");
                           refreshPortals();
                         }}
-                        disabled={inviting === c.id}
-                        style={{ color: P.brassText }}
-                        className="h-11 px-2 text-[14px] shrink-0 press"
-                      >
-                        {inviting === c.id ? "Turning on" : "Turn their account back on"}
-                      </button>
+                      />
                     );
                   }
 
                   return (
-                    <button
+                    <Pill
+                      busy={inviting === c.id}
+                      label="Send their account"
                       onClick={async () => {
                         setInviting(c.id);
                         const res = await share.invitePortal(c.id);
                         setInviting("");
-                        setInvited((prev) => (res?.ok ? new Set(prev).add(c.id) : prev));
-                        if (res?.ok === false && res?.error) setErr(res.error);
+                        if (res?.ok) setInvited((prev) => new Set(prev).add(c.id));
+                        else setErr(res?.error || "The invitation did not send. Try again in a moment.");
                         refreshPortals();
                       }}
-                      disabled={inviting === c.id}
-                      style={{ color: invited.has(c.id) ? P.credit : P.brassText }}
-                      className="h-11 px-2 text-[14px] shrink-0 press"
-                    >
-                      {inviting === c.id ? "Sending" : invited.has(c.id) ? "Sent" : "Send their account"}
-                    </button>
+                    />
                   );
                 })()}
 

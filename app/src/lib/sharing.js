@@ -551,13 +551,22 @@ export async function notifyPayment(obligationId, { paid, total, outstanding, ba
  */
 export async function invitePortal(contactId, { outstanding } = {}) {
   assertWritable();
-  return soft("portal invite", async () => {
+  /* The reason travels with the failure.
+   *
+   * This returned a bare `{ ok: false }`, so a button that could not send had
+   * nothing to say and looked broken rather than blocked. The console line was
+   * the only clue, and nobody reads a console while pressing a button. */
+  try {
     const { data, error } = await supabase.functions.invoke("invoice-mail", {
       body: { action: "portal-invite", contact_id: contactId, outstanding: outstanding ?? null },
     });
     if (error) throw error;
+    if (data?.ok === false) return data;
     return data;
-  }, { ok: false });
+  } catch (e) {
+    console.warn("portal invite failed:", e?.message || e);
+    return { ok: false, error: e?.message || "Could not reach the mail service." };
+  }
 }
 
 /* Which contacts have a page, so the row can offer the right control. */

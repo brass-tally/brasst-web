@@ -373,7 +373,18 @@ Deno.serve(async (req) => {
         const token = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
         const { data: made, error } = await db
           .from("contact_portals")
-          .insert({ ledger_id: contact.ledger_id, contact_id: contact.id, token, owner_id: ownerId })
+          /* The column is `user_id`, and it has to be given explicitly.
+           *
+           * I wrote `owner_id`, which does not exist, and the default on
+           * `user_id` is `auth.uid()`, which is null under the service role.
+           * So the insert failed on every press and the only sign of it was a
+           * console line nobody would connect to a button doing nothing. */
+          .insert({
+            ledger_id: contact.ledger_id,
+            contact_id: contact.id,
+            token,
+            user_id: led.user_id,
+          })
           .select("token").single();
         if (error) return json({ ok: false, error: error.message });
         portal = made;
