@@ -457,6 +457,11 @@ export async function listLinkInvites(ledgerId) {
       .from("inbound_invoices")
       .select("id, link_id, party, contact_email, amount, currency, status, submitted_at, invoice_no")
       .eq("ledger_id", ledgerId)
+      /* Voided ones are gone, not set aside.
+
+         Voiding an invoice removes it and its payable, so keeping a row for it
+         here lists something that no longer exists anywhere else in the app. */
+      .neq("status", "voided")
       .order("submitted_at", { ascending: false })
       .limit(60);
 

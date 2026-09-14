@@ -6736,6 +6736,38 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
     /* eslint-disable-next-line */
   }, [pending, history, ledgerCurrency]);
   const [showSent, setShowSent] = useState(false);
+  const [openPerson, setOpenPerson] = useState("");
+
+  /* One entry per person, with their requests and what answered them.
+
+     The list was one row per event: every request, every invoice, and the
+     person's address repeated on all of them. You deal with people, so a
+     person is the unit, and the events sit underneath when you ask. */
+  const people = useMemo(() => {
+    const by = new Map();
+    for (const r of invites) {
+      const key = (r.email || "").toLowerCase();
+      if (!key) continue;
+      if (!by.has(key)) {
+        by.set(key, { email: r.email, name: r.name, requests: [], invoices: [], total: 0, live: 0 });
+      }
+      const p = by.get(key);
+      if (!p.name && r.name) p.name = r.name;
+      if (r.kind === "submission") {
+        p.invoices.push(r);
+        p.total += Math.abs(Number(r.amount) || 0);
+      } else {
+        p.requests.push(r);
+        if (r.active) p.live += 1;
+      }
+    }
+    return [...by.values()].sort((a, b) => {
+      // Anyone still waiting on a reply first, then by how much has come in.
+      const aw = a.requests.some((r) => r.active) ? 0 : 1;
+      const bw = b.requests.some((r) => r.active) ? 0 : 1;
+      return aw - bw || b.total - a.total;
+    });
+  }, [invites]);
   const [correcting, setCorrecting] = useState(null);
   const [reason, setReason] = useState("");
 
@@ -7968,78 +8000,147 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                       that gets pasted with no context, and the supplier then
                       has to guess what it is. */}
                   {showSent && (
-                    <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
-                      {invites.length === 0 ? (
-                        <p style={{ color: P.muted }} className="text-[14px]">
-                          Nobody has been invited and nothing has come in through this link yet.
-                        </p>
-                      ) : (
-                        <>
-                          {invites.map((iv) => (
-                            <div key={iv.id} className="flex items-center gap-3 py-2">
-                              <span className="flex-1 min-w-0">
-                                <span
-                                  style={{ color: iv.active ? P.text : P.faint, textDecoration: iv.active ? "none" : "line-through" }}
-                                  className="text-[14.5px] block truncate"
+                      <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
+                        {invites.length === 0 ? (
+                          <p style={{ color: P.muted }} className="text-[14px]">
+                            Nobody has been invited and nothing has come in through this link yet.
+                          </p>
+                        ) : (
+                          <>
+                            {/* One line per person, opening onto their requests.
+
+                                Nine rows for one contractor, with the
+                                reference printed at both ends of each, is a
+                                log rather than a list. You deal with people,
+                                and each person is one line until you ask for
+                                more. */}
+                            {people.map((p) => (
+                              <div key={p.email} style={{ borderTop: `1px solid ${P.line}` }}>
+                                <button
+                                  onClick={() => setOpenPerson(openPerson === p.email ? "" : p.email)}
+                                  className="w-full flex items-center gap-3 py-2.5 text-left press"
+                                  aria-expanded={openPerson === p.email}
                                 >
-                                  {/* The reference first. Two invitations to
-                                      one person are two different requests,
-                                      and the address alone cannot tell them
-                                      apart. */}
-                                  {iv.reference && (
-                                    <span style={{ fontFamily: MONO, color: P.brassText }} className="text-[13px] mr-2">
-                                      {iv.reference}
+                                  <span className="flex-1 min-w-0">
+                                    <span style={{ color: P.text }} className="text-[14.5px] block truncate">
+                                      {p.name || p.email}
+                                    </span>
+                                    <span style={{ color: P.faint }} className="text-[13px]">
+                                      {p.requests.length
+                                        ? `${p.requests.length} ${p.requests.length === 1 ? "request" : "requests"}`
+                                        : "no request sent"}
+                                      {p.invoices.length ? ` · ${p.invoices.length} received` : " · nothing back yet"}
+                                      {p.live === 0 && p.requests.length ? " · all revoked" : ""}
+                                    </span>
+                                  </span>
+                                  {p.total > 0 && (
+                                    <span
+                                      style={{ fontFamily: MONO, color: P.faint }}
+                                      className="text-[13.5px] tabular-nums shrink-0"
+                                    >
+                                      {fmt(p.total)}
                                     </span>
                                   )}
-                                  {iv.email}
-                                </span>
-                                <span style={{ color: P.faint }} className="text-[13px]">
-                                  {/* An invitation and an invoice are different
-                                      things, so they read differently. A request
-                                      says when it went and whether it has been
-                                      answered; an arrival says what it was. */}
-                                  {iv.kind === "submission"
-                                    ? [
-                                        iv.invoiceNo,
-                                        `${iv.currency && iv.currency !== ledgerCcy ? `${iv.currency} ` : ""}${fmt(iv.amount)}`,
-                                        String(iv.sentAt).slice(0, 10),
-                                        iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside",
-                                      ].filter(Boolean).join(" · ")
-                                    : `${iv.reference ? "" : "invited "}${String(iv.sentAt).slice(0, 10)}` +
-                                      (iv.submissions > 0 ? ` · ${iv.submissions} received` : " · nothing back yet") +
-                                      (iv.active ? "" : " · revoked")}
-                                </span>
-                              </span>
-                              {iv.kind === "submission" ? (
-                                <span style={{ color: P.faint }} className="text-[13px] shrink-0">
-                                  {iv.reference || "general link"}
-                                </span>
-                              ) : iv.active ? (
-                                <button
-                                  onClick={() => revokeInvite(iv)}
-                                  disabled={busy === iv.id}
-                                  style={{ color: P.debit }}
-                                  className="text-[14px] shrink-0 press"
-                                >
-                                  {busy === iv.id ? "Revoking" : "Revoke"}
+                                  <ChevronDown
+                                    size={13}
+                                    style={{
+                                      color: P.faint,
+                                      transform: openPerson === p.email ? "rotate(180deg)" : "none",
+                                      transition: "transform .18s",
+                                    }}
+                                  />
                                 </button>
-                              ) : (
-                                <span style={{ color: P.faint }} className="text-[13.5px] shrink-0">off</span>
-                              )}
-                            </div>
-                          ))}
-                          <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
-                            Anyone invited from here has their own link, so revoking one stops that person
-                            and nobody else. People shown as having sent in without an invitation were
-                            given the link some other way and share the general one, so revoking them
-                            turns it off for everybody holding it.
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  )}
 
-                  {mailing && (
+                                {openPerson === p.email && (
+                                  <div className="pb-2 pl-3">
+                                    {p.requests.map((rq) => (
+                                      <div key={rq.id} className="py-1.5">
+                                        <div className="flex items-center gap-3">
+                                          <span
+                                            style={{
+                                              fontFamily: MONO,
+                                              color: rq.active ? P.brassText : P.faint,
+                                              textDecoration: rq.active ? "none" : "line-through",
+                                            }}
+                                            className="text-[13px] flex-1 min-w-0 truncate"
+                                          >
+                                            {rq.reference || "request"}
+                                            <span style={{ color: P.faint }} className="ml-2">
+                                              {String(rq.sentAt).slice(0, 10)}
+                                            </span>
+                                          </span>
+                                          {rq.active ? (
+                                            <button
+                                              onClick={() => revokeInvite(rq)}
+                                              disabled={busy === rq.id}
+                                              style={{ color: P.debit }}
+                                              className="text-[13px] shrink-0 press"
+                                            >
+                                              {busy === rq.id ? "Revoking" : "Revoke"}
+                                            </button>
+                                          ) : (
+                                            <span style={{ color: P.faint }} className="text-[12.5px] shrink-0">
+                                              revoked
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {/* What answered this request, underneath it. */}
+                                        {p.invoices.filter((iv) => iv.reference === rq.reference).map((iv) => (
+                                          <div key={iv.id} className="flex items-baseline justify-between gap-3 pl-3 py-0.5">
+                                            <span style={{ color: P.faint }} className="text-[12.5px] min-w-0 truncate">
+                                              {iv.invoiceNo ? `${iv.invoiceNo} · ` : ""}
+                                              {String(iv.sentAt).slice(0, 10)} · {iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside"}
+                                            </span>
+                                            <span
+                                              style={{ fontFamily: MONO, color: P.faint }}
+                                              className="text-[12.5px] tabular-nums shrink-0"
+                                            >
+                                              {fmtIn(iv.amount, iv.currency, ledgerCcy)}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ))}
+
+                                    {/* Sent in without a request behind them. */}
+                                    {p.invoices.filter((iv) => !iv.reference).length > 0 && (
+                                      <div className="py-1.5">
+                                        <span style={{ color: P.faint }} className="text-[13px]">
+                                          through the general link
+                                        </span>
+                                        {p.invoices.filter((iv) => !iv.reference).map((iv) => (
+                                          <div key={iv.id} className="flex items-baseline justify-between gap-3 pl-3 py-0.5">
+                                            <span style={{ color: P.faint }} className="text-[12.5px] min-w-0 truncate">
+                                              {iv.invoiceNo ? `${iv.invoiceNo} · ` : ""}
+                                              {String(iv.sentAt).slice(0, 10)} · {iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside"}
+                                            </span>
+                                            <span
+                                              style={{ fontFamily: MONO, color: P.faint }}
+                                              className="text-[12.5px] tabular-nums shrink-0"
+                                            >
+                                              {fmtIn(iv.amount, iv.currency, ledgerCcy)}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+
+                            <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
+                              Each request has its own link, so revoking one stops that request and leaves the
+                              others working. Anything that came through the general link is shared with
+                              everyone holding it.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                                      {mailing && (
                     <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mt-3">
                       <label style={{ color: P.muted }} className="text-[14px] block mb-1.5">
                         Their email
