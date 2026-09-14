@@ -3024,7 +3024,7 @@ function Ledger({ onSignOut }) {
             onDismissArrived={dismissArrival}
             arrivedBusy={arrivedBusy}
             onInboundChange={refreshInbound}
-          />
+          onContactsChange={refreshContacts} />
         )}
         {tab === "credits" && <CreditsCard readOnly={readOnly} data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
@@ -6690,7 +6690,7 @@ function ArrivedCard({ items, onApprove, onDismiss, busyId }) {
   );
 }
 
-function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [], trailing = null }) {
+function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [], trailing = null , onContactsChange }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
@@ -6709,6 +6709,51 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   const [spinning, setSpinning] = useState(false);
   const [schedules, setSchedules] = useState([]);
   const [invites, setInvites] = useState([]);
+  const [saving, setSaving] = useState("");
+  const [saved, setSaved] = useState(() => new Set());
+
+  /* People who have sent you an invoice and are not in your contacts.
+   *
+   * Asking about this in the chat would interrupt, and would ask once per
+   * invoice, which is the wrong number of times. Here it sits where the
+   * invoices already are, batched, and can be ignored indefinitely without
+   * anything nagging.
+   *
+   * Only senders who left an address, because a contact with no way to reach
+   * them is an entry in a list rather than a contact. */
+  const unknownSenders = useMemo(() => {
+    const known = new Set(
+      (contacts || []).flatMap((c) => [c.email, c.name].filter(Boolean).map((v) => v.toLowerCase().trim())),
+    );
+    const seen = new Map();
+    for (const inv of [...pending, ...history]) {
+      const email = String(inv.contactEmail || "").toLowerCase().trim();
+      if (!email || known.has(email)) continue;
+      if (known.has(String(inv.party || "").toLowerCase().trim())) continue;
+      if (saved.has(email)) continue;
+      if (!seen.has(email)) {
+        seen.set(email, { email: inv.contactEmail, name: inv.party, count: 0 });
+      }
+      seen.get(email).count += 1;
+    }
+    return [...seen.values()];
+  }, [contacts, pending, history, saved]);
+
+  const saveSender = async (sender) => {
+    setSaving(sender.email);
+    const res = await contacts_add(ledgerId, {
+      name: sender.name,
+      email: sender.email,
+      // Somebody who invoices you is a contractor or a vendor. Contractor is
+      // the commoner case for an intake link, and it is one tap to change.
+      role: "contractor",
+    });
+    setSaving("");
+    if (res?.ok !== false) {
+      setSaved((prev) => new Set(prev).add(sender.email.toLowerCase()));
+      onContactsChange?.();
+    }
+  };
 
   /* What a foreign invoice is worth, before you decide about it.
 
@@ -7725,6 +7770,43 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                           )}
                         </button>
               </div>
+
+              {/* Save the people who have been invoicing you.
+
+                  Offered where the invoices are rather than in the chat: a
+                  conversation would interrupt, and would ask once per invoice
+                  instead of once per person. Ignorable indefinitely, and gone
+                  the moment they are saved. */}
+              {!filed && unknownSenders.length > 0 && (
+                <div style={{ background: P.brass + "12", borderRadius: 16 }} className="p-3.5 mt-2 mb-1">
+                  <div style={{ color: P.text }} className="text-[14.5px] mb-1">
+                    {unknownSenders.length === 1
+                      ? "Somebody has invoiced you who is not in your contacts"
+                      : `${unknownSenders.length} people have invoiced you who are not in your contacts`}
+                  </div>
+                  {unknownSenders.map((sender) => (
+                    <div key={sender.email} className="flex items-center gap-2 py-1">
+                      <span style={{ color: P.muted }} className="text-[14px] flex-1 min-w-0 truncate">
+                        {sender.name}
+                        <span style={{ color: P.faint }} className="ml-2">{sender.email}</span>
+                        {sender.count > 1 && <span style={{ color: P.faint }}> &middot; {sender.count} invoices</span>}
+                      </span>
+                      <button
+                        onClick={() => saveSender(sender)}
+                        disabled={saving === sender.email}
+                        style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                        className="h-9 px-3 text-[13.5px] font-medium shrink-0 press"
+                      >
+                        {saving === sender.email ? "Saving" : "Save as contact"}
+                      </button>
+                    </div>
+                  ))}
+                  <p style={{ color: P.faint }} className="text-[12.5px] mt-1 leading-snug">
+                    Saved as a contractor, which you can change in Contacts. Saving one means you can invite
+                    them by name later rather than retyping the address.
+                  </p>
+                </div>
+              )}
                   <p style={{ color: P.muted }} className="text-[15px] mb-2">
                     One line each. Accepting adds it to what you owe; denying takes it off this list.
                   </p>
@@ -11771,7 +11853,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank , onContactsChange }) {
   /* Plans live beside the payables, never inside them. */
   const [plans, setPlans] = useState([]);
   const refreshPlans = useCallback(async () => {
@@ -11868,7 +11950,7 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         <InvoiceTools
           trailing={
             <>
-              <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
+              <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" onContactsChange={onContactsChange} />
               <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
                 <Download size={14} /> Export CSV
               </Btn>
