@@ -15278,13 +15278,19 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
          stops here and says what to fix rather than opening a door that leads
          nowhere. */
       if (!oauth && oauth_error) {
-        setBusy(false);
-        setErr(
-          "This bank sends you to its own site to sign in, and that cannot work until " +
-          `${redirect_uri} is added to the allowed redirect URIs in the Plaid dashboard. ` +
-          "Reconnecting without it will look like it worked and expire again.",
-        );
-        return;
+        /* A warning, not a refusal.
+
+           I made this a hard stop, on the belief that an OAuth bank cannot
+           complete without an allowlisted redirect. Plaid's own documentation
+           says otherwise: on desktop and mobile web, Link opens the bank in a
+           pop-up and finishes without one.
+
+           So the stop was wrong, and worse than wrong. Reconnect did nothing,
+           which left Connect as the only button that appeared to work, and
+           Connect creates a **new Item** every time. That is the daily
+           re-authentication: a fresh Item each day, none of them repaired,
+           none of them carrying the cursor that makes a sync resume. */
+        console.warn("OAuth redirect not allowlisted, continuing without it:", oauth_error);
       }
       bank.saveLinkSession({ link_token, ledger_id: data.ledger.id, connection_id: id });
       setResumable(true);

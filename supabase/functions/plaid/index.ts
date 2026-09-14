@@ -361,9 +361,36 @@ Deno.serve(async (req) => {
       // double-count the balance in sumBankBalance() and, because bank_transactions
       // is unique on (connection_id, plaid_txn_id), replay the whole history as
       // new unmatched lines under the new id.
-      const { data: existing } = await supabase
+      let { data: existing } = await supabase
         .from("bank_connections").select("id, institution")
         .eq("ledger_id", body.ledger_id).eq("item_id", d.item_id).maybeSingle();
+
+      /* A new Item for a bank this ledger already has.
+       *
+       * Update mode returns the same item_id and matches above. Linking the
+       * same bank afresh does not: Plaid issues a new Item, nothing matches,
+       * and a second row appears. The balance then doubles, the whole history
+       * replays as unmatched lines under the new id, and the row holding
+       * every match you have made is orphaned.
+       *
+       * So a lone existing connection for this ledger is adopted: it keeps its
+       * id, its transactions and its matches, and takes the new token. The
+       * cursor is cleared because a new Item has no memory of the old one's
+       * position, so the next sync reads the account from the start, which is
+       * safe: lines are keyed on (connection_id, plaid_txn_id).
+       */
+      if (!existing) {
+        const { data: sameLedger } = await supabase
+          .from("bank_connections").select("id, institution")
+          .eq("ledger_id", body.ledger_id);
+        if ((sameLedger || []).length === 1) {
+          existing = sameLedger[0];
+          await supabase.from("bank_connections")
+            .update({ item_id: d.item_id, cursor: null })
+            .eq("id", existing.id);
+          console.log("adopted the existing connection for a re-linked bank:", existing.id);
+        }
+      }
 
       const now = new Date().toISOString();
       let connectionId: string;
