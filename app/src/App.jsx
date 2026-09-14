@@ -14942,6 +14942,102 @@ function TransferModal({ data, others, addSub, onNewLedger, onSubmit, onClose })
 
 
 /* ================= live bank feed (Plaid) ================= */
+/* Why a feed is behind, answered in the app.
+ *
+ * The diagnosis existed, but only as a console command, and asking somebody to
+ * paste JSON out of DevTools to find out why their bank is stale is a support
+ * process rather than a product. Everything it needs is one call away.
+ *
+ * It reads the Item rather than our own records, because our records are the
+ * thing under suspicion. What Plaid says it holds, what products the Item was
+ * granted, and what the sync actually delivered, side by side.
+ */
+function FeedDiagnosis({ rows, onClose }) {
+  const Verdict = ({ r }) => {
+    const products = r.item?.billed_products || [];
+    const noTransactions = Array.isArray(products) && products.length > 0
+      && !products.includes("transactions");
+    const expired = r.item?.consent_expiration && r.item.consent_expiration < new Date().toISOString();
+    const itemError = r.item?.error;
+
+    const lines = [];
+    if (itemError) lines.push([`Plaid reports ${itemError} on this connection`, P.debit]);
+    if (noTransactions) {
+      lines.push([
+        `This connection was never granted the transactions product. It can return balances and nothing else, which is why the balance moves and the list does not.`,
+        P.debit,
+      ]);
+    }
+    if (expired) lines.push([`Consent expired on ${String(r.item.consent_expiration).slice(0, 10)}.`, P.debit]);
+    if (!lines.length && r.newest) {
+      lines.push([`Plaid holds ${r.total_available} lines in this window, newest ${r.newest}.`, P.muted]);
+    }
+    if (!lines.length) lines.push(["Plaid returned nothing for this window.", P.debit]);
+    return (
+      <>
+        {lines.map(([t, c], i) => (
+          <p key={i} style={{ color: c }} className="text-[14.5px] leading-relaxed mt-1">{t}</p>
+        ))}
+      </>
+    );
+  };
+
+  return (
+    <Modal
+      onClose={onClose}
+      size="lg"
+      title="Why a feed is behind"
+      panelClass="flex flex-col"
+      panelStyle={{ maxHeight: "88vh" }}
+    >
+      <ModalBody className="overflow-y-auto min-h-0 flex-1">
+        <p style={{ color: P.muted }} className="text-[15px] pb-3" >
+          Read from Plaid just now, not from our records, because our records are the thing in doubt.
+        </p>
+
+        {(rows || []).map((r, i) => (
+          <div key={i} className="py-3" style={{ borderTop: `1px solid ${P.line}` }}>
+            <div className="flex items-baseline justify-between gap-3">
+              <span style={{ color: P.text }} className="text-[15.5px]">
+                {r.institution || "Bank"}
+                <span style={{ color: P.faint }} className="text-[13.5px]"> &middot; {r.ledger}</span>
+              </span>
+              <span style={{ fontFamily: MONO, color: P.faint }} className="text-[14px] shrink-0">
+                {r.newest || "nothing"}
+              </span>
+            </div>
+
+            <Verdict r={r} />
+
+            <div style={{ color: P.faint }} className="text-[13px] mt-2 leading-relaxed">
+              products {Array.isArray(r.item?.billed_products) ? r.item.billed_products.join(", ") : "unknown"}
+              {" · "}last synced {String(r.last_synced || "never").slice(0, 16)}
+              {r.has_cursor ? " · has a cursor" : " · no cursor"}
+              {r.accounts?.length ? ` · ${r.accounts.length} account${r.accounts.length === 1 ? "" : "s"}` : ""}
+            </div>
+
+            {r.dates?.length > 0 && (
+              <div style={{ color: P.faint }} className="text-[13px] mt-1">
+                dates Plaid holds: {r.dates.join(", ")}
+              </div>
+            )}
+            {r.error && (
+              <p style={{ color: P.debit }} className="text-[14px] mt-1">{r.error}</p>
+            )}
+          </div>
+        ))}
+
+        {(rows || []).length > 1 && (
+          <p style={{ color: P.faint }} className="text-[13px] mt-4 pt-3" >
+            Two connections to the same bank behaving differently is the useful comparison: it rules out
+            the bank and points at whichever one of them differs above.
+          </p>
+        )}
+      </ModalBody>
+    </Modal>
+  );
+}
+
 function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0 }) {
   const [plaidEnv, setPlaidEnv] = useState("");
   const [conns, setConns] = useState(null); // null = loading
@@ -14975,6 +15071,26 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
      Once every six hours, remembered across reloads, and always on demand
      when somebody presses the button. */
   const HEALTH_EVERY_MS = 6 * 60 * 60 * 1000;
+
+  /* Ask Plaid what it holds, and show the answer here.
+
+     This was a console command, which means the one moment somebody needs it
+     is the one moment they are least likely to run it. */
+  const [diagnosis, setDiagnosis] = useState(null);
+  const [diagnosing, setDiagnosing] = useState(false);
+
+  const runDiagnosis = async () => {
+    setDiagnosing(true);
+    try {
+      // Every connection, not just this ledger: two Items on one bank
+      // behaving differently is the most useful thing the answer can contain.
+      const out = await bank.plaid("probe", { days: 10 });
+      setDiagnosis(out?.accounts || []);
+    } catch (e) {
+      setErr(e?.message || "Could not reach Plaid just now.");
+    }
+    setDiagnosing(false);
+  };
 
   const refreshHealth = async ({ force = false } = {}) => {
     const key = `bt-bank-health:${data.ledger.id}`;
@@ -15346,11 +15462,30 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
                   >
                     {syncing === c.id ? <Loader2 size={15} className="animate-spin" /> : null} Sync now
                   </button>}
+
+              {/* Why is this behind.
+
+                  It asks Plaid what it actually holds, and reads the Item's
+                  own products and consent rather than our records, because our
+                  records are the thing in doubt when a feed stops moving. */}
+              <button
+                onClick={runDiagnosis}
+                disabled={diagnosing}
+                style={{ color: P.brassText }}
+                className="text-[14px] px-2 press shrink-0"
+              >
+                {diagnosing ? "Checking" : "Why behind?"}
+              </button>
+
               <button onClick={() => disconnect(c.id)} style={{ color: P.faint, padding: 6, margin: -6 }} title="Disconnect"><Trash2 size={13} /></button>
             </div>
             );
           })}
         </div>
+      )}
+
+      {diagnosis && (
+        <FeedDiagnosis rows={diagnosis} onClose={() => setDiagnosis(null)} />
       )}
 
       {/* Connecting is a one-time act. Once a bank is on the card, offering
