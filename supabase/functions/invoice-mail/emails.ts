@@ -517,3 +517,71 @@ export function paymentMadeEmail(
 </td></tr></table>
 </body></html>`;
 }
+
+/* An address of their own.
+ *
+ * Short and unique, like the invitation: the business name and the reference
+ * differ each time, so there is nothing for a mail client to fold away as
+ * repetition.
+ */
+export function portalInviteEmail(
+  { business, name, link, outstanding, currency }: {
+    business: string; name?: string | null; link: string;
+    outstanding?: number | null; currency?: string | null;
+  },
+) {
+  const brass = "#A9620A";
+  const fill = "#F59E0B";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+  const ccy = currency || "CAD";
+  const money = (n: number) =>
+    `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0).toLocaleString("en-CA", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    })}`;
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>Your account with ${business}</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:28px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <h1 style="margin:0 0 6px;font-size:21px;line-height:1.3;color:${ink};font-weight:600;">
+        ${name ? `${name}, your` : "Your"} account with ${business}
+      </h1>
+      ${outstanding != null && outstanding > 0.005
+        ? `<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${brass};margin-bottom:16px;">${money(outstanding)} outstanding to you</div>`
+        : ""}
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+        <tr><td style="border-radius:999px;background:${fill};">
+          <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
+             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
+            Open your account
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:0 0 14px;font-size:14.5px;line-height:1.5;">
+        <a href="${link}" style="color:${brass};text-decoration:underline;word-break:break-all;">${link}</a>
+      </p>
+
+      <p style="margin:0;font-size:14px;line-height:1.55;color:${muted};">
+        Every invoice you have sent, what has been paid, and what is still owed. No password, and it
+        stays current, so there is nothing to ask for.
+      </p>
+
+      <p style="margin:14px 0 0;font-size:13px;line-height:1.5;color:#8A827B;">
+        Anyone with this address can read it, so treat it like a statement. Tell ${business} if you would
+        rather it was turned off.
+      </p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

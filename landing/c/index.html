@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="robots" content="noindex, nofollow"/>
+<title>Your account</title>
+<style>
+  :root{
+    --paper:#FAF9F7; --surface:#FFFFFF; --sunk:#F1EEE9; --line:#E7E2DA;
+    --ink:#1C1917; --muted:#5A534E; --faint:#8A827B;
+    --brass:#A9620A; --credit:#15803D; --debit:#B91C1C;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#12110F; --surface:#1A1816; --sunk:#221F1C; --line:#2C2824;
+           --ink:#F5F3EF; --muted:#A8A099; --faint:#7A736C; --brass:#E9A23B; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+    padding:28px 16px 64px}
+  .wrap{max-width:620px;margin:0 auto}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:22px;margin-bottom:14px}
+  h1{font-size:22px;margin:0 0 4px;font-weight:600}
+  .sub{color:var(--muted);font-size:15px;margin:0 0 18px}
+  .eyebrow{color:var(--brass);font-size:14px;font-weight:600;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding:11px 0;border-top:1px solid var(--line)}
+  .row:first-of-type{border-top:none}
+  .m{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .small{font-size:13px;color:var(--faint)}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .paid{background:color-mix(in srgb,var(--credit) 16%,transparent);color:var(--credit)}
+  .part{background:color-mix(in srgb,var(--brass) 20%,transparent);color:var(--brass)}
+  .wait{background:var(--sunk);color:var(--muted)}
+  .none{color:var(--muted);font-size:15px;padding:8px 0}
+  a.btn{display:inline-block;background:var(--brass);color:#241703;text-decoration:none;
+    padding:13px 22px;border-radius:999px;font-weight:600;font-size:15.5px;margin-top:6px}
+  .total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding-top:12px;margin-top:6px;border-top:1px solid var(--line);font-size:16px}
+  footer{color:var(--faint);font-size:12.5px;text-align:center;margin-top:22px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <div class="card"><p class="none" id="loading">Opening your account…</p></div>
+</div>
+
+<script>
+/* One contact's view of one business's books, and nothing else.
+ *
+ * Read only, by token, no account. The server returns only rows naming this
+ * contact: no balances, no other suppliers, no bank. */
+const el = (id) => document.getElementById(id);
+const PROJECT = "https://xwoccmgppjmgficvmogr.supabase.co";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh3b2NjbWdwcGptZ2ZpY3Ztb2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3MDkwNjEsImV4cCI6MjEwMDI4NTA2MX0.B8rEqFhe53_URqHQHpWpW5JIIENsFqJ4o95o10gL6Hw";
+
+const token =
+  (location.pathname.match(/^\/c\/([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
+  new URLSearchParams(location.search).get("t") || "";
+
+const money = (n, ccy) =>
+  `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0)
+    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const esc = (s) => String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+
+function statusOf(inv) {
+  if (inv.payable_status && inv.payable_status !== "open") return ["paid", "Paid"];
+  const paid = Number(inv.paid_amount) || 0;
+  if (paid > 0.005) return ["part", "Part paid"];
+  if (inv.status === "accepted") return ["wait", "Accepted, not yet paid"];
+  if (inv.status === "pending") return ["wait", "With them for review"];
+  return ["wait", "Set aside"];
+}
+
+(async () => {
+  if (!token) { el("loading").textContent = "This address is missing its code."; return; }
+  let d;
+  try {
+    const r = await fetch(`${PROJECT}/rest/v1/rpc/contact_portal_view`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
+      body: JSON.stringify({ p_token: token }),
+    });
+    d = await r.json();
+  } catch {
+    el("loading").textContent = "Could not reach the server. Try again in a moment.";
+    return;
+  }
+  if (!d || d.ok === false) {
+    el("loading").textContent = (d && d.error) || "This link is not active.";
+    return;
+  }
+
+  const ccy = d.currency || "CAD";
+  const owed = (d.invoices || []).reduce((n, i) => {
+    if (!i.payable_status || i.payable_status !== "open") return n;
+    return n + Math.max(0, Math.abs(Number(i.payable_amount) || 0) - (Number(i.paid_amount) || 0));
+  }, 0);
+
+  const invoiceRows = (d.invoices || []).length
+    ? d.invoices.map((i) => {
+        const [cls, label] = statusOf(i);
+        const amount = i.payable_amount != null ? i.payable_amount : i.amount;
+        const foreign = i.currency && i.currency !== ccy
+          ? `<div class="small m">${esc(i.currency)} ${(Math.abs(i.amount)).toLocaleString(undefined,{minimumFractionDigits:2})}</div>` : "";
+        const paidLine = (Number(i.paid_amount) || 0) > 0.005 && i.payable_status === "open"
+          ? `<div class="small">${money(i.paid_amount, ccy)} received${i.balance_due ? `, rest due ${i.balance_due}` : ""}</div>` : "";
+        const settled = i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : "";
+        return `<div class="row">
+          <span>
+            <div>${esc(i.invoice_no || i.description || "Invoice")}</div>
+            <div class="small">${String(i.submitted_at || "").slice(0, 10)}
+              ${i.has_file ? " · attachment on file" : ""}</div>
+            ${paidLine}${settled}
+            <span class="pill ${cls}">${label}</span>
+          </span>
+          <span class="m">${money(amount, ccy)}${foreign}</span>
+        </div>`;
+      }).join("")
+    : `<p class="none">Nothing yet.</p>`;
+
+  const paymentRows = (d.payments || []).length
+    ? d.payments.map((p) => `<div class="row">
+         <span><div>${esc(p.description || "Payment")}</div><div class="small">${p.date}</div></span>
+         <span class="m">${money(p.amount, ccy)}</span>
+       </div>`).join("")
+    : `<p class="none">Nothing has been paid out yet.</p>`;
+
+  el("wrap").innerHTML = `
+    <div class="card">
+      <div class="eyebrow">${esc(d.business)}</div>
+      <h1>Your account</h1>
+      <p class="sub">Everything between you and ${esc(d.business)}. Read only, and always current.</p>
+      <div class="total"><span>Outstanding to you</span><span class="m">${money(owed, ccy)}</span></div>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Invoices you have sent</div>
+      ${invoiceRows}
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Payments received</div>
+      ${paymentRows}
+    </div>
+
+    <div class="card" style="text-align:center">
+      <p class="sub" style="margin-bottom:10px">Something new to bill for?</p>
+      <a class="btn" id="send" href="#">Send an invoice</a>
+    </div>
+
+    <footer>
+      This page belongs to ${esc(d.contact.name || "you")}. Anyone with the address can read it,
+      so treat it like an account statement.<br/>Sent by ${esc(d.business)} through Brasstally.
+    </footer>`;
+
+  /* The intake link is a separate thing with its own token, so this points at
+     the business rather than pretending to carry one. */
+  el("send").href = `mailto:?subject=${encodeURIComponent("Invoice for " + d.business)}`;
+})();
+</script>
+</body>
+</html>

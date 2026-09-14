@@ -541,3 +541,21 @@ export async function notifyPayment(obligationId, { paid, total, outstanding, ba
     return data;
   }, { ok: false });
 }
+
+/* Give a contact their own page and email them the address.
+ *
+ * Not an account. A contractor will not sign up to look at two invoices, and
+ * an account means new authentication, a ledger of their own, and a permission
+ * model between two parties. A token is the right size for the job, and the
+ * same shape as the intake link they already use.
+ */
+export async function invitePortal(contactId, { outstanding } = {}) {
+  assertWritable();
+  return soft("portal invite", async () => {
+    const { data, error } = await supabase.functions.invoke("invoice-mail", {
+      body: { action: "portal-invite", contact_id: contactId, outstanding: outstanding ?? null },
+    });
+    if (error) throw error;
+    return data;
+  }, { ok: false });
+}

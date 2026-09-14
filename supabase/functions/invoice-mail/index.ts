@@ -32,7 +32,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail, invoiceDecidedEmail,
   invoiceCorrectionEmail, shareInviteEmail,
-  paymentMadeEmail,
+  paymentMadeEmail, portalInviteEmail,
 } from "./emails.ts";
 
 const BUCKET = "invoices";   // the bucket the app reads from; "receipts" was a guess and nothing could open the file
@@ -318,6 +318,60 @@ Deno.serve(async (req) => {
       return r.ok
         ? json({ ok: true, to: inv.contact_email, attached: Boolean(receipt) })
         : json({ ok: false, error: r.error });
+    }
+
+    /* Give a contact their own page, and email them the address.
+     *
+     * One portal per contact per ledger, reused rather than reissued: sending
+     * twice should not leave two live addresses to keep track of, and somebody
+     * who has bookmarked the first should not find it dead.
+     */
+    if (action === "portal-invite") {
+      const caller = await db.auth.getUser(bearer(req));
+      if (!caller?.data?.user) return json({ ok: false, error: "Sign in first." }, 401);
+
+      const { data: contact } = await db
+        .from("contacts").select("id, ledger_id, name, email")
+        .eq("id", String(body.contact_id || "")).maybeSingle();
+      if (!contact) return json({ ok: false, error: "No such contact." });
+      if (!contact.email) return json({ ok: false, error: "That contact has no email address." });
+
+      const { data: led } = await db
+        .from("ledgers").select("id, name, user_id, currency").eq("id", contact.ledger_id).maybeSingle();
+      if (!led || led.user_id !== caller.data.user.id) {
+        return json({ ok: false, error: "That is not your contact." }, 403);
+      }
+
+      let { data: portal } = await db
+        .from("contact_portals").select("token")
+        .eq("ledger_id", contact.ledger_id).eq("contact_id", contact.id).maybeSingle();
+
+      if (!portal) {
+        const token = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
+        const { data: made, error } = await db
+          .from("contact_portals")
+          .insert({ ledger_id: contact.ledger_id, contact_id: contact.id, token, owner_id: ownerId })
+          .select("token").single();
+        if (error) return json({ ok: false, error: error.message });
+        portal = made;
+      }
+
+      const base = (Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "");
+      const link = `${base}/c/${portal.token}`;
+
+      const r = await sendMail(
+        contact.email,
+        `${led.name}: your account`,
+        portalInviteEmail({
+          business: led.name,
+          name: contact.name,
+          link,
+          outstanding: Number(body.outstanding) || null,
+          currency: led.currency || "CAD",
+        }),
+        caller.data.user.email ?? undefined,
+      );
+      return r.ok ? json({ ok: true, to: contact.email, link }) : json({ ok: false, error: r.error });
     }
 
     if (action === "preview-invite") {

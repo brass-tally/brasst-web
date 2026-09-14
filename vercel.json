@@ -165,6 +165,18 @@
       }
     },
     {
+      "source": "/c/:token",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/c/:token/",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
       "source": "/i/:token",
       "destination": {
         "service": "landing"

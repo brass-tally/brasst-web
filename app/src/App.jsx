@@ -6788,19 +6788,45 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
      The list was one row per event: every request, every invoice, and the
      person's address repeated on all of them. You deal with people, so a
      person is the unit, and the events sit underneath when you ask. */
+  /* What an invoice is worth in your own currency.
+   *
+   * The group total was adding PKR to CAD and reporting $707,907.00, which is
+   * not a sum of anything. A total across currencies is only a number if it
+   * is converted first.
+   *
+   * Three sources, in descending order of truth: the payable it became, which
+   * holds the rate actually used; today's rate, for one not yet accepted; and
+   * failing both, nothing, because a guessed conversion in a total is worse
+   * than a total that admits it is short. */
+  const inLedgerCcy = (iv) => {
+    const amount = Math.abs(Number(iv.amount) || 0);
+    if (!iv.currency || iv.currency === ledgerCcy) return amount;
+
+    const ob = iv.obligationId ? onFindPayable?.(iv.obligationId) : null;
+    if (ob) return Math.abs(Number(ob.amount) || 0);
+
+    const rate = rates[iv.currency]?.rate;
+    return rate ? amount * rate : null;
+  };
+
   const people = useMemo(() => {
     const by = new Map();
     for (const r of invites) {
       const key = (r.email || "").toLowerCase();
       if (!key) continue;
       if (!by.has(key)) {
-        by.set(key, { email: r.email, name: r.name, requests: [], invoices: [], total: 0, live: 0 });
+        by.set(key, {
+          email: r.email, name: r.name, requests: [], invoices: [],
+          total: 0, unconverted: 0, live: 0,
+        });
       }
       const p = by.get(key);
       if (!p.name && r.name) p.name = r.name;
       if (r.kind === "submission") {
         p.invoices.push(r);
-        p.total += Math.abs(Number(r.amount) || 0);
+        const worth = inLedgerCcy(r);
+        if (worth == null) p.unconverted += 1;
+        else p.total += worth;
       } else {
         p.requests.push(r);
         if (r.active) p.live += 1;
@@ -6812,7 +6838,8 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
       const bw = b.requests.some((r) => r.active) ? 0 : 1;
       return aw - bw || b.total - a.total;
     });
-  }, [invites]);
+    /* eslint-disable-next-line */
+  }, [invites, rates, ledgerCcy]);
   const [correcting, setCorrecting] = useState(null);
   const [reason, setReason] = useState("");
 
@@ -8115,12 +8142,19 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                       {p.live === 0 && p.requests.length ? " · all revoked" : ""}
                                     </span>
                                   </span>
-                                  {p.total > 0 && (
-                                    <span
-                                      style={{ fontFamily: MONO, color: P.faint }}
-                                      className="text-[13.5px] tabular-nums shrink-0"
-                                    >
-                                      {fmt(p.total)}
+                                  {(p.total > 0 || p.unconverted > 0) && (
+                                    <span className="shrink-0 text-right">
+                                      <span
+                                        style={{ fontFamily: MONO, color: P.faint }}
+                                        className="text-[13.5px] tabular-nums block"
+                                      >
+                                        {fmt(p.total)}
+                                      </span>
+                                      {p.unconverted > 0 && (
+                                        <span style={{ color: P.faint }} className="text-[11.5px]">
+                                          {p.unconverted} not converted
+                                        </span>
+                                      )}
                                     </span>
                                   )}
                                   <ChevronDown
@@ -8174,11 +8208,28 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                               {iv.invoiceNo ? `${iv.invoiceNo} · ` : ""}
                                               {String(iv.sentAt).slice(0, 10)} · {iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside"}
                                             </span>
-                                            <span
-                                              style={{ fontFamily: MONO, color: P.faint }}
-                                              className="text-[12.5px] tabular-nums shrink-0"
-                                            >
-                                              {fmtIn(iv.amount, iv.currency, ledgerCcy)}
+                                            <span className="shrink-0 text-right">
+                                              {/* Yours first, theirs underneath.
+
+                                                  You read this column to know
+                                                  what things cost you, and a
+                                                  figure in a currency you do
+                                                  not keep books in cannot
+                                                  answer that. */}
+                                              <span
+                                                style={{ fontFamily: MONO, color: P.faint }}
+                                                className="text-[12.5px] tabular-nums block"
+                                              >
+                                                {inLedgerCcy(iv) == null ? "not converted" : fmt(inLedgerCcy(iv))}
+                                              </span>
+                                              {iv.currency && iv.currency !== ledgerCcy && (
+                                                <span
+                                                  style={{ fontFamily: MONO, color: P.faint }}
+                                                  className="text-[11px] tabular-nums block"
+                                                >
+                                                  {fmtIn(iv.amount, iv.currency, ledgerCcy)}
+                                                </span>
+                                              )}
                                             </span>
                                           </div>
                                         ))}
@@ -8197,11 +8248,28 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                               {iv.invoiceNo ? `${iv.invoiceNo} · ` : ""}
                                               {String(iv.sentAt).slice(0, 10)} · {iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside"}
                                             </span>
-                                            <span
-                                              style={{ fontFamily: MONO, color: P.faint }}
-                                              className="text-[12.5px] tabular-nums shrink-0"
-                                            >
-                                              {fmtIn(iv.amount, iv.currency, ledgerCcy)}
+                                            <span className="shrink-0 text-right">
+                                              {/* Yours first, theirs underneath.
+
+                                                  You read this column to know
+                                                  what things cost you, and a
+                                                  figure in a currency you do
+                                                  not keep books in cannot
+                                                  answer that. */}
+                                              <span
+                                                style={{ fontFamily: MONO, color: P.faint }}
+                                                className="text-[12.5px] tabular-nums block"
+                                              >
+                                                {inLedgerCcy(iv) == null ? "not converted" : fmt(inLedgerCcy(iv))}
+                                              </span>
+                                              {iv.currency && iv.currency !== ledgerCcy && (
+                                                <span
+                                                  style={{ fontFamily: MONO, color: P.faint }}
+                                                  className="text-[11px] tabular-nums block"
+                                                >
+                                                  {fmtIn(iv.amount, iv.currency, ledgerCcy)}
+                                                </span>
+                                              )}
                                             </span>
                                           </div>
                                         ))}
@@ -8479,6 +8547,8 @@ function ContactHistory({ contact, data, inbound, onClose, openPreview }) {
 function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound = [], openPreview }) {
   /* Whose history is open. */
   const [historyFor, setHistoryFor] = useState(null);
+  const [inviting, setInviting] = useState("");
+  const [invited, setInvited] = useState(() => new Set());
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", phone: "", role: "vendor", note: "" });
@@ -8669,6 +8739,28 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                 >
                   History
                 </button>
+
+                {/* Their own page, by link rather than by account.
+
+                    Only for somebody with an address, because there is nowhere
+                    to send it otherwise, and the button would be a promise the
+                    row cannot keep. */}
+                {!readOnly && c.email && (
+                  <button
+                    onClick={async () => {
+                      setInviting(c.id);
+                      const res = await share.invitePortal(c.id);
+                      setInviting("");
+                      setInvited((prev) => (res?.ok ? new Set(prev).add(c.id) : prev));
+                      if (res?.ok === false && res?.error) setErr(res.error);
+                    }}
+                    disabled={inviting === c.id}
+                    style={{ color: invited.has(c.id) ? P.credit : P.brassText }}
+                    className="h-11 px-2 text-[14px] shrink-0 press"
+                  >
+                    {inviting === c.id ? "Sending" : invited.has(c.id) ? "Sent" : "Give them a page"}
+                  </button>
+                )}
 
                 {!readOnly && (
                   <>
