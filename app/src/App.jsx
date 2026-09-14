@@ -8559,6 +8559,15 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
   /* Whose history is open. */
   const [historyFor, setHistoryFor] = useState(null);
   const [inviting, setInviting] = useState("");
+
+  /* A failure belongs to the row that caused it.
+   *
+   * `setErr` writes into the add-and-edit form, which is closed while somebody
+   * is pressing buttons on a list. So the invitation failed, said so into a
+   * hidden element, and the button returned to its old label looking as though
+   * nothing had happened at all. */
+  const [rowErr, setRowErr] = useState({});
+  const failRow = (id, message) => setRowErr((prev) => ({ ...prev, [id]: message }));
   const [invited, setInvited] = useState(() => new Set());
 
   /* Who already has a page, so the row offers the right control rather than
@@ -8746,6 +8755,13 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                   <span style={{ color: P.faint }} className="text-[13.5px] block truncate">
                     {[c.email, c.phone, c.note].filter(Boolean).join(" · ") || "No details"}
                   </span>
+                  {/* Beneath the person it happened to, where somebody pressing
+                      a button on their row is already looking. */}
+                  {rowErr[c.id] && (
+                    <span style={{ color: P.debit }} className="text-[13.5px] block mt-0.5">
+                      {rowErr[c.id]}
+                    </span>
+                  )}
                 </span>
 
                 {/* Before Edit, and outside the readOnly guard.
@@ -8809,8 +8825,12 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                             setInviting(c.id);
                             const res = await share.invitePortal(c.id);
                             setInviting("");
-                            if (res?.ok) setInvited((prev) => new Set(prev).add(c.id));
-                            else if (res?.error) setErr(res.error);
+                            if (res?.ok) {
+                              setInvited((prev) => new Set(prev).add(c.id));
+                              failRow(c.id, "");
+                            } else {
+                              failRow(c.id, res?.error || "It did not send. Try again in a moment.");
+                            }
                             refreshPortals();
                           }}
                         />
@@ -8857,8 +8877,12 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                         setInviting(c.id);
                         const res = await share.invitePortal(c.id);
                         setInviting("");
-                        if (res?.ok) setInvited((prev) => new Set(prev).add(c.id));
-                        else setErr(res?.error || "The invitation did not send. Try again in a moment.");
+                        if (res?.ok) {
+                          setInvited((prev) => new Set(prev).add(c.id));
+                          failRow(c.id, "");
+                        } else {
+                          failRow(c.id, res?.error || "It did not send. Try again in a moment.");
+                        }
                         refreshPortals();
                       }}
                     />
