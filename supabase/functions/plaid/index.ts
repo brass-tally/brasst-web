@@ -385,6 +385,23 @@ Deno.serve(async (req) => {
           .eq("ledger_id", body.ledger_id);
         if ((sameLedger || []).length === 1) {
           existing = sameLedger[0];
+
+          /* Keep the token we are about to overwrite.
+
+             The Item it belongs to does not stop existing because we stopped
+             pointing at it, and Plaid cannot be asked which Items we have
+             lost. Retiring it here is the only moment it can be recorded. */
+          const { data: old } = await supabase
+            .from("bank_connections").select("access_token, item_id, institution, ledger_id")
+            .eq("id", existing.id).maybeSingle();
+          if (old?.access_token) {
+            await supabase.from("retired_bank_items").insert({
+              ledger_id: old.ledger_id, item_id: old.item_id,
+              access_token: old.access_token, institution: old.institution,
+              reason: "replaced by a re-linked item",
+            }).then(() => {}, (e: unknown) => console.warn("could not retire the old token:", e));
+          }
+
           await supabase.from("bank_connections")
             .update({ item_id: d.item_id, cursor: null })
             .eq("id", existing.id);
@@ -696,6 +713,36 @@ Deno.serve(async (req) => {
      * The row is deleted whatever Plaid says. A failed removal should not
      * leave somebody stuck with a bank they have asked to be rid of.
      */
+    /* Remove every Item we have retired but not yet cleaned up.
+     *
+     * Each one is a live session at the bank that nobody is using. At an
+     * institution allowing one session per login, they are the most likely
+     * reason a healthy connection keeps being knocked into needing a
+     * sign-in.
+     *
+     * Removal is idempotent at Plaid, and an Item already gone reports as
+     * such rather than failing, so running this twice is safe.
+     */
+    if (action === "purge_retired") {
+      const { data: rows } = await supabase
+        .from("retired_bank_items").select("id, access_token, item_id, institution")
+        .is("removed_at", null);
+
+      const out: Array<Record<string, unknown>> = [];
+      for (const r of rows || []) {
+        try {
+          await plaid("/item/remove", { access_token: r.access_token });
+          await supabase.from("retired_bank_items")
+            .update({ removed_at: new Date().toISOString() }).eq("id", r.id);
+          out.push({ item_id: r.item_id, institution: r.institution, removed: true });
+        } catch (e) {
+          out.push({ item_id: r.item_id, institution: r.institution, removed: false,
+                     error: String((e as Error).message || e) });
+        }
+      }
+      return json({ ok: true, considered: (rows || []).length, results: out });
+    }
+
     if (action === "disconnect") {
       const { data: conn } = await supabase
         .from("bank_connections").select("access_token, item_id")
@@ -708,6 +755,12 @@ Deno.serve(async (req) => {
           removed = true;
         } catch (e) {
           console.warn("could not remove the item at Plaid:", (e as Error).message);
+          /* Removal failed, so the Item is still out there. Record it rather
+             than lose the only handle we have on it. */
+          await supabase.from("retired_bank_items").insert({
+            ledger_id: body.ledger_id || null, item_id: conn.item_id,
+            access_token: conn.access_token, reason: "removal failed on disconnect",
+          }).then(() => {}, () => {});
         }
       }
 
