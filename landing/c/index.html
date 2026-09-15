@@ -269,12 +269,25 @@ function businessTabs() {
 
 async function showPortal(t, { anonymous = false } = {}) {
   active = t;
-  const r = await fetch(`${PROJECT}/rest/v1/rpc/contact_portal_view`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
-    body: JSON.stringify({ p_token: t }),
-  });
-  const d = await r.json().catch(() => null);
+  /* A page that cannot reach the server says so, rather than throwing.
+     The catch used to cover only the parsing, so a failed request escaped. */
+  let d = null;
+  try {
+    const r = await fetch(`${PROJECT}/rest/v1/rpc/contact_portal_view`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
+      body: JSON.stringify({ p_token: t }),
+    });
+    d = await r.json();
+  } catch {
+    /* Only replace what is on screen if there is nothing on it: a refresh
+       that fails should leave the last good page where it is. */
+    if (!wrap.querySelector(".card")) {
+      wrap.innerHTML = `<div class="card"><p class="none">Could not reach the server.
+        Check your connection and reload.</p></div>`;
+    }
+    return;
+  }
   if (!d || d.ok === false) {
     wrap.innerHTML = `<div class="card"><p class="none">${esc((d && d.error) || "This link is not active.")}</p></div>`;
     return;
@@ -608,9 +621,17 @@ async function showPortal(t, { anonymous = false } = {}) {
     document.getElementById("fname").textContent = f ? `${f.name}, ${(f.size / 1048576).toFixed(1)} MB` : "";
     drop.querySelector("b").textContent = f ? "Attached" : "Drop a file here";
   };
-  drop.onclick = () => fileInput.click();
-  drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } };
-  fileInput.onchange = showFile;
+  /* Choosing a file is not leaving the page.
+   *
+   * The blur and focus a picker causes look exactly like switching tabs.
+   * Holding the refresh off for a moment either side means the ordinary case
+   * cannot be mistaken for a return, whatever is or is not typed. */
+  const holdRefresh = () => { lastLook = Date.now() + 4000; };
+  drop.onclick = () => { holdRefresh(); fileInput.click(); };
+  drop.onkeydown = (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); holdRefresh(); fileInput.click(); }
+  };
+  fileInput.onchange = () => { holdRefresh(); showFile(); };
   ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", (e) => {
@@ -719,12 +740,37 @@ document.getElementById("help").onclick = () => openHelp(window.__business);
  * as the app: refresh on returning to it, and quietly while it is in front of
  * somebody. */
 let lastLook = Date.now();
+
+/* Anything typed but not sent.
+ *
+ * A refresh redraws the whole page, so it must never run over work in
+ * progress. Opening a file picker blurs the window and closing it fires
+ * focus, which is indistinguishable from coming back to the tab: the refresh
+ * fired and took everything typed with it, including the file just chosen.
+ *
+ * So the question is not "did they leave" but "is there anything to lose". */
+const formDirty = () => {
+  const f = document.getElementById("file");
+  if (f && f.files && f.files.length) return true;
+  return ["desc", "amt", "num", "due"].some((id) => {
+    const el = document.getElementById(id);
+    return el && String(el.value || "").trim() !== "";
+  });
+};
+
 const refreshIfStale = () => {
   if (!active || document.visibilityState !== "visible") return;
   if (Date.now() - lastLook < 20000) return;
   if (document.querySelector(".sheet")) return;
+  if (formDirty()) return;
   lastLook = Date.now();
-  showPortal(active, { anonymous: !portals.length });
+  /* A background refresh that fails should fail quietly.
+   *
+   * This called an async function and ignored the promise, so a dropped
+   * connection surfaced as an uncaught FetchError in the console with nothing
+   * on the page to match it. Nobody asked for this refresh; it should not
+   * report its own failure. */
+  showPortal(active, { anonymous: !portals.length }).catch(() => {});
 };
 document.addEventListener("visibilitychange", refreshIfStale);
 window.addEventListener("focus", refreshIfStale);
