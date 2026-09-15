@@ -109,6 +109,7 @@
 <div class="mast">
   <img src="https://www.brasstally.com/app/icon-192.png" alt="" width="26" height="26"/>
   <span class="mark">Brass<span>tally</span></span>
+  <span class="small" id="whoami" style="margin-left:2px"></span>
   <button class="helpbtn" id="help" aria-label="How this page works">?</button>
 </div>
 <div class="wrap" id="wrap">
@@ -199,6 +200,38 @@ function openHelp(business) {
  * Telling a supplier their work was refused when it was not is the worst
  * thing this page could get wrong, so an unknown state now says it is unknown.
  */
+/* A first name to greet by, without mangling anything.
+ *
+ * A company name, or anything that does not look like a person's first name,
+ * is left whole: "Acme Roofing Ltd, here is where you stand" is odd, and
+ * "Acme, here is where you stand" is worse. */
+function firstName(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return "Hello";
+  const first = clean.split(/\s+/)[0];
+  const looksLikeCompany = /\b(ltd|inc|llc|corp|co|gmbh|plc|limited|company|services|group)\b/i.test(clean);
+  return looksLikeCompany || first.length < 2 ? clean : first;
+}
+
+/* What the business holds for them.
+ *
+ * Not decoration. An invoice reply, a payment notice and a correction all go
+ * to that address, so if it is wrong they need to be able to see that it is
+ * wrong, from the page itself, rather than wondering why nothing arrives. */
+function who(contact, business) {
+  const bits = [contact.email, contact.phone].filter(Boolean).map(esc);
+  const role = contact.role ? esc(String(contact.role).replace(/^\w/, (c) => c.toUpperCase())) : "";
+  const since = contact.since ? `dealing since ${String(contact.since).slice(0, 7)}` : "";
+  return `<div class="row" style="border-top:1px solid var(--line);padding-top:12px">
+    <span>
+      <div><b>${esc(contact.name || "You")}</b>${role ? ` <span class="small">${role}</span>` : ""}</div>
+      <div class="small">${bits.join(" · ") || "no contact details on file"}${since ? ` · ${since}` : ""}</div>
+      <div class="small">${business} sends everything to ${contact.email ? esc(contact.email) : "no address"}.
+        Tell them if that is wrong.</div>
+    </span>
+  </div>`;
+}
+
 function statusOf(inv) {
   /* Withdrawn by the supplier, which is the only meaning this status has.
      There is no "voided": an owner removing an invoice deletes it outright, so
@@ -445,7 +478,7 @@ async function showPortal(t, { anonymous = false } = {}) {
     ${brandNew ? `
     <div class="card">
       <div class="eyebrow">${esc(d.business)}</div>
-      <h1>You have not sent anything yet</h1>
+      <h1>${esc(firstName(d.contact.name))}, you have not sent anything yet</h1>
       <p class="sub">${esc(d.business)} has given you this page so you can invoice them and see where
         each one stands, without emailing anybody to ask.</p>
       <p class="sub" style="margin:0">Send one below and you will see it here, from review through to
@@ -455,8 +488,9 @@ async function showPortal(t, { anonymous = false } = {}) {
     ` : `
     <div class="card">
       <div class="eyebrow">${esc(d.business)}</div>
-      <h1>Your account</h1>
-      <p class="sub">Everything between you and ${esc(d.business)}. Always current.</p>
+      <h1>${esc(firstName(d.contact.name))}, here is where you stand</h1>
+      <p class="sub">Everything between ${esc(d.contact.name || "you")} and ${esc(d.business)}. Always current.</p>
+      ${who(d.contact, d.business)}
       <div class="total"><span>Outstanding to you</span><span class="m">${money(owed, ccy)}</span></div>
       ${waiting > 0.005 ? `<div class="total" style="border:none;padding-top:4px">
         <span class="small">Waiting on their review</span>
@@ -635,6 +669,11 @@ async function showPortal(t, { anonymous = false } = {}) {
     };
   }
   window.__business = d.business;
+  /* The tab says whose account it is, which matters to somebody who works with
+     several businesses and keeps a few of these open. */
+  document.title = `${d.contact.name || "Your account"} · ${d.business}`;
+  const me = document.getElementById("whoami");
+  if (me) me.textContent = d.contact.name ? `· ${d.contact.name}` : "";
   const df = document.getElementById("dropflash");
   if (df) df.onclick = () => { flash = null; showPortal(active, { anonymous }).catch(() => {}); };
   const help2 = document.getElementById("help2");
