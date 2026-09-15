@@ -674,3 +674,22 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
 @media (prefers-reduced-motion: reduce) {
   .more-layer, .more-item { animation: none; }
 }
+
+/* The chat holds its own scrolling.
+
+   A fixed panel does not stop a touch gesture reaching the page behind it: the
+   browser scrolls whatever is under your finger once the panel has nothing
+   left to give. On a phone that meant flicking the transcript moved the ledger
+   behind it while the conversation sat still.
+
+   Contained at the frame as well as the list, because the header and composer
+   are part of the panel and a drag starting on either of them was handed
+   straight through. */
+.tally-frame, .tally-panel {
+  overscroll-behavior: contain;
+}
+
+/* The panel is a surface you drag within, not one you drag the page by. */
+.tally-panel {
+  touch-action: pan-y;
+}

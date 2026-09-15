@@ -10718,9 +10718,27 @@ function Capture({
           </button>
         </div>
       )}
+      {/* The transcript scrolls, and the page behind it does not.
+       *
+       * On a phone, reaching the top or bottom of a scrolling box hands the
+       * gesture to whatever is underneath, so the page slid about behind the
+       * chat and the conversation stayed put. `overscroll-contain` stops the
+       * handover at this element's edge.
+       *
+       * `touch-action: pan-y` tells the browser the vertical gesture belongs
+       * here before it has waited to see what the listener does, which is what
+       * removes the half-beat of hesitation at the start of a flick. */}
       <div
         className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3"
-        style={embedded ? {} : { maxHeight: "55vh", minHeight: 320 }}
+        style={{
+          ...(embedded ? {} : { maxHeight: "55vh", minHeight: 320 }),
+          /* Set here rather than as a utility class: the stylesheet check
+             found `overscroll-contain` was not in the compiled CSS, which
+             means it would have been a class name that did nothing. */
+          overscrollBehavior: "contain",
+          touchAction: "pan-y",
+          WebkitOverflowScrolling: "touch",
+        }}
       >
         {msgs.map((m, i) => (
           <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
