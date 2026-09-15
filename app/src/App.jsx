@@ -12286,11 +12286,32 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
  * sent with the wrong one bounces, so the form asks for what that country
  * actually uses rather than showing every field and hoping.
  */
+/* Which field is missing, by name.
+ *
+ * "Fill in the required fields" is what a form says when it has not bothered
+ * to look. There are at most five, and naming the first one absent is the
+ * difference between a correction and a hunt.
+ */
+function whatIsMissing(d) {
+  if (!d.beneficiaryName) return "The beneficiary name is the one thing their bank matches on.";
+  if (!d.accountNumber) return "An account number is needed.";
+  if (!d.bankName) return "Which bank is it?";
+  if (d.country === "CA" && !d.transitNumber) return "A Canadian transfer needs the five digit transit number.";
+  if (d.country === "CA" && !d.institutionNumber) return "A Canadian transfer needs the three digit institution number.";
+  if (d.country === "US" && !d.routingNumber) return "A US transfer needs the nine digit routing number.";
+  if (d.country === "OTHER" && !d.iban && !d.swiftCode) return "An IBAN or a SWIFT code is needed.";
+  return "Something is still missing.";
+}
+
 function PayToCard({ ledgerId, readOnly }) {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
+  /* Declared with the others, above the early return.
+     A hook after `if (!d) return null` runs on some renders and not others,
+     which is the one thing React cannot tolerate. */
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     if (!ledgerId) return;
@@ -12328,14 +12349,22 @@ function PayToCard({ ledgerId, readOnly }) {
 
   const save = async (patch = {}) => {
     setBusy(true);
-    const saved = await billing.savePayTo(ledgerId, { ...d, ...patch });
+    setErr("");
+    const res = await billing.savePayTo(ledgerId, { ...d, ...patch });
     setBusy(false);
-    if (saved) {
-      setD(saved);
-      setDone(patch.active === false ? "Off. It will not appear on invoices."
-        : saved.active ? "Saved. It goes out with every invoice." : "Saved.");
-      setTimeout(() => setDone(""), 6000);
+
+    /* A button that cannot do its job says so. It used to check the result for
+       truthiness and then do nothing at all when it was null, which reads as a
+       dead control rather than a blocked one. */
+    if (!res?.ok) {
+      setErr(res?.error || "It did not save. Try again in a moment.");
+      return;
     }
+
+    setD(res.saved);
+    setDone(patch.active === false ? "Off. It will not appear on invoices."
+      : res.saved.active ? "Saved. It goes out with every invoice." : "Saved, and kept to yourself.");
+    setTimeout(() => setDone(""), 6000);
   };
 
   return (
@@ -12360,6 +12389,7 @@ function PayToCard({ ledgerId, readOnly }) {
       </p>
 
       {done && <p style={{ color: P.credit }} className="text-[13.5px] mt-1">{done}</p>}
+      {err && <p style={{ color: P.debit }} className="text-[13.5px] mt-1">{err}</p>}
 
       {open && (
         <div className="mt-3">
@@ -12437,12 +12467,20 @@ function PayToCard({ ledgerId, readOnly }) {
 
           {!readOnly && (
             <div className="flex flex-wrap items-center gap-2 mt-3">
+              {/* Pressable even when incomplete.
+               *
+               * A greyed button is indistinguishable from a broken one, and
+               * the person pressing it cannot tell which field is missing.
+               * Pressing it names the missing field instead. */}
               <button
-                onClick={() => save({ active: true })}
-                disabled={busy || !ready}
+                onClick={() => {
+                  if (!ready) { setErr(whatIsMissing(d)); return; }
+                  save({ active: true });
+                }}
+                disabled={busy}
                 style={{
-                  background: ready ? P.brass : P.surface,
-                  color: ready ? P.onbrass : P.faint,
+                  background: ready ? P.brass : P.surface2,
+                  color: ready ? P.onbrass : P.muted,
                   borderRadius: R.pill,
                 }}
                 className="h-11 px-4 text-[15px] font-medium press"

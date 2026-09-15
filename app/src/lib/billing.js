@@ -183,7 +183,16 @@ export async function getPayTo(ledgerId) {
 
 export async function savePayTo(ledgerId, d) {
   assertWritable();
-  return soft("save payment details", async () => {
+  /* The reason travels with the failure.
+   *
+   * `soft` returns null and logs, which is right for a list that can render
+   * empty and wrong for a button: pressing it did nothing, said nothing, and
+   * the only trace was a console line nobody reads while pressing a button.
+   *
+   * This is the fourth time this session I have found that shape. It is the
+   * one to watch for rather than fix case by case: a swallowed error behind a
+   * control is indistinguishable from a control that does not work. */
+  try {
     const body = {
       ledger_id: ledgerId,
       country: d.country || "CA",
@@ -205,8 +214,11 @@ export async function savePayTo(ledgerId, d) {
     const { data, error } = await supabase
       .from("payment_details").upsert(body, { onConflict: "ledger_id" }).select().single();
     if (error) throw error;
-    return rowToPay(data);
-  }, null);
+    return { ok: true, saved: rowToPay(data) };
+  } catch (e) {
+    console.warn("save payment details failed:", e?.message || e);
+    return { ok: false, error: e?.message || "It did not save." };
+  }
 }
 
 /** What a given country actually needs, so the form asks for that and no more. */
