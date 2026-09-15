@@ -8860,8 +8860,18 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
             <p style={{ color: P.muted }} className="text-[14.5px] mb-2">
               {CONTACT_ROLES.find((r) => r.id === role)?.hint}
             </p>
+            {/* Who, then what you can do about them.
+
+                Five controls in one row needs about 560px. On a phone the
+                last of them, Remove, was sliced in half by the edge of the
+                screen: present, unreadable, and still tappable, which is the
+                worst of the three.
+
+                Name and details take the first line; the controls take the
+                second on a phone and rejoin the first where there is room. */}
             {people.map((c) => (
-              <div key={c.id} className="flex items-center gap-3 py-3" style={{ borderTop: `1px solid ${P.line}` }}>
+              <div key={c.id} className="py-3 sm:flex sm:items-center sm:gap-3" style={{ borderTop: `1px solid ${P.line}` }}>
+                <div className="flex items-center gap-3 min-w-0">
                 <span
                   aria-hidden
                   style={{ background: P.surface2, color: P.muted, borderRadius: 11 }}
@@ -8884,11 +8894,15 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                   )}
                 </span>
 
-                {/* Before Edit, and outside the readOnly guard.
+                </div>
 
-                    Reading what has passed between you and somebody is not an
-                    edit, and an accountant with read access has more reason to
-                    want it than anyone. */}
+                {/* The controls, wrapping rather than overflowing.
+
+                    Before Edit, and outside the readOnly guard: reading what
+                    has passed between you and somebody is not an edit, and an
+                    accountant with read access has more reason to want it than
+                    anyone. */}
+                <div className="flex items-center flex-wrap gap-1 mt-2 sm:mt-0 sm:ml-auto sm:shrink-0">
                 <button
                   onClick={() => setHistoryFor(c)}
                   style={{ color: P.brassText }}
@@ -9029,7 +9043,16 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                     </button>
                   </>
                 )}
-                {/* Rendered inside the returned tree, not after it. */}
+                </div>
+              </div>
+            ))}
+          </section>
+        ))
+      )}
+
+      {/* The history panel, at the end of the tree rather than inside a row.
+          It had been dropped inside the map, so every contact rendered its own
+          copy and the row's closing tags went missing with it. */}
       {historyFor && (
         <ContactHistory
           contact={historyFor}
@@ -9038,11 +9061,6 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
           openPreview={openPreview}
           onClose={() => setHistoryFor(null)}
         />
-      )}
-    </div>
-            ))}
-          </section>
-        ))
       )}
     </div>
 
