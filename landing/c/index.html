@@ -147,6 +147,16 @@ const token =
 let portals = [];   // every business, when signed in
 let active = null;  // the token being viewed
 
+/* A confirmation that outlives the redraw.
+ *
+ * The message was written into the form and the page redrew 1.2 seconds
+ * later, taking it with it. So the one moment somebody wants reassurance,
+ * having just sent an invoice for real money, was the moment it vanished.
+ *
+ * Held here instead, rendered as part of the page, and gone only when they
+ * dismiss it or send something else. */
+let flash = null;
+
 /* Help behind a mark.
  *
  * The explanations used to sit on the page, which is right once and clutter
@@ -409,8 +419,29 @@ async function showPortal(t, { anonymous = false } = {}) {
    * only while there is genuinely nothing to show. */
   const brandNew = !(d.invoices || []).length && !(d.payments || []).length;
 
+  /* It lasts as long as it is useful and no longer.
+   *
+   * Dismissible, but somebody who leaves this open on a desk should not come
+   * back tomorrow to a confirmation about something they sent yesterday. Ten
+   * minutes is longer than anybody needs to read it and shorter than a
+   * working day. */
+  if (flash && Date.now() - flash.at > 10 * 60 * 1000) flash = null;
+
+  const flashCard = flash
+    ? `<div class="card" style="border-color:var(--credit)">
+         <div style="display:flex;align-items:flex-start;gap:10px">
+           <span style="flex:1">
+             <div style="color:var(--credit);font-weight:600">${esc(flash.title)}</div>
+             <div class="small" style="margin-top:2px">${esc(flash.detail)}</div>
+           </span>
+           <button class="helpbtn" id="dropflash" aria-label="Dismiss">&#10005;</button>
+         </div>
+       </div>`
+    : "";
+
   wrap.innerHTML = `
     ${businessTabs()}
+    ${flashCard}
     ${brandNew ? `
     <div class="card">
       <div class="eyebrow">${esc(d.business)}</div>
@@ -604,6 +635,8 @@ async function showPortal(t, { anonymous = false } = {}) {
     };
   }
   window.__business = d.business;
+  const df = document.getElementById("dropflash");
+  if (df) df.onclick = () => { flash = null; showPortal(active, { anonymous }).catch(() => {}); };
   const help2 = document.getElementById("help2");
   if (help2) help2.onclick = () => openHelp(d.business);
   const signin = document.getElementById("signin");
@@ -723,8 +756,19 @@ async function showPortal(t, { anonymous = false } = {}) {
       }),
     }).catch(() => {});
 
-    ok.textContent = "Sent. It is with them for review, and they have been emailed.";
-    setTimeout(() => showPortal(active, { anonymous }), 1200);
+    /* Say what was sent, not only that something was.
+     *
+     * "Sent" alone leaves somebody checking the list to be sure it was the
+     * right amount. Naming it means they do not have to. */
+    const sentFor = document.getElementById("desc").value.trim();
+    const sentCcy = document.getElementById("ccy").value;
+    flash = {
+      at: Date.now(),
+      title: `${sentCcy === ccy ? money(amount, ccy) : `${sentCcy} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} sent to ${d.business}`,
+      detail: `${sentFor ? `${sentFor}. ` : ""}It is with them for review and they have been emailed.${filePath ? " Your attachment went with it." : ""}`,
+    };
+    ok.textContent = "";
+    showPortal(active, { anonymous }).catch(() => {});
   };
 }
 
