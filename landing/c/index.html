@@ -188,7 +188,10 @@ function openHelp(business) {
  * thing this page could get wrong, so an unknown state now says it is unknown.
  */
 function statusOf(inv) {
-  if (inv.status === "voided") return ["gone", "Withdrawn by them"];
+  /* Withdrawn by the supplier, which is the only meaning this status has.
+     There is no "voided": an owner removing an invoice deletes it outright, so
+     it simply stops appearing. */
+  if (inv.status === "withdrawn") return ["gone", "You withdrew this"];
   if (inv.payable_status && inv.payable_status !== "open") return ["paid", "Paid"];
   if (inv.correction_at) return ["stop", "They asked for a change"];
   if ((Number(inv.paid_amount) || 0) > 0.005) return ["part", "Part paid"];
@@ -286,7 +289,7 @@ async function showPortal(t, { anonymous = false } = {}) {
    * Anything in another currency is left out of both and counted apart. A
    * conversion we cannot do honestly is worse than a total that says it is
    * short, and the rate only exists once they accept it. */
-  const live = (d.invoices || []).filter((i) => i.status !== "voided");
+  const live = (d.invoices || []).filter((i) => i.status !== "withdrawn");
   const owed = live.reduce((n, i) =>
     i.payable_status === "open"
       ? n + Math.max(0, Math.abs(Number(i.payable_amount) || 0) - (Number(i.paid_amount) || 0))
@@ -333,7 +336,7 @@ async function showPortal(t, { anonymous = false } = {}) {
          * payable in their books, possibly part paid, and changing it from
          * out here would move their figures without their knowledge. */
         const canRedo = i.status === "declined" || i.correction_at;
-        const canPull = i.status !== "voided" && i.status !== "accepted" && !i.payable_status;
+        const canPull = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
         const actions = (canRedo || canPull)
           ? `<div class="small" style="margin-top:4px">
               ${canRedo ? `<button class="ghost" data-fix="${esc(i.invoice_no || "")}"

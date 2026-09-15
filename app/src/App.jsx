@@ -6690,6 +6690,21 @@ function ArrivedCard({ items, onApprove, onDismiss, busyId }) {
   );
 }
 
+/* What an inbound invoice's state is called, in one place.
+ *
+ * Three lists spelled this out separately and all three ended with "set
+ * aside" for anything unrecognised, so a withdrawn invoice was reported as
+ * declined. Saying somebody's work was refused when they took it back
+ * themselves is a small lie that reads as a large one.
+ */
+function inboundState(status) {
+  if (status === "accepted") return "accepted";
+  if (status === "pending") return "waiting on you";
+  if (status === "declined") return "set aside";
+  if (status === "withdrawn") return "withdrawn by them";
+  return status || "unknown";
+}
+
 function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [], trailing = null , onContactsChange }) {
   const [open, setOpen] = useState(null);            // "inbox" | "link" | null
   const [pending, setPending] = useState([]);
@@ -8217,7 +8232,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                           <div key={iv.id} className="flex items-baseline justify-between gap-3 pl-3 py-0.5">
                                             <span style={{ color: P.faint }} className="text-[12.5px] min-w-0 truncate">
                                               {iv.invoiceNo ? `${iv.invoiceNo} · ` : ""}
-                                              {String(iv.sentAt).slice(0, 10)} · {iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside"}
+                                              {String(iv.sentAt).slice(0, 10)} · {inboundState(iv.status)}
                                             </span>
                                             <span className="shrink-0 text-right">
                                               {/* Yours first, theirs underneath.
@@ -8257,7 +8272,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                                           <div key={iv.id} className="flex items-baseline justify-between gap-3 pl-3 py-0.5">
                                             <span style={{ color: P.faint }} className="text-[12.5px] min-w-0 truncate">
                                               {iv.invoiceNo ? `${iv.invoiceNo} · ` : ""}
-                                              {String(iv.sentAt).slice(0, 10)} · {iv.status === "accepted" ? "accepted" : iv.status === "pending" ? "waiting on you" : "set aside"}
+                                              {String(iv.sentAt).slice(0, 10)} · {inboundState(iv.status)}
                                             </span>
                                             <span className="shrink-0 text-right">
                                               {/* Yours first, theirs underneath.
@@ -8528,7 +8543,7 @@ function ContactHistory({ contact, data, inbound, onClose, openPreview }) {
                 key={i.id}
                 left={`${i.invoiceNo ? `${i.invoiceNo} · ` : ""}${i.description || "Invoice"}`}
                 sub={`${String(i.submittedAt || "").slice(0, 10)} · ${
-                  i.status === "accepted" ? "accepted" : i.status === "pending" ? "waiting on you" : "set aside"
+                  inboundState(i.status)
                 }`}
                 right={i.currency && i.currency !== (data.ledger.currency || "CAD")
                   ? `${i.currency} ${fmt(i.amount)}`

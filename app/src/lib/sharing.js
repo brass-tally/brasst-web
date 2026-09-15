@@ -461,7 +461,10 @@ export async function listLinkInvites(ledgerId) {
 
          Voiding an invoice removes it and its payable, so keeping a row for it
          here lists something that no longer exists anywhere else in the app. */
-      .neq("status", "voided")
+      /* Withdrawn by the supplier: still a record, not something to act on.
+         This said "voided", a status that never existed, so it filtered
+         nothing and the list included everything. */
+      .neq("status", "withdrawn")
       .order("submitted_at", { ascending: false })
       .limit(60);
 
