@@ -138,6 +138,8 @@ const money = (n, ccy) =>
   `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0)
     .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const BUILD = "2026-09-15 00:33Z";
+
 const token =
   (location.pathname.match(/^\/c\/([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
   new URLSearchParams(location.search).get("t") || "";
@@ -411,7 +413,12 @@ async function showPortal(t, { anonymous = false } = {}) {
     `}
 
     <div class="card">
-      <div class="eyebrow" id="form-title">${brandNew ? "Your first invoice" : "Send a new invoice"}</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="eyebrow" id="form-title" style="margin:0;flex:1">${brandNew ? "Your first invoice" : "Send a new invoice"}</div>
+        <button class="helpbtn" id="clear" title="Empty the form" aria-label="Empty the form"
+          style="display:none;margin:0">&#10005;</button>
+      </div>
+      <div style="height:12px"></div>
       <p class="sub">${brandNew
         ? `Fill this in and it goes straight to ${esc(d.business)}. A description and an amount are enough.`
         : "It arrives in their books for review. Nothing is owed until they accept it."}</p>
@@ -438,7 +445,6 @@ async function showPortal(t, { anonymous = false } = {}) {
       <div class="small" id="fname"></div>
 
       <button class="go" id="send">Send it</button>
-      <button class="ghost" id="clear" style="margin-left:8px">Clear</button>
       <p class="err" id="serr"></p><p class="ok" id="sok"></p>
     </div>
 
@@ -450,6 +456,7 @@ async function showPortal(t, { anonymous = false } = {}) {
       ${anonymous
         ? "Anyone with this address can read this page, so treat it like a statement."
         : `Signed in as ${esc(d.contact.email || "")}. <button class="ghost" id="out">Sign out</button>`}
+      <br/><span style="opacity:.6">${BUILD}</span>
     </footer>`;
 
   for (const b of wrap.querySelectorAll(".tab")) {
@@ -468,6 +475,8 @@ async function showPortal(t, { anonymous = false } = {}) {
       // Say which invoice is being answered, so the form is not a mystery.
       document.getElementById("form-title").textContent =
         b.dataset.fix ? `Replacing ${b.dataset.fix}` : "Replacing that invoice";
+      // The way out only exists once there is something to back out of.
+      document.getElementById("clear").style.display = "inline-flex";
       document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
       document.getElementById("desc").focus();
     };
@@ -494,7 +503,11 @@ async function showPortal(t, { anonymous = false } = {}) {
         b.textContent = "Withdraw it";
         return;
       }
-      showPortal(active, { anonymous: !portals.length });
+      /* Reload from the server rather than trusting what is on screen.
+         If the row still comes back as anything but withdrawn, the update did
+         not take, and the page will say so rather than offering the button
+         again as though nothing happened. */
+      await showPortal(active, { anonymous: !portals.length });
     };
   }
   window.__business = d.business;
@@ -541,6 +554,7 @@ async function showPortal(t, { anonymous = false } = {}) {
     document.getElementById("serr").textContent = "";
     document.getElementById("sok").textContent = "";
     document.getElementById("form-title").textContent = originalFormTitle;
+    document.getElementById("clear").style.display = "none";
   };
 
   document.getElementById("send").onclick = async () => {
