@@ -6706,8 +6706,12 @@ function inboundState(status) {
   return status || "unknown";
 }
 
-function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [], trailing = null , onContactsChange }) {
-  const [open, setOpen] = useState(null);            // "inbox" | "link" | null
+function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount, onDeletePayable, onFindPayable, onFindOpenPayables, onConfirmVoid, contacts = [], trailing = null , onContactsChange, only = null }) {
+  /* Either this component owns its icons, or something above it has decided
+     which panel to show. The second is how three invoice sections became three
+     tabs without any of them being rewritten. */
+  const [open, setOpen] = useState(only);            // "inbox" | "link" | null
+  useEffect(() => { if (only) setOpen(only); }, [only]);
   const [pending, setPending] = useState([]);
   const [history, setHistory] = useState([]);
   const [links, setLinks] = useState([]);
@@ -7698,7 +7702,9 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
 
   return (
     <div ref={shell} data-invoice-tools>
-      <div className="flex items-center gap-2">
+      {/* Hidden when something above has chosen the panel: two ways to switch
+          between the same things, on the same screen, is one too many. */}
+      <div className="flex items-center gap-2" style={only ? { display: "none" } : undefined}>
         <Tool id="inbox" icon={Inbox} label="Invoices sent to you" count={pending.length} />
         <Tool id="link" icon={LinkIcon} label="Your intake link" />
         <span style={{ color: P.faint }} className="text-[14px] min-w-0 truncate">
@@ -12097,7 +12103,7 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
  * A draft lives here alone. Sending is the moment it becomes a receivable, so
  * the books never contain a figure nobody has been asked for.
  */
-function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onChanged }) {
+function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onChanged, bare = false }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState("");
@@ -12132,22 +12138,31 @@ function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onCh
 
   const totals = draft ? billing.totalOf(draft.lines, draft.taxRate) : { net: 0, tax: 0, total: 0 };
 
-  const setLine = (i, patch) => {
+  /* Lines are added and removed on purpose.
+   *
+   * They used to appear on their own as you typed in the last one, which
+   * sounds helpful and is not: the list grew while you were reading it, the
+   * form then complained about the blank line it had just made, and there was
+   * no way to take one away. Adding is a button, removing is a cross, and
+   * neither happens behind your back. */
+  const setLine = (i, patch) =>
+    setDraft((d) => ({ ...d, lines: d.lines.map((l, n) => (n === i ? { ...l, ...patch } : l)) }));
+
+  const addLine = () =>
+    setDraft((d) => ({ ...d, lines: [...d.lines, { desc: "", qty: 1, rate: "" }] }));
+
+  const dropLine = (i) =>
     setDraft((d) => {
-      const lines = d.lines.map((l, n) => (n === i ? { ...l, ...patch } : l));
-      /* A blank line at the end, always, so adding the next one is typing
-         rather than pressing a button first. */
-      if (i === lines.length - 1 && (lines[i].desc || lines[i].rate)) {
-        lines.push({ desc: "", qty: 1, rate: "" });
-      }
-      return { ...d, lines };
+      const lines = d.lines.filter((_, n) => n !== i);
+      // Never nothing: an invoice with no lines has no form to type into.
+      return { ...d, lines: lines.length ? lines : [{ desc: "", qty: 1, rate: "" }] };
     });
-  };
 
   const save = async (andSend) => {
     const lines = draft.lines.filter((l) => String(l.desc).trim() || Number(l.rate));
     if (!draft.party.trim()) { setErr("Who is it for?"); return null; }
-    if (!lines.length || totals.total <= 0) { setErr("Add at least one line with an amount."); return null; }
+    if (!lines.length) { setErr("Add a line: what is this invoice for?"); return null; }
+    if (totals.total <= 0) { setErr("Put a rate against at least one line."); return null; }
     if (andSend && !String(draft.contactEmail || "").trim()) {
       setErr("An address is needed to send it. Pick a contact, or type one in.");
       return null;
@@ -12239,9 +12254,14 @@ function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onCh
   );
 
   return (
-    <section style={{ background: P.surface, borderRadius: 20 }} className="p-5">
+    /* Inside the hub this is a tab, not a section: its own card and heading
+       would be a box inside a box saying the same word twice. */
+    <section
+      style={bare ? undefined : { background: P.surface, borderRadius: 20 }}
+      className={bare ? "" : "p-5"}
+    >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices you send</h3>
+        {!bare && <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices you send</h3>}
         {owedOut > 0 && (
           <span style={{ fontFamily: MONO, color: P.muted }} className="text-[15.5px] tabular-nums">
             {fmt(owedOut)} out
@@ -12321,8 +12341,14 @@ function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onCh
           />
 
           <label style={{ color: P.muted }} className="text-[14px] block mt-3">What it is for</label>
+          <div className="flex gap-1.5 mt-1 px-1">
+            <span style={{ color: P.faint }} className="text-[12.5px] flex-1">Description</span>
+            <span style={{ color: P.faint }} className="text-[12.5px] w-16 text-center">Qty</span>
+            <span style={{ color: P.faint }} className="text-[12.5px] w-24 text-right">Rate</span>
+            <span className="w-8" />
+          </div>
           {draft.lines.map((l, i) => (
-            <div key={i} className="flex gap-1.5 mt-1.5">
+            <div key={i} className="flex items-center gap-1.5 mt-1.5">
               <input
                 value={l.desc}
                 onChange={(e) => setLine(i, { desc: e.target.value })}
@@ -12345,8 +12371,24 @@ function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onCh
                 style={{ background: P.surface, color: P.text, borderRadius: 13, fontFamily: MONO }}
                 className="w-24 h-11 px-2 text-[15px] text-right outline-none border-none"
               />
+              <button
+                onClick={() => dropLine(i)}
+                aria-label="Remove this line"
+                style={{ color: P.faint }}
+                className="w-8 h-11 text-[15px] shrink-0 press"
+              >
+                &#10005;
+              </button>
             </div>
           ))}
+
+          <button
+            onClick={addLine}
+            style={{ color: P.brassText }}
+            className="text-[14px] mt-2 press"
+          >
+            <Plus size={12} className="inline mb-0.5" /> Another line
+          </button>
 
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <label style={{ color: P.muted }} className="text-[14px]">Tax</label>
@@ -12417,6 +12459,108 @@ function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onCh
             </button>
           </div>
         </div>
+      )}
+    </section>
+  );
+}
+
+/* Everything to do with an invoice, in one place.
+ *
+ * There were three sections on this screen doing one job between them: what
+ * you bill, what you are billed, and the link that brings the second in. Three
+ * headings, three icons, and a person having to know which was which before
+ * they could act.
+ *
+ * One heading now, and three tabs in the order the work happens: you send
+ * something, something arrives, and the link is the plumbing behind the second.
+ */
+function InvoicesHub(props) {
+  const [tab, setTab] = useState("out");
+
+  /* The badge counts what is waiting on you.
+   *
+   * `InvoiceTools` already reports that number through `onCount`, so the hub
+   * listens rather than being handed a figure from above that nothing in this
+   * component computes. I reached for a name that did not exist here, and the
+   * linter caught it before you did. */
+  const [waiting, setWaiting] = useState(0);
+  const noteCount = (n) => {
+    if (typeof n === "number") setWaiting(n);
+    props.onCount?.(n);
+  };
+
+  const Tab = ({ id, label, badge }) => {
+    const on = tab === id;
+    return (
+      <button
+        onClick={() => setTab(id)}
+        aria-pressed={on}
+        style={{
+          background: on ? P.brass : "transparent",
+          color: on ? P.onbrass : P.muted,
+          borderRadius: R.pill,
+        }}
+        className="h-10 px-3.5 text-[14.5px] font-medium press shrink-0"
+      >
+        {label}
+        {badge > 0 && (
+          <span
+            style={{ background: on ? P.onbrass : P.brass, color: on ? P.brass : P.onbrass }}
+            className="ml-1.5 px-1.5 py-0.5 rounded-full text-[11.5px]"
+          >
+            {badge}
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <section style={{ background: P.surface, borderRadius: 20 }} className="p-5">
+      <div className="flex items-center gap-2.5 mb-1">
+        <span
+          style={{ background: P.surface2, color: P.brassText, borderRadius: 12 }}
+          className="w-10 h-10 flex items-center justify-center shrink-0"
+        >
+          <FileText size={17} />
+        </span>
+        <h3 style={{ fontFamily: SERIF }} className="text-xl flex-1">Invoices</h3>
+        {props.trailing}
+      </div>
+
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-2">
+        <Tab id="out" label="You send" />
+        <Tab id="in" label="Sent to you" badge={waiting} />
+        <Tab id="link" label="Your link" />
+      </div>
+
+      {tab === "out" && (
+        <BillingList
+          ledgerId={props.ledgerId}
+          ledgerCcy={props.ledgerCurrency}
+          contacts={props.contacts}
+          addAR={props.addAR}
+          readOnly={props.readOnly}
+          onChanged={props.onCount}
+          bare
+        />
+      )}
+
+      {tab !== "out" && (
+        <InvoiceTools
+          only={tab === "in" ? "inbox" : "link"}
+          ledgerId={props.ledgerId}
+          ledgerCurrency={props.ledgerCurrency}
+          openPreview={props.openPreview}
+          onAccept={props.onAccept}
+          onCount={noteCount}
+          onDeletePayable={props.onDeletePayable}
+          onFindPayable={props.onFindPayable}
+          onFindOpenPayables={props.onFindOpenPayables}
+          onConfirmVoid={props.onConfirmVoid}
+          contacts={props.contacts}
+          onContactsChange={props.onContactsChange}
+        />
       )}
     </section>
   );
@@ -12501,42 +12645,6 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         />
       )}
 
-      {/* One row: the tray and link icons on the left, these on the right.
-
-          They were on a line of their own underneath, which pushed everything
-          below them down a row and left the icons floating with nothing
-          beside them. Same line, opposite ends, and the section starts higher
-          up the page. */}
-      {/* The panel must not live inside a flex row.
-
-          I put the icons and these two buttons on one line, and the expanding
-          panel came with them: opening the intake link squeezed the row, and
-          the buttons wrapped to the bottom.
-
-          InvoiceTools now takes what belongs beside its icons and renders it
-          on its own row, so the panel below is full width whatever is open. */}
-      {!readOnly && (
-        <InvoiceTools
-          trailing={
-            <>
-              <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" onContactsChange={onContactsChange} />
-              <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
-                <Download size={14} /> Export CSV
-              </Btn>
-            </>
-          }
-          ledgerId={data.ledger.id}
-          ledgerCurrency={data.ledger.currency}
-          openPreview={openPreview}
-          onAccept={(inv) => addAR("payables", inv)}
-          onCount={onInboundChange}
-          contacts={contacts}
-          onFindPayable={(id) => data.payables.find((p) => p.id === id) || null}
-          onFindOpenPayables={() => (data.payables || []).filter((p) => p.status === "open")}
-          onDeletePayable={(id) => delAR("payables", id)}
-          onConfirmVoid={askConfirm}
-        />
-      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis.map((k) => (
           <div key={k.label} style={cardStyle()} className="p-4 flex flex-col">
@@ -12566,24 +12674,38 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
       )}
       <div className="grid md:grid-cols-2 gap-6">
         <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} />
-        {/* What you bill, above what you are billed: the section people open
-            this app to act on rather than to read. */}
-        <BillingList
-          ledgerId={data.ledger.id}
-          ledgerCcy={data.ledger.currency || "CAD"}
-          contacts={contacts}
-          addAR={addAR}
-          readOnly={readOnly}
-          onChanged={onInboundChange}
-        />
+        {/* One place for anything invoice shaped. */}
+      <InvoicesHub
+        ledgerId={data.ledger.id}
+        ledgerCurrency={data.ledger.currency || "CAD"}
+        contacts={contacts}
+        addAR={addAR}
+        readOnly={readOnly}
+        openPreview={openPreview}
+        onAccept={(inv) => addAR("payables", inv)}
+        onCount={onInboundChange}
+        onDeletePayable={(id) => delAR("payables", id)}
+        onFindPayable={(id) => data.payables.find((p) => p.id === id) || null}
+        onFindOpenPayables={() => (data.payables || []).filter((p) => p.status === "open")}
+        onConfirmVoid={askConfirm}
+        onContactsChange={onContactsChange}
+        trailing={
+          <>
+            <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
+            <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
+              <Download size={14} /> Export CSV
+            </Btn>
+          </>
+        }
+      />
 
-        <PlannedList
-          ledgerId={data.ledger.id}
-          plans={plans}
-          readOnly={readOnly}
-          onChanged={refreshPlans}
-          onCommit={commitPlan}
-        />
+      <PlannedList
+        ledgerId={data.ledger.id}
+        plans={plans}
+        readOnly={readOnly}
+        onChanged={refreshPlans}
+        onCommit={commitPlan}
+      />
 
         <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} />
       </div>
