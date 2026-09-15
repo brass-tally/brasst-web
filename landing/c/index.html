@@ -408,7 +408,7 @@ async function showPortal(t, { anonymous = false } = {}) {
     `}
 
     <div class="card">
-      <div class="eyebrow">${brandNew ? "Your first invoice" : "Send a new invoice"}</div>
+      <div class="eyebrow" id="form-title">${brandNew ? "Your first invoice" : "Send a new invoice"}</div>
       <p class="sub">${brandNew
         ? `Fill this in and it goes straight to ${esc(d.business)}. A description and an amount are enough.`
         : "It arrives in their books for review. Nothing is owed until they accept it."}</p>
@@ -435,6 +435,7 @@ async function showPortal(t, { anonymous = false } = {}) {
       <div class="small" id="fname"></div>
 
       <button class="go" id="send">Send it</button>
+      <button class="ghost" id="clear" style="margin-left:8px">Clear</button>
       <p class="err" id="serr"></p><p class="ok" id="sok"></p>
     </div>
 
@@ -461,6 +462,9 @@ async function showPortal(t, { anonymous = false } = {}) {
       document.getElementById("amt").value = b.dataset.amt || "";
       document.getElementById("num").value = b.dataset.fix || "";
       if (b.dataset.ccy) document.getElementById("ccy").value = b.dataset.ccy;
+      // Say which invoice is being answered, so the form is not a mystery.
+      document.getElementById("form-title").textContent =
+        b.dataset.fix ? `Replacing ${b.dataset.fix}` : "Replacing that invoice";
       document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
       document.getElementById("desc").focus();
     };
@@ -475,8 +479,16 @@ async function showPortal(t, { anonymous = false } = {}) {
       const { data, error } = await sb.rpc("portal_withdraw_invoice", {
         p_token: active, p_invoice_id: b.dataset.pull,
       });
+      /* Say what went wrong, in the server's words.
+       *
+       * This printed "Could not withdraw it" whatever happened, so a 400 from
+       * PostgREST arrived as a shrug. The message is usually specific enough
+       * to act on: a function missing from the schema cache names itself. */
       if (error || data?.ok === false) {
-        b.textContent = (data && data.error) || "Could not withdraw it";
+        const why = error?.message || error?.hint || (data && data.error) || "It did not withdraw.";
+        b.insertAdjacentHTML("afterend",
+          `<div class="small" style="color:var(--debit)">${esc(why)}</div>`);
+        b.textContent = "Withdraw it";
         return;
       }
       showPortal(active, { anonymous: !portals.length });
@@ -511,6 +523,22 @@ async function showPortal(t, { anonymous = false } = {}) {
     const dt = new DataTransfer(); dt.items.add(f);
     fileInput.files = dt.files; showFile();
   });
+
+  const originalFormTitle = document.getElementById("form-title").textContent;
+
+  /* Emptying the form.
+   *
+   * "Adjust and send again" fills it from an invoice, and until now there was
+   * no way back out: somebody who changed their mind had to clear four fields
+   * by hand or reload the page. */
+  document.getElementById("clear").onclick = () => {
+    for (const id of ["desc", "amt", "num", "due"]) document.getElementById(id).value = "";
+    fileInput.value = "";
+    showFile();
+    document.getElementById("serr").textContent = "";
+    document.getElementById("sok").textContent = "";
+    document.getElementById("form-title").textContent = originalFormTitle;
+  };
 
   document.getElementById("send").onclick = async () => {
     const amount = Number(String(document.getElementById("amt").value).replace(/[^0-9.]/g, ""));

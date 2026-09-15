@@ -130,4 +130,15 @@ $$;
 
 grant execute on function public.contact_portal_view(text) to anon, authenticated;
 
-select 'ready' as status;
+/* Rebuild the API's picture of the schema.
+ *
+ * PostgREST builds its endpoints from an in-memory snapshot. A function
+ * created after that snapshot was taken is real, callable in SQL, and rejected
+ * over the API until this runs. That is the likeliest reason a fresh RPC
+ * answers 400. */
+notify pgrst, 'reload schema';
+
+select
+  to_regproc('public.portal_withdraw_invoice')::text as withdraw_fn,
+  to_regproc('public.contact_portal_view')::text     as view_fn,
+  'reload requested'                                 as cache;
