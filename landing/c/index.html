@@ -306,8 +306,19 @@ async function showPortal(t, { anonymous = false } = {}) {
   ).length;
   const paidTotal = (d.payments || []).reduce((n, p) => n + Math.abs(Number(p.amount) || 0), 0);
 
-  const invoices = (d.invoices || []).length
-    ? d.invoices.map((i) => {
+  /* Finished business, folded away.
+   *
+   * A withdrawn invoice has to stay visible when it happens, or it vanishes
+   * and cannot be asked about. It does not have to stay in the way for ever:
+   * somebody sending a few a month would be reading past a column of
+   * struck-through rows that are nobody's business any more.
+   *
+   * Behind a count, not gone. One press brings them back. */
+  const shelved = (d.invoices || []).filter((i) => i.archived_at);
+  const onShow = (d.invoices || []).filter((i) => !i.archived_at);
+
+  const invoices = onShow.length
+    ? onShow.map((i) => {
         const [cls, label] = statusOf(i);
         /* Accepted, so the rate is known and the figure is theirs in your
            currency. Not accepted and in another currency, so the only honest
@@ -339,7 +350,10 @@ async function showPortal(t, { anonymous = false } = {}) {
          * out here would move their figures without their knowledge. */
         const canRedo = i.status === "declined" || i.correction_at;
         const canPull = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
-        const actions = (canRedo || canPull)
+        /* Only something already finished can be put away. Hiding an invoice
+           still waiting on them would hide the thing this page is for. */
+        const canShelve = (i.status === "withdrawn" || i.status === "declined") && !i.archived_at;
+        const actions = (canRedo || canPull || canShelve)
           ? `<div class="small" style="margin-top:4px">
               ${canRedo ? `<button class="ghost" data-fix="${esc(i.invoice_no || "")}"
                   data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
@@ -348,6 +362,9 @@ async function showPortal(t, { anonymous = false } = {}) {
               ${canRedo && canPull ? " · " : ""}
               ${canPull ? `<button class="ghost" data-pull="${esc(i.id)}"
                   >Withdraw it</button>` : ""}
+              ${(canRedo || canPull) && canShelve ? " · " : ""}
+              ${canShelve ? `<button class="ghost" data-shelve="${esc(i.id)}"
+                  >Put it away</button>` : ""}
             </div>` : "";
         return `<div class="row">
           <span>
@@ -408,7 +425,22 @@ async function showPortal(t, { anonymous = false } = {}) {
         <span class="m small">${money(paidTotal, ccy)}</span></div>` : ""}
     </div>
 
-    <div class="card"><div class="eyebrow">Invoices you have sent</div>${invoices}</div>
+    <div class="card">
+      <div class="eyebrow">Invoices you have sent</div>
+      ${invoices}
+      ${shelved.length ? `<div class="row" style="border-top:1px solid var(--line)">
+        <button class="ghost" id="showshelved">${shelved.length} put away</button>
+      </div>
+      <div id="shelved" style="display:none">${shelved.map((i) => `
+        <div class="row">
+          <span>
+            <div style="text-decoration:line-through;color:var(--faint)">${esc(i.invoice_no || i.description || "Invoice")}</div>
+            <div class="small">${String(i.submitted_at || "").slice(0, 10)} · ${esc(statusOf(i)[1])}</div>
+            <button class="ghost" data-unshelve="${esc(i.id)}">Bring it back</button>
+          </span>
+          <span class="m small">${money(i.payable_amount != null ? i.payable_amount : i.amount, ccy)}</span>
+        </div>`).join("")}</div>` : ""}
+    </div>
     <div class="card"><div class="eyebrow">Payments received</div>${payments}</div>
     `}
 
@@ -479,6 +511,54 @@ async function showPortal(t, { anonymous = false } = {}) {
       document.getElementById("clear").style.display = "inline-flex";
       document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
       document.getElementById("desc").focus();
+    };
+  }
+
+  /* Putting one away, and bringing it back.
+   *
+   * No confirmation on either: both are reversible in one press, and asking
+   * somebody to confirm something they can undo instantly is a toll rather
+   * than a safeguard. */
+  const shelve = async (id, archive) => {
+    const { data, error } = await sb.rpc("portal_archive_invoice", {
+      p_token: active, p_invoice_id: id, p_archive: archive,
+    });
+    if (error || data?.ok === false) return error?.message || (data && data.error);
+    await showPortal(active, { anonymous: !portals.length });
+    return null;
+  };
+
+  for (const b of wrap.querySelectorAll("[data-shelve]")) {
+    b.onclick = async () => {
+      b.textContent = "Putting away";
+      const why = await shelve(b.dataset.shelve, true);
+      if (why) {
+        b.insertAdjacentHTML("afterend", `<div class="small" style="color:var(--debit)">${esc(why)}</div>`);
+        b.textContent = "Put it away";
+      }
+    };
+  }
+
+  const shelvedToggle = document.getElementById("showshelved");
+  if (shelvedToggle) {
+    shelvedToggle.onclick = () => {
+      const box = document.getElementById("shelved");
+      const open = box.style.display !== "none";
+      box.style.display = open ? "none" : "block";
+      shelvedToggle.textContent = open
+        ? `${box.children.length} put away`
+        : "Hide those";
+    };
+  }
+
+  for (const b of wrap.querySelectorAll("[data-unshelve]")) {
+    b.onclick = async () => {
+      b.textContent = "Bringing it back";
+      const why = await shelve(b.dataset.unshelve, false);
+      if (why) {
+        b.insertAdjacentHTML("afterend", `<div class="small" style="color:var(--debit)">${esc(why)}</div>`);
+        b.textContent = "Bring it back";
+      }
     };
   }
 
