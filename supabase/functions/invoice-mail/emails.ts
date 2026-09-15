@@ -585,3 +585,71 @@ export function portalInviteEmail(
 </td></tr></table>
 </body></html>`;
 }
+
+/* An invoice going out.
+ *
+ * The one email in this set that is a request rather than a notification, so
+ * it leads with what is owed and by when, and the button is to see it rather
+ * than to do anything. Nobody pays from an email.
+ */
+export function invoiceSentEmail(
+  { business, number, party, amount, currency, dueOn, note, link }: {
+    business: string; number: string; party?: string | null;
+    amount: number; currency?: string | null; dueOn?: string | null;
+    note?: string | null; link: string;
+  },
+) {
+  const brass = "#A9620A";
+  const fill = "#F59E0B";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+  const ccy = currency || "CAD";
+  const money = `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(amount)) || 0)
+    .toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>${number} from ${business}</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:28px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <h1 style="margin:0 0 4px;font-size:21px;line-height:1.3;color:${ink};font-weight:600;">
+        ${money} from ${business}
+      </h1>
+      <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${brass};margin-bottom:16px;">
+        ${number}${dueOn ? ` · due ${dueOn}` : ""}
+      </div>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+        <tr><td style="border-radius:999px;background:${fill};">
+          <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
+             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
+            See the invoice
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:0 0 14px;font-size:14.5px;line-height:1.5;">
+        <a href="${link}" style="color:${brass};text-decoration:underline;word-break:break-all;">${link}</a>
+      </p>
+
+      ${note ? `<p style="margin:0 0 12px;font-size:14.5px;line-height:1.55;color:${ink};">${note}</p>` : ""}
+
+      <p style="margin:0;font-size:14px;line-height:1.55;color:${muted};">
+        The page shows every line, what has been paid, and what is left. It stays current, so there is
+        nothing to ask for.
+      </p>
+
+      <p style="margin:14px 0 0;font-size:13px;line-height:1.5;color:#8A827B;">
+        Sent by ${business}${party ? ` to ${party}` : ""} through Brasstally.
+      </p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

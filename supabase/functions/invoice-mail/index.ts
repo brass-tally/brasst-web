@@ -32,7 +32,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail, invoiceDecidedEmail,
   invoiceCorrectionEmail, shareInviteEmail,
-  paymentMadeEmail, portalInviteEmail,
+  paymentMadeEmail, portalInviteEmail, invoiceSentEmail,
 } from "./emails.ts";
 
 const BUCKET = "invoices";   // the bucket the app reads from; "receipts" was a guess and nothing could open the file
@@ -290,6 +290,70 @@ Deno.serve(async (req) => {
       }
 
       return json({ ok: true, told: [ownerEmail, contact.email].filter(Boolean).length });
+    }
+
+    /* Send an invoice you have written.
+     *
+     * Sending is the moment it becomes real: the draft gets a token, a sent
+     * date and, upstream of this, a receivable in the books. A draft owes you
+     * nothing, and counting one would overstate what you are owed on the
+     * strength of something nobody has seen.
+     */
+    if (action === "send-invoice") {
+      const token_ = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      if (!token_) return json({ ok: false, error: "Sign in first." }, 401);
+      const caller = await db.auth.getUser(token_);
+      if (!caller?.data?.user) return json({ ok: false, error: "Sign in first." }, 401);
+
+      const { data: inv } = await db
+        .from("sent_invoices").select("*").eq("id", String(body.invoice_id || "")).maybeSingle();
+      if (!inv) return json({ ok: false, error: "No such invoice." });
+
+      const { data: led } = await db
+        .from("ledgers").select("id, name, user_id").eq("id", inv.ledger_id).maybeSingle();
+      if (!led || led.user_id !== caller.data.user.id) {
+        return json({ ok: false, error: "That is not your invoice." }, 403);
+      }
+      if (!inv.contact_email) {
+        return json({ ok: false, error: "That invoice has no email address on it." });
+      }
+
+      /* One token for the life of the invoice. Resending must not change the
+         address, or a customer who kept the first email is holding a dead
+         link. */
+      const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+      const tok = inv.token || Array.from(crypto.getRandomValues(new Uint8Array(10)))
+        .map((n) => alphabet[n % alphabet.length]).join("");
+
+      const base = (Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "");
+      const link = `${base}/v/${tok}`;
+
+      const r = await sendMail(
+        inv.contact_email,
+        `${led.name}: invoice ${inv.number}`,
+        invoiceSentEmail({
+          business: led.name,
+          number: inv.number,
+          party: inv.party,
+          amount: Number(inv.amount) || 0,
+          currency: inv.currency,
+          dueOn: inv.due_on,
+          note: inv.note,
+          link,
+        }),
+        caller.data.user.email ?? undefined,
+      );
+      if (!r.ok) return json({ ok: false, error: r.error });
+
+      await db.from("sent_invoices").update({
+        token: tok,
+        status: "sent",
+        sent_at: new Date().toISOString(),
+        obligation_id: body.obligation_id || inv.obligation_id || null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", inv.id);
+
+      return json({ ok: true, to: inv.contact_email, link, number: inv.number });
     }
 
     if (action === "portal-upload") {

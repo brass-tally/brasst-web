@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="robots" content="noindex, nofollow"/>
+<link rel="icon" href="https://www.brasstally.com/app/favicon.ico"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<title>Invoice</title>
+<style>
+  /* The site's own tokens, read from brasstally.com rather than guessed.
+     I built this against the app's ember palette first, which is a different
+     set: the marketing site and the supplier page are what an outsider sees
+     together, so they have to match each other. */
+  :root{
+    --bg:#FAF9F7; --surface:#FFFFFF; --sunk:#F5F3F0; --line:#EDEAE5; --line2:#E2DDD6;
+    --text:#1C1917; --muted:#5A534E; --faint:#8A827B;
+    --accent:#F59E0B; --accentText:#A9620A; --onAccent:#241703;
+    --tint:rgba(245,158,11,.12); --credit:#08805A; --debit:#C4442F;
+    --sh:0 1px 2px rgba(28,25,23,.05),0 10px 26px -14px rgba(28,25,23,.14);
+    --sans:'Inter',ui-sans-serif,system-ui,sans-serif;
+    --mono:'Geist Mono',ui-monospace,monospace;
+  }
+  html[data-t="dark"], :root:has(#darkpref:checked){
+    --bg:#100E0C; --surface:#1A1714; --sunk:#141210; --line:#2A2521; --line2:#37312B;
+    --text:#F5F1EC; --muted:#B0A79F; --faint:#877E76;
+    --accent:#FBBF24; --accentText:#FBBF24; --onAccent:#1C1200;
+    --tint:rgba(251,191,36,.13); --credit:#34D399; --debit:#FB7185;
+    --sh:0 1px 2px rgba(0,0,0,.3),0 12px 30px -16px rgba(0,0,0,.5);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#100E0C; --surface:#1A1714; --sunk:#141210; --line:#2A2521; --line2:#37312B;
+      --text:#F5F1EC; --muted:#B0A79F; --faint:#877E76;
+      --accent:#FBBF24; --accentText:#FBBF24; --onAccent:#1C1200;
+      --tint:rgba(251,191,36,.13); --credit:#34D399; --debit:#FB7185;
+      --sh:0 1px 2px rgba(0,0,0,.3),0 12px 30px -16px rgba(0,0,0,.5);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    font-size:16px;line-height:1.55;padding:22px 16px 72px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:620px;margin:0 auto}
+
+  .mast{display:flex;align-items:center;gap:10px;margin:0 auto 18px;max-width:620px}
+  .mast img{width:26px;height:26px;border-radius:7px}
+  .mark{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .mark span{color:var(--accentText)}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:18px;
+    padding:22px;margin-bottom:14px;box-shadow:var(--sh)}
+  h1{font-size:23px;line-height:1.25;margin:0 0 6px;font-weight:600;letter-spacing:-.015em}
+  .sub{color:var(--muted);font-size:15px;margin:0 0 18px}
+  .eyebrow{font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--accentText);margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding:11px 0;border-top:1px solid var(--line)}
+  .row:first-of-type{border-top:none}
+  .m{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:500}
+  .small{font-size:13px;color:var(--faint)}
+  b{font-weight:600}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;margin-top:4px}
+  .paid{background:color-mix(in srgb,var(--credit) 15%,transparent);color:var(--credit)}
+  .part{background:var(--tint);color:var(--accentText)}
+  .wait{background:var(--sunk);color:var(--muted)}
+  .stop{background:color-mix(in srgb,var(--debit) 14%,transparent);color:var(--debit)}
+  .gone{background:var(--sunk);color:var(--faint);text-decoration:line-through}
+  .none{color:var(--muted);font-size:15px;padding:8px 0}
+
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .tab{padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
+    color:var(--muted);font:inherit;font-size:14.5px;cursor:pointer}
+  .tab.on{background:var(--accent);color:var(--onAccent);border-color:transparent;font-weight:600}
+
+  input,select,textarea{width:100%;min-height:46px;padding:0 13px;margin:6px 0 2px;
+    background:var(--sunk);border:1px solid var(--line);border-radius:12px;color:var(--text);
+    font:inherit;font-size:16px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  label{display:block;font-size:14px;color:var(--muted);margin-top:12px}
+  button.go{background:var(--accent);color:var(--onAccent);border:none;padding:13px 22px;
+    border-radius:999px;font:inherit;font-weight:600;font-size:15.5px;cursor:pointer;margin-top:14px}
+  button.ghost{background:transparent;color:var(--accentText);border:none;font:inherit;
+    font-size:14.5px;cursor:pointer;padding:10px 4px;text-decoration:underline}
+  .err{color:var(--debit);font-size:14.5px;margin-top:10px}
+  .ok{color:var(--credit);font-size:14.5px;margin-top:10px}
+  .drop{border:1.5px dashed var(--line2);border-radius:12px;padding:18px 14px;text-align:center;
+    color:var(--muted);font-size:15px;cursor:pointer;margin-top:6px;
+    transition:border-color .15s,background .15s}
+  .drop.over{border-color:var(--accent);background:var(--tint)}
+  .drop b{color:var(--text)}
+
+  .helpbtn{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);
+    background:var(--surface);color:var(--muted);font:inherit;font-size:14px;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:auto}
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;
+    justify-content:center;padding:16px;z-index:50}
+  .sheet .card{max-width:560px;width:100%;margin:0;max-height:86vh;overflow:auto}
+  @media (min-width:640px){ .sheet{align-items:center} }
+
+  .total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding-top:12px;margin-top:6px;border-top:1px solid var(--line);font-size:16px}
+  footer{color:var(--faint);font-size:12.5px;text-align:center;margin-top:22px;line-height:1.5}
+</style>
+<style>
+  /* An invoice is a document, so it prints. */
+  .lines .row:last-child { border-bottom: none; }
+  .sum { display:flex; justify-content:space-between; gap:12px; padding:5px 0; font-size:15px }
+  .sum.big { padding-top:11px; margin-top:5px; border-top:1px solid var(--line); font-size:17px; font-weight:600 }
+  @media print {
+    body { padding:0; background:#fff }
+    .noprint { display:none !important }
+    .card { box-shadow:none; border-color:#ddd; page-break-inside:avoid }
+  }
+</style>
+</head>
+<body>
+<div class="mast">
+  <img src="https://www.brasstally.com/app/icon-192.png" alt="" width="26" height="26"/>
+  <span class="mark">Brass<span>tally</span></span>
+  <button class="helpbtn noprint" id="print" title="Print or save as PDF" aria-label="Print">&#8615;</button>
+</div>
+<div class="wrap" id="wrap">
+  <div class="card"><p class="none">Opening the invoice...</p></div>
+</div>
+
+<script type="module">
+/* One invoice, by token, read only.
+ *
+ * Deliberately not a payment page. Brasstally does not take money, and a
+ * button that looked like it did would be a lie told in the one place a
+ * customer is most careful. It shows what is owed, what has been received,
+ * and what is left.
+ */
+const BUILD = "2026-09-15 07:40Z";
+const PROJECT = "https://xwoccmgppjmgficvmogr.supabase.co";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh3b2NjbWdwcGptZ2ZpY3Ztb2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3MDkwNjEsImV4cCI6MjEwMDI4NTA2MX0.B8rEqFhe53_URqHQHpWpW5JIIENsFqJ4o95o10gL6Hw";
+
+const wrap = document.getElementById("wrap");
+const esc = (v) => String(v ?? "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+const money = (n, ccy) =>
+  `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0)
+    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const token =
+  (location.pathname.match(/^\/v\/([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
+  new URLSearchParams(location.search).get("t") || "";
+
+document.getElementById("print").onclick = () => window.print();
+
+(async () => {
+  if (!token) {
+    wrap.innerHTML = `<div class="card"><p class="none">This address is missing its code.</p></div>`;
+    return;
+  }
+  let d = null;
+  try {
+    const r = await fetch(`${PROJECT}/rest/v1/rpc/sent_invoice_view`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
+      body: JSON.stringify({ p_token: token }),
+    });
+    d = await r.json();
+  } catch {
+    wrap.innerHTML = `<div class="card"><p class="none">Could not reach the server. Try again in a moment.</p></div>`;
+    return;
+  }
+  if (!d || d.ok === false) {
+    wrap.innerHTML = `<div class="card"><p class="none">${esc((d && d.error) || "This invoice is not available.")}</p></div>`;
+    return;
+  }
+
+  const ccy = d.currency || "CAD";
+  const paid = Number(d.paid_amount) || 0;
+  const left = Math.max(0, (Number(d.amount) || 0) - paid);
+  const settled = d.status === "paid" || left < 0.005;
+  const overdue = !settled && d.due_on && d.due_on < new Date().toISOString().slice(0, 10);
+
+  const lines = Array.isArray(d.lines) && d.lines.length
+    ? d.lines.map((l) => {
+        const qty = Number(l.qty ?? 1) || 0;
+        const rate = Number(l.rate ?? 0) || 0;
+        return `<div class="row">
+          <span><div>${esc(l.desc || "Item")}</div>
+            <div class="small">${qty} &times; ${money(rate, ccy)}</div></span>
+          <span class="m">${money(qty * rate, ccy)}</span>
+        </div>`;
+      }).join("")
+    : `<div class="row"><span>${esc(d.note || "Services")}</span>
+         <span class="m">${money((Number(d.amount) || 0) - (Number(d.tax_amount) || 0), ccy)}</span></div>`;
+
+  const net = (Number(d.amount) || 0) - (Number(d.tax_amount) || 0);
+
+  document.title = `${d.number} · ${d.from}`;
+
+  wrap.innerHTML = `
+    <div class="card">
+      <div class="eyebrow">${esc(d.from)}</div>
+      <h1>${settled ? "Paid in full" : overdue ? "Overdue" : money(left, ccy) + " due"}</h1>
+      <p class="sub">
+        Invoice ${esc(d.number)} to ${esc(d.party)}${d.due_on ? `, due ${esc(d.due_on)}` : ""}.
+        ${settled ? "Nothing is outstanding." : paid > 0.005 ? `${money(paid, ccy)} received so far.` : ""}
+      </p>
+      <span class="pill ${settled ? "paid" : overdue ? "stop" : "wait"}">
+        ${settled ? "Settled" : overdue ? "Past its date" : paid > 0.005 ? "Part paid" : "Outstanding"}
+      </span>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">What it is for</div>
+      <div class="lines">${lines}</div>
+      <div class="sum"><span>Subtotal</span><span class="m">${money(net, ccy)}</span></div>
+      ${Number(d.tax_amount) ? `<div class="sum"><span>Tax</span><span class="m">${money(d.tax_amount, ccy)}</span></div>` : ""}
+      <div class="sum big"><span>Total</span><span class="m">${money(d.amount, ccy)}</span></div>
+      ${paid > 0.005 ? `<div class="sum"><span>Received</span><span class="m">${money(paid, ccy)}</span></div>
+        <div class="sum big"><span>Still due</span><span class="m">${money(left, ccy)}</span></div>` : ""}
+      ${d.balance_due && left > 0.005 ? `<p class="small">The rest is expected by ${esc(d.balance_due)}.</p>` : ""}
+    </div>
+
+    ${d.note && Array.isArray(d.lines) && d.lines.length
+      ? `<div class="card"><div class="eyebrow">Note</div><p class="sub" style="margin:0">${esc(d.note)}</p></div>` : ""}
+
+    <div class="card noprint">
+      <div class="eyebrow">Paying it</div>
+      <p class="sub" style="margin:0">Pay ${esc(d.from)} the way you normally do. This page is a record,
+        not a checkout: Brasstally never handles the money. It updates itself when the payment is
+        filed, so you can check here rather than asking.</p>
+    </div>
+
+    <footer>
+      Issued ${esc(d.issued_on)} by ${esc(d.from)} through Brasstally.<br/>
+      <span style="opacity:.6">${BUILD}</span>
+    </footer>`;
+})();
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 Written for a client's IT or security reviewer, and for an accounting practice
 deciding whether to let a client's books live here.
 
-As at 13 September 2026. GENIE AI, Inc., Ontario, Canada.
+As at 15 September 2026. GENIE AI, Inc., Ontario, Canada.
 Contact: legal@genieai.ca
 
 ---
@@ -26,7 +26,7 @@ functions. There is no self-managed server.
 
 ## Data model
 
-Twenty-one tables. Every one carries a ledger reference, every one has row
+Twenty-four tables. Every one carries a ledger reference, every one has row
 level security enabled, and a ledger belongs to exactly one owner.
 
 **Financial records.** `ledgers`, `transactions`, `obligations`, `categories`,
@@ -44,7 +44,17 @@ transactions and obligations.
 
 **People and intake.** `contacts`, `ledger_shares`, `invoice_links`,
 `invoice_link_invites`, `inbound_invoices`, `invoice_schedules`, `import_rules`,
-`chat_messages`.
+`chat_messages`, `contact_portals`.
+
+**Intentions, kept out of the books.** `planned_expenses` is a separate table
+rather than a flag on `obligations`, because every existing query that reads
+obligations would otherwise begin counting intentions as debts.
+
+**Tokens we would otherwise lose.** `retired_bank_items` holds the access token
+of any bank connection we stop using. Plaid has no endpoint that lists the
+Items you hold, so a token that is overwritten or deleted leaves an Item alive
+at the institution, refreshing on their schedule and signing in, with no way to
+find it again.
 
 Each invitation is a row in `invoice_link_invites` with its own reference and
 its own link, so an invitation can be revoked without affecting others sent to
@@ -73,6 +83,17 @@ that the row's ledger is owned by the caller. These combine with AND rather
 than OR, so they cannot be widened by another policy. Select is deliberately
 excluded, because read is what sharing exists for.
 
+**A contact's page is scoped to one relationship.** `contact_portal_view`
+returns only rows naming that contact on that ledger: no balances, no other
+suppliers, no bank, no totals of any kind. It is security definer because the
+reader has no account, so the function itself is the boundary.
+
+A supplier may withdraw an invoice they sent, and may put a finished one away,
+and neither is permitted once it has been accepted: at that point it is a
+payable in the owner's books and possibly part paid, so changing it from
+outside would move their figures without their knowledge. The function refuses
+rather than relying on the button not being offered.
+
 **The bank credential is never shared.** `bank_connections` is outside the
 shared read policy, so a reader with full access to the books cannot see the
 token that fetches them.
@@ -89,7 +110,7 @@ server-side.
 
 ## Server functions
 
-One edge function serves the invoice and sharing flows, with eleven actions.
+One edge function serves the invoice and sharing flows, with fifteen actions.
 Six require the owner's session and verify ledger ownership before running,
 because they send mail from our domain to an address the caller names.
 
@@ -106,6 +127,9 @@ because they send mail from our domain to an address the caller names.
 | `paid` | owner | tells a supplier a payment was made |
 | `preview-invite` | owner | sends the owner the supplier's own email |
 | `share-invite` | owner | notifies a reader of access |
+| `portal-invite` | owner | gives a contact their own page and sends the address |
+| `portal-upload` | supplier | one signed upload, resolved from a portal token |
+| `portal-submitted` | supplier | tells the business an invoice has landed |
 
 Uploaded files are written to a key the server chooses, under a prefix derived
 from the resolved ledger. The browser never selects the path.
@@ -147,6 +171,19 @@ and confirmed. Payments the bank made that no entry accounts for are recorded
 during consolidation with a guessed category, and the run distinguishes the
 facts from the guess.
 
+**The bank connection is read on request as well as on a schedule.** A
+diagnostic action reads the Item directly from Plaid rather than from our
+records, because our records are the thing in doubt when a feed stops moving:
+its granted products, its error state, its consent expiry, and what
+`/transactions/get` returns over an explicit date range, which depends on no
+cursor of ours.
+
+**Items are removed at the provider, not only forgotten here.** Disconnecting
+calls `/item/remove` before deleting the row, and a token that cannot be
+removed is retained rather than lost. An orphaned Item keeps signing in to the
+bank, and at an institution permitting one session per login it will knock out
+whichever Item is currently in use.
+
 **Exchange rates** are read from the Bank of Canada where the currency is
 published there, which is the source the CRA accepts for reporting, and from a
 general rate service for the remainder. Rates are offered as a suggestion with
@@ -178,7 +215,7 @@ because that money moved and removing it would misstate the balance.
 
 ## Correctness practices
 
-Eight automated checks fail the build rather than warn, each written after a
+Ten automated checks fail the build rather than warn, each written after a
 defect that reached a running application:
 
 | Check | What it prevents |
@@ -191,6 +228,8 @@ defect that reached a running application:
 | Props contract | a prop that silently defaults instead of arriving |
 | Optional comparison | a branch true because both sides are absent |
 | Silent truncation | a rendered list dropping rows without saying so |
+| Render-time access | a hook reading a value that does not exist yet |
+| Hook scope | the same, one call deep, through a helper |
 
 The last two are worth describing, because both defects were valid code that no
 linter objects to.
@@ -199,6 +238,19 @@ linter objects to.
 fired for every row that had nothing. And a list capped at forty rows showed a
 partial figure with the appearance of a complete one; it hid sixteen bank lines
 and was found by a person reading a statement against the screen.
+
+The last two exist because one fault reached a running application twice in a
+day. A value read during render before it was declared crashes the whole page,
+not one section, and the first check missed the second occurrence because the
+hook's own text was innocent: it called a helper, and the helper did the
+reading. The second follows one call deep.
+
+Both were written wrong before they were written right, and each attempt is
+recorded in the file. One counted brackets to find where a hook ended and
+overran into the next declaration. One matched property names as though they
+were variables. One flagged helpers that only run when called, and was removed
+rather than shipped, because a check with false positives blocks a build for no
+reason and teaches people to disable it.
 
 Fifty-two assertions cover the tax treatment engine and the filing-rule matcher,
 including the duplicate-detection cases that previously produced wrong results.
@@ -235,10 +287,26 @@ out-of-province receipt can be mislabelled until corrected.
 **Filing is not possible from any third-party product** in Canada, including
 this one.
 
+**Push notification is not implemented.** Email covers the cases that matter,
+including a supplier submitting an invoice, but nothing reaches a closed
+phone.
+
 **Exchange rates come from a public service with no contractual availability.**
 A rate that cannot be fetched falls back to being asked for, rather than
 guessed, so a conversion is never invented; but the suggestion is absent when
 the source is down.
+
+**A contact's page is readable by anyone holding the address.** It says so on
+the page. Signing in with the contact's own email is offered as an alternative
+and makes a forwarded link useless, but it is an upgrade rather than a
+requirement, because most suppliers will not create an account to read two
+invoices.
+
+**Orphaned bank Items may exist from before this was fixed.** Disconnecting
+used to delete our record without telling Plaid, and a re-link overwrote the
+previous token. Those Items cannot be enumerated by anyone but the provider's
+support, and while they exist they may interfere with authentication at an
+institution allowing one session per login.
 
 **Contacts belong to a ledger.** A person you deal with in both your business
 and personal books is saved twice, and a lookup on one ledger will not find a

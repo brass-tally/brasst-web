@@ -7,7 +7,7 @@ personal finances are kept as two separate records rather than one pile with a
 filter on it, because they are two separate things and only one of them files a
 T2.
 
-As at 13 September 2026. GENIE AI, Inc., Ontario, Canada.
+As at 15 September 2026. GENIE AI, Inc., Ontario, Canada.
 
 ---
 
@@ -38,6 +38,11 @@ and dates, so a monthly fee is matched across instances.
 owe. Choose which cards you want. One bar underneath shows the month's shape
 with a sentence saying what it means.
 
+**History for every contact.** What has passed between you and one person:
+what is still open, what has actually moved, and what they have sent you.
+Matched on name and address, because most of it predates the contact being
+saved, and the panel says so rather than letting you assume it is complete.
+
 **Every figure opens.** Press a card and you get the entries behind it, grouped
 the way the sentence under the card describes them: through the bank, not
 through it, still to file, and anything the bank has not settled yet. Owed and
@@ -63,6 +68,13 @@ ledgers, set entries to recur.
 
 **Receivables and payables.** Who owes you and what you owe, grouped by party
 with running totals. Settling asks for a receipt, and a settled entry locks.
+Anything part paid sits at the top, marked in brass, because a bill you are
+halfway through has a promise attached and is the one most easily forgotten.
+
+**Planned, kept apart.** What you mean to spend: a trip, a laptop, somebody you
+mean to hire. It has its own total and is never added to what you owe, because
+a payable is somebody else's claim on you and a plan is your own intention. One
+press turns a plan into a real bill when it becomes one.
 
 **A bill can be paid in part.** Take half now and half on completion: the
 dialog opens on what is left, records the payment, and keeps the bill open with
@@ -108,7 +120,19 @@ rather than deleted.
 
 **A morning pass.** The feed refreshes once each morning, at seven Eastern, and
 the pairs Brasstally is certain about are made for you and reported in one
-message.
+message. A pass that could reach nothing, because a sign-in had expired, does
+not use up the day's attempt.
+
+**It stays current while you look at it.** New bank lines reach an open page
+without a reload, and coming back to a tab that has been asleep refreshes it
+before you read anything. It never refreshes over a form you are part way
+through.
+
+**When a feed is behind, you can ask why.** One press reports what the bank has
+actually given us, read from the source rather than our own records: which
+products the connection holds, whether its sign-in has lapsed, and the newest
+date it will hand over. Two connections at one bank behaving differently is the
+comparison that answers most of these, so it shows them together.
 
 **Payments the bank made are recorded**, not handed back as a list to type in.
 The bank is the authority on whether money moved; the only open question is
@@ -224,6 +248,30 @@ lands in your tray for you to accept.
 **Send one back.** "Needs correction" emails them the reason and a link, and
 the invoice stays pending until the corrected one arrives.
 
+**Give a contact their own page.** One press on their row in Contacts sends
+them an address of their own: every invoice they have sent you, what each one
+is waiting on, what has been paid, and a form to send the next one.
+
+Not an account. A contractor will not sign up to look at two invoices, so it is
+a link, the same shape as the intake form and the accountant share. They can
+sign in with their own address if they want, and then every business that has
+invited them sits in one place.
+
+**Their page carries their name.** `brasstally.com/c/syed-belal/k7m2q9xr4t`,
+and it greets them by name, shows the details you hold for them, and tells them
+to say so if the address is wrong. The name is decoration: renaming a contact
+never breaks a link somebody has already saved.
+
+**They can answer a refusal.** A declined invoice, or one you have asked to be
+corrected, offers to refill the form from the original so the one line you
+objected to is the only thing that changes. They can withdraw something sent by
+mistake, until you accept it, and put finished ones away without deleting them.
+
+**You see whether they ever looked.** The contact row reads "4 opens" or
+"unopened", which is worth knowing before chasing somebody who may never have
+received the invitation. The page can be turned off and back on from the same
+row.
+
 **Paying tells them.** A supplier whose invoice came through a link is emailed
 when you pay, in part or in full, with the amount, what remains and when the
 rest is expected. The receipt goes with it as proof, unless you say otherwise
@@ -269,4 +317,5 @@ theirs and it is converted on the way in, at a rate you can see and change, but
 the books themselves hold one currency.
 
 **Push notifications.** Email and an in-app mark today; they do not reach a
-closed phone.
+closed phone. A supplier submitting an invoice emails you immediately, which is
+the case that matters most.

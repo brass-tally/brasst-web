@@ -17,6 +17,7 @@ import { LEGAL, LEGAL_UPDATED } from "./lib/legal";
 import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from "./lib/rules";
 import { lookupRate } from "./lib/fx";
 import { listPlanned, addPlanned, updatePlanned, dropPlanned, plannedTotals } from "./lib/planned";
+import * as billing from "./lib/billing";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
 import { isReadOnly } from "./lib/access";
@@ -12087,6 +12088,340 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
 }
 
 /* ================= AR / AP ================= */
+/* Writing an invoice and sending it.
+ *
+ * The mirror of the intake tray, and it borrows that flow's habits on purpose:
+ * lines that add themselves up, one currency, a contact rather than a retyped
+ * address, and nothing counted until it has actually gone.
+ *
+ * A draft lives here alone. Sending is the moment it becomes a receivable, so
+ * the books never contain a figure nobody has been asked for.
+ */
+function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onChanged }) {
+  const [rows, setRows] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState("");
+  const [draft, setDraft] = useState(null);
+
+  const refresh = useCallback(async () => {
+    if (!ledgerId) return;
+    setRows(await billing.listSent(ledgerId));
+  }, [ledgerId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const blank = async () => {
+    const number = await billing.nextNumber(ledgerId);
+    setDraft({
+      id: null,
+      number: number || "INV-0001",
+      party: "",
+      contactEmail: "",
+      contactId: null,
+      issuedOn: todayStr(),
+      dueOn: "",
+      currency: ledgerCcy || "CAD",
+      note: "",
+      taxRate: 0,
+      lines: [{ desc: "", qty: 1, rate: "" }],
+    });
+    setOpen(true);
+  };
+
+  const totals = draft ? billing.totalOf(draft.lines, draft.taxRate) : { net: 0, tax: 0, total: 0 };
+
+  const setLine = (i, patch) => {
+    setDraft((d) => {
+      const lines = d.lines.map((l, n) => (n === i ? { ...l, ...patch } : l));
+      /* A blank line at the end, always, so adding the next one is typing
+         rather than pressing a button first. */
+      if (i === lines.length - 1 && (lines[i].desc || lines[i].rate)) {
+        lines.push({ desc: "", qty: 1, rate: "" });
+      }
+      return { ...d, lines };
+    });
+  };
+
+  const save = async (andSend) => {
+    const lines = draft.lines.filter((l) => String(l.desc).trim() || Number(l.rate));
+    if (!draft.party.trim()) { setErr("Who is it for?"); return null; }
+    if (!lines.length || totals.total <= 0) { setErr("Add at least one line with an amount."); return null; }
+    if (andSend && !String(draft.contactEmail || "").trim()) {
+      setErr("An address is needed to send it. Pick a contact, or type one in.");
+      return null;
+    }
+    setErr("");
+    setBusy("save");
+    const saved = await billing.saveDraft(ledgerId, {
+      ...draft, lines, amount: totals.total, taxAmount: totals.tax,
+    });
+    setBusy("");
+    if (!saved) { setErr("That did not save."); return null; }
+    await refresh();
+    return saved;
+  };
+
+  const sendIt = async () => {
+    const saved = await save(true);
+    if (!saved) return;
+    setBusy("send");
+    const res = await billing.send(saved.id, { addAR });
+    setBusy("");
+    if (res?.ok === false) { setErr(res.error || "It did not send."); return; }
+    setOpen(false);
+    setDraft(null);
+    setDone(`${saved.number} sent to ${res?.to || saved.party}.`);
+    setTimeout(() => setDone(""), 8000);
+    await refresh();
+    onChanged?.();
+  };
+
+  const drafts = rows.filter((r) => r.status === "draft");
+  const live = rows.filter((r) => r.status === "sent");
+  const closed = rows.filter((r) => r.status === "paid" || r.status === "cancelled");
+  const owedOut = live.reduce((n, r) => n + Math.abs(r.amount), 0);
+
+  const Line = ({ r }) => (
+    <div className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0">
+          <span style={{ color: P.text }} className="text-[15px] block truncate">
+            {r.party}
+            <span style={{ fontFamily: MONO, color: P.faint }} className="text-[13px] ml-2">{r.number}</span>
+          </span>
+          <span style={{ color: P.faint }} className="text-[13px]">
+            {r.status === "draft" ? "not sent yet"
+              : r.status === "cancelled" ? "cancelled"
+              : r.status === "paid" ? `paid${r.dueOn ? "" : ""}`
+              : `sent ${String(r.sentAt || "").slice(0, 10)}${r.opens > 0 ? ` · opened ${r.opens === 1 ? "once" : `${r.opens} times`}` : " · unopened"}`}
+            {r.dueOn && r.status === "sent" ? ` · due ${r.dueOn}` : ""}
+          </span>
+        </span>
+        <span style={{ fontFamily: MONO, color: r.status === "paid" ? P.credit : P.text }}
+          className="text-[15px] tabular-nums shrink-0">
+          {fmtIn(r.amount, r.currency, ledgerCcy)}
+        </span>
+      </div>
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+          {r.status === "draft" && (
+            <>
+              <button onClick={() => { setDraft({ ...r, taxRate: r.amount ? r.taxAmount / (r.amount - r.taxAmount) : 0, lines: r.lines || [{ desc: "", qty: 1, rate: "" }] }); setOpen(true); }}
+                style={{ color: P.brassText }} className="text-[13.5px] press">Open it</button>
+              <button onClick={async () => { await billing.removeDraft(r.id); refresh(); }}
+                style={{ color: P.faint }} className="text-[13.5px] press">Delete</button>
+            </>
+          )}
+          {r.status === "sent" && (
+            <>
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(`https://www.brasstally.com/v/${r.token}`);
+                  setDone("Address copied.");
+                  setTimeout(() => setDone(""), 4000);
+                }}
+                style={{ color: P.brassText }} className="text-[13.5px] press">Copy the address</button>
+              <button
+                onClick={async () => { setBusy(r.id); await billing.send(r.id, { addAR }); setBusy(""); refresh(); }}
+                disabled={busy === r.id}
+                style={{ color: P.brassText }} className="text-[13.5px] press">
+                {busy === r.id ? "Sending" : "Send it again"}
+              </button>
+              <button onClick={async () => { await billing.cancel(r.id); refresh(); }}
+                style={{ color: P.debit }} className="text-[13.5px] press">Cancel it</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <section style={{ background: P.surface, borderRadius: 20 }} className="p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 style={{ fontFamily: SERIF }} className="text-xl">Invoices you send</h3>
+        {owedOut > 0 && (
+          <span style={{ fontFamily: MONO, color: P.muted }} className="text-[15.5px] tabular-nums">
+            {fmt(owedOut)} out
+          </span>
+        )}
+      </div>
+      <p style={{ color: P.muted }} className="text-[15px] mb-1">
+        Write one, send it, and it becomes something you are owed. Nothing is counted until it goes.
+      </p>
+
+      {done && <p style={{ color: P.credit }} className="text-[14.5px] py-1">{done}</p>}
+      {err && !open && <p style={{ color: P.debit }} className="text-[14.5px] py-1">{err}</p>}
+
+      {drafts.map((r) => <Line key={r.id} r={r} />)}
+      {live.map((r) => <Line key={r.id} r={r} />)}
+
+      {closed.length > 0 && (
+        <details className="mt-2">
+          <summary style={{ color: P.faint }} className="text-[13.5px] cursor-pointer">
+            {closed.length} paid or cancelled
+          </summary>
+          {closed.map((r) => <Line key={r.id} r={r} />)}
+        </details>
+      )}
+
+      {rows.length === 0 && !open && (
+        <p style={{ color: P.faint }} className="text-[14.5px] py-2">
+          Nothing sent yet. An invoice from here lands in their inbox with a page they can open.
+        </p>
+      )}
+
+      {!readOnly && !open && (
+        <button onClick={blank}
+          style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+          className="h-11 px-4 text-[15px] font-medium press mt-3">
+          <Plus size={14} className="inline mb-0.5" /> Write one
+        </button>
+      )}
+
+      {open && draft && (
+        <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mt-3">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span style={{ fontFamily: MONO, color: P.brassText }} className="text-[14px]">{draft.number}</span>
+            <button onClick={() => { setOpen(false); setDraft(null); setErr(""); }}
+              style={{ color: P.faint }} className="text-[14px] press">Close</button>
+          </div>
+
+          <label style={{ color: P.muted }} className="text-[14px] block mt-2">Who it is for</label>
+          <input
+            value={draft.party}
+            onChange={(e) => setDraft({ ...draft, party: e.target.value })}
+            placeholder="Northside Developments"
+            style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+          />
+          {contacts.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {contacts.filter((c) => c.email).slice(0, 8).map((c) => (
+                <button key={c.id}
+                  onClick={() => setDraft({ ...draft, party: c.name, contactEmail: c.email, contactId: c.id })}
+                  style={{ background: P.surface, color: P.muted, borderRadius: 999 }}
+                  className="px-3 py-1.5 text-[13px] press">
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <label style={{ color: P.muted }} className="text-[14px] block mt-3">Their email</label>
+          <input
+            value={draft.contactEmail || ""}
+            onChange={(e) => setDraft({ ...draft, contactEmail: e.target.value })}
+            placeholder="accounts@northside.ca"
+            inputMode="email"
+            style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+          />
+
+          <label style={{ color: P.muted }} className="text-[14px] block mt-3">What it is for</label>
+          {draft.lines.map((l, i) => (
+            <div key={i} className="flex gap-1.5 mt-1.5">
+              <input
+                value={l.desc}
+                onChange={(e) => setLine(i, { desc: e.target.value })}
+                placeholder={i === 0 ? "Design, 12 hours" : "Another line"}
+                style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+                className="flex-1 min-w-0 h-11 px-3.5 text-[15px] outline-none border-none"
+              />
+              <input
+                value={l.qty}
+                onChange={(e) => setLine(i, { qty: e.target.value })}
+                inputMode="decimal"
+                style={{ background: P.surface, color: P.text, borderRadius: 13, fontFamily: MONO }}
+                className="w-16 h-11 px-2 text-[15px] text-center outline-none border-none"
+              />
+              <input
+                value={l.rate}
+                onChange={(e) => setLine(i, { rate: e.target.value })}
+                inputMode="decimal"
+                placeholder="95.00"
+                style={{ background: P.surface, color: P.text, borderRadius: 13, fontFamily: MONO }}
+                className="w-24 h-11 px-2 text-[15px] text-right outline-none border-none"
+              />
+            </div>
+          ))}
+
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <label style={{ color: P.muted }} className="text-[14px]">Tax</label>
+            <select
+              value={draft.taxRate}
+              onChange={(e) => setDraft({ ...draft, taxRate: Number(e.target.value) })}
+              style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+              className="h-11 px-3 text-[15px] outline-none border-none"
+            >
+              <option value={0}>None</option>
+              <option value={0.05}>GST 5%</option>
+              <option value={0.13}>HST 13%</option>
+              <option value={0.15}>HST 15%</option>
+            </select>
+            <label style={{ color: P.muted }} className="text-[14px] ml-2">Due</label>
+            <input
+              type="date"
+              value={draft.dueOn || ""}
+              onChange={(e) => setDraft({ ...draft, dueOn: e.target.value })}
+              style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+              className="h-11 px-3 text-[15px] outline-none border-none"
+            />
+          </div>
+
+          <input
+            value={draft.note || ""}
+            onChange={(e) => setDraft({ ...draft, note: e.target.value })}
+            placeholder="A note on the invoice, if you want one"
+            style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-2"
+          />
+
+          <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${P.line}` }}>
+            <div className="flex items-baseline justify-between">
+              <span style={{ color: P.muted }} className="text-[14.5px]">Subtotal</span>
+              <span style={{ fontFamily: MONO, color: P.muted }} className="text-[14.5px] tabular-nums">{fmt(totals.net)}</span>
+            </div>
+            {totals.tax > 0 && (
+              <div className="flex items-baseline justify-between">
+                <span style={{ color: P.muted }} className="text-[14.5px]">Tax</span>
+                <span style={{ fontFamily: MONO, color: P.muted }} className="text-[14.5px] tabular-nums">{fmt(totals.tax)}</span>
+              </div>
+            )}
+            <div className="flex items-baseline justify-between mt-1">
+              <span style={{ color: P.text }} className="text-[16px]">Total</span>
+              <span style={{ fontFamily: MONO, color: P.text }} className="text-[18px] tabular-nums">{fmt(totals.total)}</span>
+            </div>
+          </div>
+
+          {err && <p style={{ color: P.debit }} className="text-[14.5px] mt-2">{err}</p>}
+
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              onClick={sendIt}
+              disabled={busy !== ""}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {busy === "send" ? "Sending" : busy === "save" ? "Saving" : "Send it"}
+            </button>
+            <button
+              onClick={async () => { const v = await save(false); if (v) { setOpen(false); setDraft(null); } }}
+              disabled={busy !== ""}
+              style={{ color: P.muted }}
+              className="h-11 px-2 text-[15px] press"
+            >
+              Keep it as a draft
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank , onContactsChange }) {
   /* Plans live beside the payables, never inside them. */
   const [plans, setPlans] = useState([]);
@@ -12231,6 +12566,17 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
       )}
       <div className="grid md:grid-cols-2 gap-6">
         <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} />
+        {/* What you bill, above what you are billed: the section people open
+            this app to act on rather than to read. */}
+        <BillingList
+          ledgerId={data.ledger.id}
+          ledgerCcy={data.ledger.currency || "CAD"}
+          contacts={contacts}
+          addAR={addAR}
+          readOnly={readOnly}
+          onChanged={onInboundChange}
+        />
+
         <PlannedList
           ledgerId={data.ledger.id}
           plans={plans}
