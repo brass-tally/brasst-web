@@ -1145,6 +1145,8 @@ function Ledger({ onSignOut }) {
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [moreOpen, setMoreOpen] = useState(false);
 
+  const [chatOpen, setChatOpen] = useState(false);
+
   /* While the chat is open on a phone, the page underneath does not move.
    *
    * Containment on the panel was the wrong tool. It stops a scroll handing off
@@ -1179,7 +1181,6 @@ function Ledger({ onSignOut }) {
       window.scrollTo(0, y);
     };
   }, [chatOpen]);
-  const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
   const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
   const [chatNudge, setChatNudge] = useState(null); // { at, received, total } money landed, say so

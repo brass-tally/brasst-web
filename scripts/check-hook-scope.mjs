@@ -71,7 +71,17 @@ for (const file of files) {
     });
 
     body.forEach((l, n) => {
-      const m = /^ {2}const (\w+) = use(?:Memo|Callback)\(/.exec(l);
+      /* useEffect counts, for its dependency array alone.
+       *
+       * The body runs after the component is evaluated, so a name read inside
+       * it is safe however it looks. The array is different: it is an ordinary
+       * expression, evaluated during render, and reading a value declared
+       * below it crashes the page exactly like a memo would.
+       *
+       * I excluded effects entirely on the grounds that they run later, which
+       * is true of the half that does not matter. */
+      const m = /^ {2}const (\w+) = use(?:Memo|Callback)\(/.exec(l)
+        || (/^ {2}useEffect\(/.test(l) ? ["", "an effect"] : null);
       if (!m) return;
       /* Bounded by the next top-level statement, not by parentheses alone.
        *
@@ -80,20 +90,32 @@ for (const file of files) {
        * declared on the next line. Five false alarms from one loose edge. */
       let k = n + 1;
       for (; k < body.length; k += 1) {
-        if (/^ {2}(const|let|return|function|\}) /.test(body[k]) || /^ {2}\}, \[/.test(body[k])) break;
+        /* A hook ends at its own closing line, which is `}` followed by its
+         * dependency array. Without this the scan ran to the next top-level
+         * statement, swallowed everything between, and then read some later
+         * hook's array as though it belonged to this one: the check passed a
+         * file that crashed on load. */
+        if (/^ {2}\}\s*,\s*\[/.test(body[k]) || /^ {2}\}\s*\)\s*;/.test(body[k])) { k += 1; break; }
+        if (/^ {2}(const|let|return|function) /.test(body[k])) break;
       }
       /* Property names are not references.
        *
        * `out.push(x)` matched the local named `push` and reported a crash that
        * cannot happen: a member access reads a property of an object, not a
        * binding in scope. Same for object keys. */
-      const chunk = body.slice(n, k).join("\n")
+      const isEffect = m[1] === "an effect";
+      const raw = body.slice(n, k).join("\n");
+      /* Everything between `}, [` and `]);` is what runs now. */
+      const deps = (raw.match(/\}\s*,\s*\[([^\]]*)\]/) || [])[1] || "";
+      const chunk = (isEffect ? deps : raw)
         .replace(/\.\s*\w+/g, ".")
         .replace(/\b\w+\s*:/g, ":");
       // Anything the hook calls, brought in so its reads count as the hook's.
       let widened = chunk;
-      for (const [hname, hbody] of helpers) {
-        if (new RegExp(`\\b${hname}\\s*\\(`).test(chunk)) widened += "\n" + hbody;
+      if (!isEffect) {
+        for (const [hname, hbody] of helpers) {
+          if (new RegExp(`\\b${hname}\\s*\\(`).test(chunk)) widened += "\n" + hbody;
+        }
       }
 
       for (const ident of new Set(widened.match(/\b[a-zA-Z_]\w*\b/g) || [])) {
