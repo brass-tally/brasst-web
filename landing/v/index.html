@@ -112,6 +112,10 @@
     body { padding:0; background:#fff }
     .noprint { display:none !important }
     .card { box-shadow:none; border-color:#ddd; page-break-inside:avoid }
+    /* Printing the payment details on their own: everything else steps out of
+       the way rather than a second document being built. */
+    body.only-pay .card { display:none }
+    body.only-pay .card.pay, body.only-pay .mast { display:block }
   }
 </style>
 </head>
@@ -148,6 +152,75 @@ const token =
   new URLSearchParams(location.search).get("t") || "";
 
 document.getElementById("print").onclick = () => window.print();
+
+/* Printing only the payment block.
+ *
+ * `window.print()` prints the page, and somebody handing bank details to their
+ * accounts department does not want the invoice attached. The class hides
+ * everything else for the length of the print and puts it back afterwards,
+ * which is less machinery than generating a second document and cannot drift
+ * from what is on screen.
+ */
+function printPayOnly() {
+  document.body.classList.add("only-pay");
+  const restore = () => {
+    document.body.classList.remove("only-pay");
+    window.removeEventListener("afterprint", restore);
+  };
+  window.addEventListener("afterprint", restore);
+  window.print();
+  // Safari does not always fire afterprint, so there is a belt as well.
+  setTimeout(restore, 1500);
+}
+
+/* Where to send the money.
+ *
+ * The same block that sits at the bottom of every paper invoice, and what a
+ * void cheque shows all at once. Only the fields that country uses: a Canadian
+ * transfer needs a transit and an institution number, an American one needs a
+ * routing number, and showing both invites somebody to use the wrong one.
+ *
+ * It prints with the invoice, because the person who pays is often not the
+ * person who received it, and what gets walked down the corridor is paper.
+ */
+function payBlock(d) {
+  const p = d.pay_to;
+  if (!p) return "";
+
+  const rows = [
+    ["Beneficiary", p.beneficiary_name],
+    ["Beneficiary address", p.beneficiary_address],
+    ["Bank", p.bank_name],
+    ["Branch address", p.branch_address],
+    ["Account number", p.account_number, true],
+    ["Account type", p.account_type],
+    p.country === "CA" ? ["Transit number", p.transit_number, true] : null,
+    p.country === "CA" ? ["Institution number", p.institution_number, true] : null,
+    p.country === "US" ? ["Routing number", p.routing_number, true] : null,
+    ["IBAN", p.iban, true],
+    ["SWIFT / BIC", p.swift_code, true],
+  ].filter((r) => r && r[1]);
+
+  if (!rows.length) return "";
+
+  return `<div class="card pay">
+    <div class="eyebrow">Where to send it</div>
+    <p class="small" style="margin:-6px 0 10px">
+      ${esc(d.from)} &middot; invoice ${esc(d.number)}
+    </p>
+    ${rows.map(([k, v, mono]) => `<div class="row">
+      <span class="small">${esc(k)}</span>
+      <span class="${mono ? "m" : ""}">${esc(v)}</span>
+    </div>`).join("")}
+    ${p.note ? `<p class="small" style="margin-top:10px">${esc(p.note)}</p>` : ""}
+    <p class="small noprint" style="margin-top:10px">
+      Quote ${esc(d.number)} so they can match your payment to this invoice.
+    </p>
+        <button class="ghost noprint" id="paypdf" style="padding:8px 0">
+      Save these details as a PDF
+    </button>
+  </div>`;
+}
 
 (async () => {
   if (!token) {
@@ -221,6 +294,8 @@ document.getElementById("print").onclick = () => window.print();
     ${d.note && Array.isArray(d.lines) && d.lines.length
       ? `<div class="card"><div class="eyebrow">Note</div><p class="sub" style="margin:0">${esc(d.note)}</p></div>` : ""}
 
+    ${payBlock(d)}
+
     <div class="card noprint">
       <div class="eyebrow">Paying it</div>
       <p class="sub" style="margin:0">Pay ${esc(d.from)} the way you normally do. This page is a record,
@@ -232,6 +307,8 @@ document.getElementById("print").onclick = () => window.print();
       Issued ${esc(d.issued_on)} by ${esc(d.from)} through Brasstally.<br/>
       <span style="opacity:.6">${BUILD}</span>
     </footer>`;
+  const paypdf = document.getElementById("paypdf");
+  if (paypdf) paypdf.onclick = printPayOnly;
 })();
 </script>
 </body>

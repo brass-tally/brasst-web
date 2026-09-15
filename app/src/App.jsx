@@ -12276,6 +12276,201 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
  * A draft lives here alone. Sending is the moment it becomes a receivable, so
  * the books never contain a figure nobody has been asked for.
  */
+/* How they pay you.
+ *
+ * The void cheque somebody photographs and emails, written down once. It goes
+ * on every invoice, so nobody has to ask and nobody has to find a statement to
+ * answer.
+ *
+ * Canada and the United States name the same things differently and a payment
+ * sent with the wrong one bounces, so the form asks for what that country
+ * actually uses rather than showing every field and hoping.
+ */
+function PayToCard({ ledgerId, readOnly }) {
+  const [d, setD] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState("");
+
+  useEffect(() => {
+    if (!ledgerId) return;
+    billing.getPayTo(ledgerId).then((v) => setD(v || {
+      country: "CA", beneficiaryName: "", beneficiaryAddress: "", accountNumber: "",
+      accountType: "chequing", institutionNumber: "", transitNumber: "", routingNumber: "",
+      iban: "", swiftCode: "", bankName: "", branchAddress: "", note: "", active: false,
+    }));
+  }, [ledgerId]);
+
+  if (!d) return null;
+
+  const LABELS = {
+    beneficiaryName: "Beneficiary name",
+    beneficiaryAddress: "Beneficiary address",
+    accountNumber: "Account number",
+    accountType: "Account type",
+    transitNumber: "Transit number",
+    institutionNumber: "Institution number",
+    routingNumber: "Routing number",
+    iban: "IBAN",
+    swiftCode: "SWIFT / BIC",
+    bankName: "Bank name",
+    branchAddress: "Branch address",
+  };
+  const HINTS = {
+    transitNumber: "five digits",
+    institutionNumber: "three digits",
+    routingNumber: "nine digits",
+    swiftCode: "only needed for payments from abroad",
+  };
+
+  const fields = billing.payFieldsFor(d.country);
+  const ready = billing.payToReady(d);
+
+  const save = async (patch = {}) => {
+    setBusy(true);
+    const saved = await billing.savePayTo(ledgerId, { ...d, ...patch });
+    setBusy(false);
+    if (saved) {
+      setD(saved);
+      setDone(patch.active === false ? "Off. It will not appear on invoices."
+        : saved.active ? "Saved. It goes out with every invoice." : "Saved.");
+      setTimeout(() => setDone(""), 6000);
+    }
+  };
+
+  return (
+    <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <span style={{ color: P.text }} className="text-[15.5px]">How they pay you</span>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{ color: P.brassText }}
+          className="text-[14px] press shrink-0"
+        >
+          {open ? "Close" : d.active ? "Edit" : "Set it up"}
+        </button>
+      </div>
+
+      <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+        {d.active && ready
+          ? `${d.bankName || "Your bank"}, account ending ${String(d.accountNumber).slice(-4)} · on every invoice`
+          : ready
+            ? "Filled in, but not going out. Turn it on to put it on your invoices."
+            : "Your bank details, printed on every invoice so nobody has to ask."}
+      </p>
+
+      {done && <p style={{ color: P.credit }} className="text-[13.5px] mt-1">{done}</p>}
+
+      {open && (
+        <div className="mt-3">
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {[["CA", "Canada"], ["US", "United States"], ["OTHER", "Elsewhere"]].map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setD({ ...d, country: k })}
+                style={{
+                  background: d.country === k ? P.brass : P.surface,
+                  color: d.country === k ? P.onbrass : P.muted,
+                  borderRadius: R.pill,
+                }}
+                className="h-9 px-3 text-[13.5px] font-medium press"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {fields.map((f) => (
+            <div key={f} className="mt-2">
+              <label style={{ color: P.muted }} className="text-[13.5px] block">
+                {LABELS[f]}
+                {HINTS[f] && <span style={{ color: P.faint }}> · {HINTS[f]}</span>}
+              </label>
+              {f === "accountType" ? (
+                <select
+                  value={d.accountType || ""}
+                  onChange={(e) => setD({ ...d, accountType: e.target.value })}
+                  style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+                  className="w-full h-11 px-3 text-[15px] outline-none border-none mt-1"
+                >
+                  <option value="chequing">Chequing</option>
+                  <option value="savings">Savings</option>
+                  <option value="business">Business</option>
+                </select>
+              ) : (
+                <input
+                  value={d[f] || ""}
+                  onChange={(e) => setD({ ...d, [f]: e.target.value })}
+                  inputMode={/Number$/.test(f) ? "numeric" : undefined}
+                  style={{
+                    background: P.surface, color: P.text, borderRadius: 13,
+                    fontFamily: /Number$|iban|swift/i.test(f) ? MONO : undefined,
+                  }}
+                  className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+                />
+              )}
+            </div>
+          ))}
+
+          <div className="mt-2">
+            <label style={{ color: P.muted }} className="text-[13.5px] block">
+              Anything else they should know
+            </label>
+            <input
+              value={d.note || ""}
+              onChange={(e) => setD({ ...d, note: e.target.value })}
+              placeholder="Please quote the invoice number"
+              style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+              className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+            />
+          </div>
+
+          {!ready && (
+            <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
+              {d.country === "CA"
+                ? "A name, an account number, a bank, a transit and an institution number are what a Canadian transfer needs."
+                : d.country === "US"
+                  ? "A name, an account number, a bank and a routing number are what a US transfer needs."
+                  : "A name, an account number, a bank, and an IBAN or SWIFT code."}
+            </p>
+          )}
+
+          {!readOnly && (
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <button
+                onClick={() => save({ active: true })}
+                disabled={busy || !ready}
+                style={{
+                  background: ready ? P.brass : P.surface,
+                  color: ready ? P.onbrass : P.faint,
+                  borderRadius: R.pill,
+                }}
+                className="h-11 px-4 text-[15px] font-medium press"
+              >
+                {busy ? "Saving" : "Save and put it on invoices"}
+              </button>
+              <button
+                onClick={() => save({ active: false })}
+                disabled={busy}
+                style={{ color: P.muted }}
+                className="h-11 px-2 text-[14.5px] press"
+              >
+                Save without sharing
+              </button>
+            </div>
+          )}
+
+          <p style={{ color: P.faint }} className="text-[12.5px] mt-2 leading-snug">
+            These are the details printed at the bottom of every invoice anybody has ever sent, and a
+            void cheque shows all of them at once. Anyone holding an invoice address can read them, so
+            share them the way you would a cheque.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onChanged, bare = false }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
@@ -12447,6 +12642,10 @@ function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onCh
 
       {done && <p style={{ color: P.credit }} className="text-[14.5px] py-1">{done}</p>}
       {err && !open && <p style={{ color: P.debit }} className="text-[14.5px] py-1">{err}</p>}
+
+      {/* Above the list, because it belongs to every invoice rather than to
+          any one of them. */}
+      <PayToCard ledgerId={ledgerId} readOnly={readOnly} />
 
       {drafts.map((r) => <Line key={r.id} r={r} />)}
       {live.map((r) => <Line key={r.id} r={r} />)}

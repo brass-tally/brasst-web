@@ -148,3 +148,81 @@ export async function removeDraft(invoiceId) {
     return { ok: true };
   }, { ok: false });
 }
+
+/* How a customer pays you.
+ *
+ * One set per ledger: it is your bank, not something that changes per invoice.
+ * Off until somebody has filled it in and turned it on, so a half-typed
+ * account number never reaches a customer.
+ */
+const rowToPay = (r) => r && ({
+  country: r.country || "CA",
+  beneficiaryName: r.beneficiary_name || "",
+  beneficiaryAddress: r.beneficiary_address || "",
+  accountNumber: r.account_number || "",
+  accountType: r.account_type || "",
+  institutionNumber: r.institution_number || "",
+  transitNumber: r.transit_number || "",
+  routingNumber: r.routing_number || "",
+  iban: r.iban || "",
+  swiftCode: r.swift_code || "",
+  bankName: r.bank_name || "",
+  branchAddress: r.branch_address || "",
+  note: r.note || "",
+  active: Boolean(r.active),
+});
+
+export async function getPayTo(ledgerId) {
+  return soft("payment details", async () => {
+    const { data, error } = await supabase
+      .from("payment_details").select("*").eq("ledger_id", ledgerId).maybeSingle();
+    if (error) throw error;
+    return rowToPay(data) || null;
+  }, null);
+}
+
+export async function savePayTo(ledgerId, d) {
+  assertWritable();
+  return soft("save payment details", async () => {
+    const body = {
+      ledger_id: ledgerId,
+      country: d.country || "CA",
+      beneficiary_name: d.beneficiaryName || null,
+      beneficiary_address: d.beneficiaryAddress || null,
+      account_number: d.accountNumber || null,
+      account_type: d.accountType || null,
+      institution_number: d.institutionNumber || null,
+      transit_number: d.transitNumber || null,
+      routing_number: d.routingNumber || null,
+      iban: d.iban || null,
+      swift_code: d.swiftCode || null,
+      bank_name: d.bankName || null,
+      branch_address: d.branchAddress || null,
+      note: d.note || null,
+      active: Boolean(d.active),
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from("payment_details").upsert(body, { onConflict: "ledger_id" }).select().single();
+    if (error) throw error;
+    return rowToPay(data);
+  }, null);
+}
+
+/** What a given country actually needs, so the form asks for that and no more. */
+export function payFieldsFor(country) {
+  const common = ["beneficiaryName", "beneficiaryAddress", "accountNumber", "accountType",
+                  "bankName", "branchAddress"];
+  if (country === "US") return [...common, "routingNumber", "swiftCode"];
+  if (country === "OTHER") return [...common, "iban", "swiftCode"];
+  return [...common, "transitNumber", "institutionNumber", "swiftCode"];
+}
+
+/** Whether it is complete enough to put in front of a customer. */
+export function payToReady(d) {
+  if (!d) return false;
+  if (!d.beneficiaryName || !d.accountNumber || !d.bankName) return false;
+  if (d.country === "CA") return Boolean(d.transitNumber && d.institutionNumber);
+  if (d.country === "US") return Boolean(d.routingNumber);
+  return Boolean(d.iban || d.swiftCode);
+}
