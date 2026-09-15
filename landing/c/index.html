@@ -276,34 +276,83 @@ async function showPortal(t, { anonymous = false } = {}) {
   }
 
   const ccy = d.currency || "CAD";
-  const owed = (d.invoices || []).reduce((n, i) =>
+  /* Three figures, because one of them alone misleads.
+   *
+   * "Outstanding" counts only what they have accepted, which is correct: an
+   * invoice under review is not owed. But a supplier reading $0.00 with two
+   * invoices waiting concludes the page is broken, so what is waiting is said
+   * too, and separately, because they are not the same kind of money.
+   *
+   * Anything in another currency is left out of both and counted apart. A
+   * conversion we cannot do honestly is worse than a total that says it is
+   * short, and the rate only exists once they accept it. */
+  const live = (d.invoices || []).filter((i) => i.status !== "voided");
+  const owed = live.reduce((n, i) =>
     i.payable_status === "open"
       ? n + Math.max(0, Math.abs(Number(i.payable_amount) || 0) - (Number(i.paid_amount) || 0))
       : n, 0);
+  const waiting = live.reduce((n, i) => {
+    if (i.payable_status || i.status !== "pending") return n;
+    if (i.currency && i.currency !== ccy) return n;
+    return n + Math.abs(Number(i.amount) || 0);
+  }, 0);
+  const unconverted = live.filter(
+    (i) => !i.payable_status && i.currency && i.currency !== ccy && i.status !== "declined",
+  ).length;
+  const paidTotal = (d.payments || []).reduce((n, p) => n + Math.abs(Number(p.amount) || 0), 0);
 
   const invoices = (d.invoices || []).length
     ? d.invoices.map((i) => {
         const [cls, label] = statusOf(i);
-        const amount = i.payable_amount != null ? i.payable_amount : i.amount;
-        const foreign = i.currency && i.currency !== ccy
+        /* Accepted, so the rate is known and the figure is theirs in your
+           currency. Not accepted and in another currency, so the only honest
+           figure is the one they invoiced, in the currency they invoiced it.
+           It was being printed with a dollar sign either way. */
+        const converted = i.payable_amount != null;
+        const amount = converted ? i.payable_amount : i.amount;
+        const shown = converted || !i.currency || i.currency === ccy
+          ? money(amount, ccy)
+          : `${esc(i.currency)} ${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+        const foreign = converted && i.currency && i.currency !== ccy
           ? `<div class="small m">${esc(i.currency)} ${Math.abs(i.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>` : "";
         const part = (Number(i.paid_amount) || 0) > 0.005 && i.payable_status === "open"
           ? `<div class="small">${money(i.paid_amount, ccy)} received${i.balance_due ? `, rest due ${i.balance_due}` : ""}</div>` : "";
         /* Their words, not a paraphrase. Somebody being asked to change
            something needs to know what. */
         const asked = i.correction_note
-          ? `<div class="small" style="color:var(--debit)">They asked: ${esc(i.correction_note)}</div>
-             <button class="ghost" data-fix="${esc(i.invoice_no || "")}"
-               data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
-               >Send a corrected one</button>` : "";
+          ? `<div class="small" style="color:var(--debit)">They asked: ${esc(i.correction_note)}</div>` : "";
+
+        /* What can still be done to this one.
+         *
+         * A declined invoice was a dead end: the label said no and the page
+         * offered nothing. Usually the answer is to send it again with the
+         * thing they objected to fixed, and that should be one tap rather
+         * than retyping it.
+         *
+         * Withdrawing is offered until they accept it. After that it is a
+         * payable in their books, possibly part paid, and changing it from
+         * out here would move their figures without their knowledge. */
+        const canRedo = i.status === "declined" || i.correction_at;
+        const canPull = i.status !== "voided" && i.status !== "accepted" && !i.payable_status;
+        const actions = (canRedo || canPull)
+          ? `<div class="small" style="margin-top:4px">
+              ${canRedo ? `<button class="ghost" data-fix="${esc(i.invoice_no || "")}"
+                  data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
+                  data-ccy="${esc(i.currency || "")}"
+                  >Adjust and send again</button>` : ""}
+              ${canRedo && canPull ? " · " : ""}
+              ${canPull ? `<button class="ghost" data-pull="${esc(i.id)}"
+                  >Withdraw it</button>` : ""}
+            </div>` : "";
         return `<div class="row">
           <span>
             <div>${esc(i.invoice_no || i.description || "Invoice")}</div>
             <div class="small">${String(i.submitted_at || "").slice(0, 10)}${i.has_file ? " · attachment on file" : ""}</div>
             ${part}${asked}${i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : ""}
+            ${actions}
             <span class="pill ${cls}">${label}</span>
           </span>
-          <span class="m">${money(amount, ccy)}${foreign}</span>
+          <span class="m">${shown}${foreign}</span>
         </div>`;
       }).join("")
     : `<p class="none">Nothing yet.</p>`;
@@ -343,6 +392,15 @@ async function showPortal(t, { anonymous = false } = {}) {
       <h1>Your account</h1>
       <p class="sub">Everything between you and ${esc(d.business)}. Always current.</p>
       <div class="total"><span>Outstanding to you</span><span class="m">${money(owed, ccy)}</span></div>
+      ${waiting > 0.005 ? `<div class="total" style="border:none;padding-top:4px">
+        <span class="small">Waiting on their review</span>
+        <span class="m small">${money(waiting, ccy)}</span></div>` : ""}
+      ${unconverted > 0 ? `<div class="total" style="border:none;padding-top:2px">
+        <span class="small">${unconverted} in another currency, converted when accepted</span>
+        <span class="m small"></span></div>` : ""}
+      ${paidTotal > 0.005 ? `<div class="total" style="border:none;padding-top:2px">
+        <span class="small">Paid to you so far</span>
+        <span class="m small">${money(paidTotal, ccy)}</span></div>` : ""}
     </div>
 
     <div class="card"><div class="eyebrow">Invoices you have sent</div>${invoices}</div>
@@ -402,8 +460,26 @@ async function showPortal(t, { anonymous = false } = {}) {
       document.getElementById("desc").value = b.dataset.desc || "";
       document.getElementById("amt").value = b.dataset.amt || "";
       document.getElementById("num").value = b.dataset.fix || "";
+      if (b.dataset.ccy) document.getElementById("ccy").value = b.dataset.ccy;
       document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
       document.getElementById("desc").focus();
+    };
+  }
+
+  /* Withdrawing asks first, because it cannot be undone from this side: the
+     business would have to be asked to reinstate it. */
+  for (const b of wrap.querySelectorAll("[data-pull]")) {
+    b.onclick = async () => {
+      if (!confirm("Withdraw this invoice? They will see it as withdrawn, and you would have to send a new one.")) return;
+      b.textContent = "Withdrawing";
+      const { data, error } = await sb.rpc("portal_withdraw_invoice", {
+        p_token: active, p_invoice_id: b.dataset.pull,
+      });
+      if (error || data?.ok === false) {
+        b.textContent = (data && data.error) || "Could not withdraw it";
+        return;
+      }
+      showPortal(active, { anonymous: !portals.length });
     };
   }
   window.__business = d.business;
