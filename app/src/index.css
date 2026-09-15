@@ -689,7 +689,18 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
   overscroll-behavior: contain;
 }
 
-/* The panel is a surface you drag within, not one you drag the page by. */
+/* The panel is a surface you drag within, not one you drag the page by.
+
+   `pan-y` on the whole panel was wrong: it declares that vertical dragging is
+   allowed anywhere on it, including the composer and the prompt row, which are
+   not scrolling boxes and so passed the gesture to the page. The transcript
+   sets its own; everything else keeps nothing. */
 .tally-panel {
-  touch-action: pan-y;
+  touch-action: none;
+}
+
+/* The prompt row wraps rather than scrolling, so a drag on it is somebody
+   missing a button. It should move nothing at all. */
+.tally-panel .prompt-row {
+  touch-action: none;
 }

@@ -1144,6 +1144,41 @@ function Ledger({ onSignOut }) {
   const [theme, setThemeState] = useState("dark");
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
   const [moreOpen, setMoreOpen] = useState(false);
+
+  /* While the chat is open on a phone, the page underneath does not move.
+   *
+   * Containment on the panel was the wrong tool. It stops a scroll handing off
+   * at the edge of a scrolling box, but the composer and the prompt row are
+   * not scrolling boxes: a drag starting on either of them was never the
+   * panel's to keep, so it went to the page, which is exactly what you saw.
+   *
+   * The page is pinned instead. `position: fixed` with the current offset is
+   * the only approach iOS honours; `overflow: hidden` on its own does not stop
+   * Safari. The offset is put back on close so nobody loses their place.
+   *
+   * Only on a phone: on a laptop the chat is a column beside the ledger and
+   * the ledger is meant to scroll. */
+  useEffect(() => {
+    if (!chatOpen) return;
+    if (window.matchMedia("(min-width: 1024px)").matches) return;
+
+    const y = window.scrollY;
+    const { style } = document.body;
+    const kept = { position: style.position, top: style.top, width: style.width, overflow: style.overflow };
+
+    style.position = "fixed";
+    style.top = `-${y}px`;
+    style.width = "100%";
+    style.overflow = "hidden";
+
+    return () => {
+      style.position = kept.position;
+      style.top = kept.top;
+      style.width = kept.width;
+      style.overflow = kept.overflow;
+      window.scrollTo(0, y);
+    };
+  }, [chatOpen]);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
   const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
@@ -10894,8 +10929,11 @@ function Capture({
           people to ignore the row. Each of these only appears when it has
           something behind it, at most three, and they go once the
           conversation is underway. */}
+      {/* Wraps rather than scrolling sideways, so it needs no panning at all:
+          a drag here is somebody missing a button, not asking to move
+          anything. The class exists so the stylesheet can say that. */}
       {showPrompts && (
-        <div className="px-3 pt-2 flex flex-wrap gap-1.5">
+        <div className="prompt-row px-3 pt-2 flex flex-wrap gap-1.5">
           {quickPrompts.map((q) => (
             <button
               key={q.label}

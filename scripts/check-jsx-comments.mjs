@@ -43,12 +43,31 @@ for (const file of files) {
   });
 
   if (openedAt >= 0) bad.push([file, openedAt + 1, "never closed"]);
+
+  /* And a comment standing where an element has to stand.
+   *
+   * `{cond && (` opens an expression that must produce exactly one element. A
+   * comment there is a second expression, and the parser complains about the
+   * element after it rather than the comment.
+   *
+   * Twice now, in two different files, and the reported line was never the
+   * line at fault. */
+  lines.forEach((line, i) => {
+    if (!/\{\s*\/\*/.test(line.trim())) return;
+    const before = (lines[i - 1] || "").trim();
+    if (/(&&|\?|=>|\breturn)\s*\($/.test(before)) {
+      bad.push([file, i + 1, "a comment where a single element must go"]);
+    }
+  });
 }
 
 if (bad.length) {
-  console.error("  FAIL  a JSX comment opens with { and closes without }:");
+  /* Two faults, two remedies. One message covering both would tell half the
+     readers to do the wrong thing. */
+  console.error("  FAIL  a JSX comment is in the wrong shape or the wrong place:");
   for (const [f, n, t] of bad) console.error(`          ${relative(ROOT, f)}:${n}  ${t}`);
-  console.error("        End the comment with */} so the expression closes.");
+  console.error("        A comment must end */} and must not stand where a single");
+  console.error("        element has to go: put it on the line above instead.");
   process.exit(1);
 }
 console.log("  ok    every JSX comment closes its own brace");
