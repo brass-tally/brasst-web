@@ -2740,12 +2740,13 @@ function Ledger({ onSignOut }) {
    * where money is chased, and Transactions is where it is filed. */
   const tabs = [
     ["overview", "Snapshot", LayoutGrid],
-    /* Its own section rather than a card inside AR/AP. Writing an invoice is
-       a task somebody sits down to do, not something glanced at beside what
-       is owed. */
-    ["invoices", "Invoices", FileText],
     ["arap", "AR / AP", FileClock],
     ["transactions", "Transactions", Receipt],
+    /* Its own section rather than a card inside AR/AP, and after Transactions
+       rather than before: what is owed and what has moved are read every day,
+       and writing an invoice is a thing you sit down to do. Daily reading
+       first, deliberate work after it. */
+    ["invoices", "Invoices", FileText],
     ["pl", "P&L", TrendingUp],
     ["credits", "Credits", Coins],
     ["calendar", "Calendar", CalendarDays],
@@ -2753,7 +2754,7 @@ function Ledger({ onSignOut }) {
   ];
 
   /* What the dock shows without asking. Everything else is one tap further. */
-  const DOCK = ["overview", "invoices", "arap", "transactions"];
+  const DOCK = ["overview", "arap", "transactions", "invoices"];
   const TAB_TITLES = {
     overview: "Snapshot", invoices: "Invoices", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
     credits: "Credits", calendar: "Calendar", integrations: "Connectors",
