@@ -1143,6 +1143,7 @@ function Ledger({ onSignOut }) {
   const [month, setMonth] = useState(thisMonth());
   const [theme, setThemeState] = useState("dark");
   const [preview, setPreview] = useState(null); // { url, name, type } | { error: true }
+  const [moreOpen, setMoreOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null); // { question, at } queued from an insight
   const [chatGuide, setChatGuide] = useState(null); // { id, at } a section handing over its brief
@@ -2728,11 +2729,21 @@ function Ledger({ onSignOut }) {
      seven icons plus Tally needed 363px of 288px, so the dock tightens on the
      narrowest screens rather than dropping one of them: a section that is on
      the rail and not on the dock is a section phone users cannot find. */
+  /* Eight sections on the rail, four on the dock.
+   *
+   * A phone cannot hold eight targets across 390px without each becoming a
+   * guess, so the dock carries the four somebody opens daily and the rest live
+   * behind a plus. The rail, which has the room, still shows everything.
+   *
+   * The four are not an opinion about importance: they are the ones with a
+   * decision attached. Snapshot answers "where am I", Invoices and AR/AP are
+   * where money is chased, and Transactions is where it is filed. */
   const tabs = [
     ["overview", "Snapshot", LayoutGrid],
-    /* Second, under Snapshot. What is owed and owing is the thing with a
-       decision attached, so it belongs where the eye lands after the
-       headline figures rather than behind two sections of history. */
+    /* Its own section rather than a card inside AR/AP. Writing an invoice is
+       a task somebody sits down to do, not something glanced at beside what
+       is owed. */
+    ["invoices", "Invoices", FileText],
     ["arap", "AR / AP", FileClock],
     ["transactions", "Transactions", Receipt],
     ["pl", "P&L", TrendingUp],
@@ -2740,8 +2751,11 @@ function Ledger({ onSignOut }) {
     ["calendar", "Calendar", CalendarDays],
     ["contacts", "Contacts", Users],
   ];
+
+  /* What the dock shows without asking. Everything else is one tap further. */
+  const DOCK = ["overview", "invoices", "arap", "transactions"];
   const TAB_TITLES = {
-    overview: "Snapshot", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
+    overview: "Snapshot", invoices: "Invoices", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
     credits: "Credits", calendar: "Calendar", integrations: "Connectors",
     reports: "Reports", settings: "Settings", profile: "Profile", taxpack: "Tax pack", contacts: "Contacts",
     "legal-data": "Your data", "legal-privacy": "Privacy", "legal-terms": "Terms",
@@ -3010,6 +3024,24 @@ function Ledger({ onSignOut }) {
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions readOnly={readOnly} data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
         {tab === "pl" && <ProfitLoss data={data} month={month} />}
+        {tab === "invoices" && (
+          <InvoicesHub
+            ledgerId={data.ledger.id}
+            ledgerCurrency={data.ledger.currency || "CAD"}
+            contacts={contacts}
+            addAR={addAR}
+            readOnly={readOnly}
+            openPreview={openPreview}
+            onAccept={(inv) => addAR("payables", inv)}
+            onCount={refreshInbound}
+            onDeletePayable={(id) => delAR("payables", id)}
+            onFindPayable={(id) => data.payables.find((p) => p.id === id) || null}
+            onFindOpenPayables={() => (data.payables || []).filter((p) => p.status === "open")}
+            onConfirmVoid={askConfirm}
+            onContactsChange={refreshContacts}
+          />
+        )}
+
         {tab === "arap" && (
           <ARAP
             openGuide={openGuide} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR}
@@ -3259,26 +3291,91 @@ function Ledger({ onSignOut }) {
         )}
       </button>
 
+      {/* The layer the plus opens.
+       *
+       * Above the dock, not over the page: it is an extension of the dock
+       * rather than a screen of its own, so it appears where your thumb
+       * already is and closes the moment you choose or tap away.
+       *
+       * The glass, the spring and the stagger are the same language as the
+       * dock underneath, because two floating surfaces that do not match read
+       * as two different apps. */}
+      {moreOpen && (
+        <>
+          <button
+            aria-label="Close"
+            onClick={() => setMoreOpen(false)}
+            className="fixed inset-0 z-40 lg:hidden"
+            style={{ background: "transparent" }}
+          />
+          <nav
+            className="fixed z-40 left-1/2 lg:hidden more-layer"
+            style={{ transform: "translateX(-50%)", bottom: 78 }}
+          >
+            <div
+              className="dock flex flex-col gap-0.5 p-1.5 rounded-3xl"
+              style={{
+                background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,248,0.72)",
+              }}
+            >
+              {tabs.filter(([k]) => !DOCK.includes(k)).map(([k, label, Icon], i) => (
+                <button
+                  key={k}
+                  onClick={() => { setTab(k); setChatOpen(false); setMoreOpen(false); }}
+                  style={{
+                    color: tab === k ? P.brassText : P.muted,
+                    background: tab === k ? P.brass + "1F" : "transparent",
+                    borderRadius: 16,
+                    animationDelay: `${i * 34}ms`,
+                  }}
+                  className="more-item flex items-center gap-3 h-12 px-4 text-[15px] font-medium press"
+                >
+                  <Icon size={18} />
+                  <span className="whitespace-nowrap">{label}</span>
+                </button>
+              ))}
+            </div>
+          </nav>
+        </>
+      )}
+
       {/* ===== floating dock: all sections, Tally lives on the right ===== */}
       <nav className="fixed z-40 left-1/2 bottom-4 lg:hidden" style={{ transform: "translateX(-50%)", maxWidth: "calc(100vw - 20px)" }}>
         <div
           className="dock dock-row flex items-center gap-0.5 px-2 py-1.5 rounded-full"
           style={{ background: theme === "dark" ? "rgba(23,31,27,0.72)" : "rgba(251,250,245,0.78)", border: `1px solid ${P.line}`, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: elev(3) }}
         >
-          {tabs.map(([k, label, Icon]) => (
-            <DockBtn
-              key={k}
-              label={label}
-              active={tab === k}
-              /* A dot on the section that has something waiting. An invoice
-                 that arrived while you were on Snapshot should be visible from
-                 Snapshot, not only once you happen to open AR / AP. */
-              dot={k === "arap" && inbound.length > 0}
-              onClick={() => { setTab(k); setChatOpen(false); }}
-            >
-              <Icon size={18} />
-            </DockBtn>
-          ))}
+          {/* Four, then a plus.
+         *
+         * Eight targets across 390px makes each one a guess. These four are
+         * the ones with a decision attached; the rest are one tap further,
+         * which is cheaper than four mis-taps a day.
+         */}
+        {tabs.filter(([k]) => DOCK.includes(k)).map(([k, label, Icon]) => (
+          <DockBtn
+            key={k}
+            label={label}
+            active={tab === k}
+            /* A dot on the section that has something waiting. An invoice
+               that arrived while you were on Snapshot should be visible from
+               Snapshot, not only once you happen to open AR / AP. */
+            dot={k === "invoices" && inbound.length > 0}
+            onClick={() => { setTab(k); setChatOpen(false); setMoreOpen(false); }}
+          >
+            <Icon size={19} />
+          </DockBtn>
+        ))}
+
+        <DockBtn
+          label={moreOpen ? "Close" : "More"}
+          active={moreOpen || tabs.some(([k]) => k === tab && !DOCK.includes(k))}
+          onClick={() => setMoreOpen((v) => !v)}
+        >
+          <Plus
+            size={19}
+            style={{ transform: moreOpen ? "rotate(45deg)" : "none", transition: "transform .22s var(--ease)" }}
+          />
+        </DockBtn>
 
           {/* divider */}
           <span aria-hidden style={{ width: 1, height: 24, background: P.line, margin: "0 4px", flexShrink: 0 }} />
@@ -12674,31 +12771,16 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
       )}
       <div className="grid md:grid-cols-2 gap-6">
         <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} />
-        {/* One place for anything invoice shaped. */}
-      <InvoicesHub
-        ledgerId={data.ledger.id}
-        ledgerCurrency={data.ledger.currency || "CAD"}
-        contacts={contacts}
-        addAR={addAR}
-        readOnly={readOnly}
-        openPreview={openPreview}
-        onAccept={(inv) => addAR("payables", inv)}
-        onCount={onInboundChange}
-        onDeletePayable={(id) => delAR("payables", id)}
-        onFindPayable={(id) => data.payables.find((p) => p.id === id) || null}
-        onFindOpenPayables={() => (data.payables || []).filter((p) => p.status === "open")}
-        onConfirmVoid={askConfirm}
-        onContactsChange={onContactsChange}
-        trailing={
-          <>
-            <GuideAnchor id="ar-ap" onOpen={openGuide} label="Help me chase" />
-            <Btn tone="ghost" onClick={exportCSV} title="Download all receivables and payables as CSV">
-              <Download size={14} /> Export CSV
-            </Btn>
-          </>
-        }
-      />
 
+
+        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} />
+      </div>
+
+      {/* Below the pair, not between them.
+
+          Owed and owing are one question asked twice and belong side by
+          side. Planned is a different question entirely, and sitting it in
+          the middle made the two halves of the first look unrelated. */}
       <PlannedList
         ledgerId={data.ledger.id}
         plans={plans}
@@ -12706,9 +12788,6 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         onChanged={refreshPlans}
         onCommit={commitPlan}
       />
-
-        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} />
-      </div>
     </div>
   );
 }
