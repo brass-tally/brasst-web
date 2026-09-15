@@ -33,6 +33,10 @@
       "trailingSlash": false,
       "rewrites": [
         {
+          "source": "/c/:slug/:token",
+          "destination": "/c/index.html"
+        },
+        {
           "source": "/c/:token",
           "destination": "/c/index.html"
         },
@@ -168,6 +172,12 @@
     },
     {
       "source": "/invoice",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/c/:slug/:token",
       "destination": {
         "service": "landing"
       }

@@ -138,6 +138,10 @@ function linkFor(token: string, slug?: string | null) {
   return `${base}/i/${slug ? `${encodeURIComponent(slug)}/` : ""}${encodeURIComponent(token)}`;
 }
 
+/* A name as it appears in an address: lowercase, hyphens, nothing else. */
+const slugify = (name: string | null | undefined) =>
+  String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || null;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ ok: false, error: "POST only" }, 405);
@@ -325,11 +329,16 @@ Deno.serve(async (req) => {
       }
 
       let { data: portal } = await db
-        .from("contact_portals").select("token")
+        .from("contact_portals").select("token, slug")
         .eq("ledger_id", contact.ledger_id).eq("contact_id", contact.id).maybeSingle();
 
       if (!portal) {
-        const token = crypto.randomUUID().replace(/-/g, "").slice(0, 22);
+        /* Short, and readable. Ten characters from an alphabet with no
+           lookalikes, rather than twenty-two of hex: an address somebody can
+           recognise in a message is one they keep. */
+        const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+        const token = Array.from(crypto.getRandomValues(new Uint8Array(10)))
+          .map((n) => alphabet[n % alphabet.length]).join("");
         const { data: made, error } = await db
           .from("contact_portals")
           /* The column is `user_id`, and it has to be given explicitly.
@@ -342,15 +351,20 @@ Deno.serve(async (req) => {
             ledger_id: contact.ledger_id,
             contact_id: contact.id,
             token,
+            slug: slugify(contact.name),
             user_id: led.user_id,
           })
-          .select("token").single();
+          .select("token, slug").single();
         if (error) return json({ ok: false, error: error.message });
         portal = made;
       }
 
       const base = (Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "");
-      const link = `${base}/c/${portal.token}`;
+      /* The name is for the reader, not the lookup. A portal made before slugs
+         existed has none, and its plain address still works. */
+      const link = portal.slug
+        ? `${base}/c/${portal.slug}/${portal.token}`
+        : `${base}/c/${portal.token}`;
 
       const r = await sendMail(
         contact.email,

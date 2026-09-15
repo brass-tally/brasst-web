@@ -141,8 +141,18 @@ const money = (n, ccy) =>
 
 const BUILD = "2026-09-15 00:33Z";
 
+/* The token is the last part of the address, whatever comes before it.
+ *
+ * Both shapes are read, because a link somebody bookmarked before the name was
+ * added has to keep working:
+ *
+ *   /c/syed-belal/k7m2q9xr4t
+ *   /c/a7f3c91e42b8d05f16a2c9
+ *
+ * The name is never checked against anything. It is there to be recognised,
+ * so renaming a contact cannot break an address already in somebody's inbox. */
 const token =
-  (location.pathname.match(/^\/c\/([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
+  (location.pathname.match(/^\/c\/(?:[A-Za-z0-9_-]+\/)?([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
   new URLSearchParams(location.search).get("t") || "";
 
 let portals = [];   // every business, when signed in
