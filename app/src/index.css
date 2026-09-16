@@ -704,3 +704,18 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
 .tally-panel .prompt-row {
   touch-action: none;
 }
+
+/* Visible to a screen reader, and to nothing else.
+
+   The asterisk beside a required field is a convention sighted people read at
+   a glance and a screen reader announces as "star", which means nothing. The
+   word is there for that listener and takes no space on screen. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

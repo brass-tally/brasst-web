@@ -12293,14 +12293,20 @@ function TrendBar({ t, maxTrend, active, index = 0 }) {
  * difference between a correction and a hunt.
  */
 function whatIsMissing(d) {
-  if (!d.beneficiaryName) return "The beneficiary name is the one thing their bank matches on.";
-  if (!d.accountNumber) return "An account number is needed.";
-  if (!d.bankName) return "Which bank is it?";
-  if (d.country === "CA" && !d.transitNumber) return "A Canadian transfer needs the five digit transit number.";
-  if (d.country === "CA" && !d.institutionNumber) return "A Canadian transfer needs the three digit institution number.";
-  if (d.country === "US" && !d.routingNumber) return "A US transfer needs the nine digit routing number.";
-  if (d.country === "OTHER" && !d.iban && !d.swiftCode) return "An IBAN or a SWIFT code is needed.";
-  return "Something is still missing.";
+  /* Which field, as well as what to say about it.
+   *
+   * A sentence alone leaves somebody looking at a form they believe they have
+   * filled in and wondering which box the app disagrees about. Returning the
+   * field lets the card point at it. */
+  const blank = (v) => !String(v ?? "").trim();
+  if (blank(d.beneficiaryName)) return ["beneficiaryName", "The beneficiary name is the one thing their bank matches on."];
+  if (blank(d.accountNumber)) return ["accountNumber", "An account number is needed."];
+  if (blank(d.bankName)) return ["bankName", "Which bank is it?"];
+  if (d.country === "CA" && blank(d.transitNumber)) return ["transitNumber", "A Canadian transfer needs the five digit transit number."];
+  if (d.country === "CA" && blank(d.institutionNumber)) return ["institutionNumber", "A Canadian transfer needs the three digit institution number."];
+  if (d.country === "US" && blank(d.routingNumber)) return ["routingNumber", "A US transfer needs the nine digit routing number."];
+  if (d.country === "OTHER" && blank(d.iban) && blank(d.swiftCode)) return ["iban", "An IBAN or a SWIFT code is needed."];
+  return [null, "Something is still missing."];
 }
 
 function PayToCard({ ledgerId, readOnly }) {
@@ -12312,6 +12318,11 @@ function PayToCard({ ledgerId, readOnly }) {
      A hook after `if (!d) return null` runs on some renders and not others,
      which is the one thing React cannot tolerate. */
   const [err, setErr] = useState("");
+  /* Which field the complaint is about, so the card can mark it. Declared here
+     because this is the component that reads and sets it: the first attempt
+     landed in a component eleven thousand lines away, and the ownership check
+     is what noticed. */
+  const [badField, setBadField] = useState("");
 
   useEffect(() => {
     if (!ledgerId) return;
@@ -12347,10 +12358,42 @@ function PayToCard({ ledgerId, readOnly }) {
   const fields = billing.payFieldsFor(d.country);
   const ready = billing.payToReady(d);
 
+  /* What a transfer will not go without, by country.
+   *
+   * An asterisk on everything is the same as an asterisk on nothing. These are
+   * the fields a bank rejects the payment without; the rest help a person at
+   * the other end find the right account and are genuinely optional. */
+  const REQUIRED = {
+    CA: ["beneficiaryName", "accountNumber", "bankName", "transitNumber", "institutionNumber"],
+    US: ["beneficiaryName", "accountNumber", "bankName", "routingNumber"],
+    OTHER: ["beneficiaryName", "accountNumber", "bankName"],
+  }[d.country] || [];
+  const needed = (f) =>
+    REQUIRED.includes(f) || (d.country === "OTHER" && (f === "iban" || f === "swiftCode"));
+
   const save = async (patch = {}) => {
     setBusy(true);
     setErr("");
-    const res = await billing.savePayTo(ledgerId, { ...d, ...patch });
+
+    /* Guard against a half-deployed library.
+     *
+     * If `billing.js` has not been updated alongside `App.jsx`, this function
+     * does not exist, calling it throws, and the click handler dies silently:
+     * no save, no message, a button that looks broken rather than blocked.
+     *
+     * Files deployed one at a time is how this project is updated, so the code
+     * has to survive it and say what happened. */
+    let res;
+    try {
+      if (typeof billing.savePayTo !== "function") {
+        throw new Error("This build is missing part of the billing library. Deploy app/src/lib/billing.js alongside App.jsx.");
+      }
+      res = await billing.savePayTo(ledgerId, { ...d, ...patch });
+    } catch (e) {
+      setBusy(false);
+      setErr(e?.message || "It did not save.");
+      return;
+    }
     setBusy(false);
 
     /* A button that cannot do its job says so. It used to check the result for
@@ -12373,8 +12416,13 @@ function PayToCard({ ledgerId, readOnly }) {
         <span style={{ color: P.text }} className="text-[15.5px]">How they pay you</span>
         <button
           onClick={() => setOpen((v) => !v)}
-          style={{ color: P.brassText }}
-          className="text-[14px] press shrink-0"
+          style={{
+            background: P.surface,
+            color: P.text,
+            border: `1px solid ${P.line}`,
+            borderRadius: R.pill,
+          }}
+          className="h-9 px-3.5 text-[13.5px] font-medium press shrink-0"
         >
           {open ? "Close" : d.active ? "Edit" : "Set it up"}
         </button>
@@ -12393,6 +12441,11 @@ function PayToCard({ ledgerId, readOnly }) {
 
       {open && (
         <div className="mt-3">
+          <p style={{ color: P.faint }} className="text-[12.5px] mb-2">
+            <span style={{ color: P.debit }}>*</span> a transfer will not go without it.
+            Everything else helps the person at the other end find the right account.
+          </p>
+
           <div className="flex flex-wrap gap-1.5 mb-2">
             {[["CA", "Canada"], ["US", "United States"], ["OTHER", "Elsewhere"]].map(([k, label]) => (
               <button
@@ -12414,7 +12467,11 @@ function PayToCard({ ledgerId, readOnly }) {
             <div key={f} className="mt-2">
               <label style={{ color: P.muted }} className="text-[13.5px] block">
                 {LABELS[f]}
+                {needed(f)
+                  ? <span style={{ color: P.debit }} aria-hidden> *</span>
+                  : <span style={{ color: P.faint }}> · optional</span>}
                 {HINTS[f] && <span style={{ color: P.faint }}> · {HINTS[f]}</span>}
+                {needed(f) && <span className="sr-only"> (required)</span>}
               </label>
               {f === "accountType" ? (
                 <select
@@ -12429,14 +12486,18 @@ function PayToCard({ ledgerId, readOnly }) {
                 </select>
               ) : (
                 <input
+                  id={`payto-${f}`}
                   value={d[f] || ""}
-                  onChange={(e) => setD({ ...d, [f]: e.target.value })}
+                  onChange={(e) => { setD({ ...d, [f]: e.target.value }); if (badField === f) { setBadField(""); setErr(""); } }}
                   inputMode={/Number$/.test(f) ? "numeric" : undefined}
                   style={{
                     background: P.surface, color: P.text, borderRadius: 13,
+                    /* The field the complaint names is outlined, so nobody has
+                       to match a sentence to a box by reading. */
+                    border: badField === f ? `1.5px solid ${P.debit}` : "1.5px solid transparent",
                     fontFamily: /Number$|iban|swift/i.test(f) ? MONO : undefined,
                   }}
-                  className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+                  className="w-full h-11 px-3.5 text-[15px] outline-none mt-1"
                 />
               )}
             </div>
@@ -12445,6 +12506,7 @@ function PayToCard({ ledgerId, readOnly }) {
           <div className="mt-2">
             <label style={{ color: P.muted }} className="text-[13.5px] block">
               Anything else they should know
+              <span style={{ color: P.faint }}> · optional</span>
             </label>
             <input
               value={d.note || ""}
@@ -12474,7 +12536,17 @@ function PayToCard({ ledgerId, readOnly }) {
                * Pressing it names the missing field instead. */}
               <button
                 onClick={() => {
-                  if (!ready) { setErr(whatIsMissing(d)); return; }
+                  if (!ready) {
+                    const [field, why] = whatIsMissing(d);
+                    setErr(why);
+                    setBadField(field || "");
+                    if (field) {
+                      const el = document.getElementById(`payto-${field}`);
+                      el?.focus();
+                      el?.scrollIntoView({ block: "center", behavior: "smooth" });
+                    }
+                    return;
+                  }
                   save({ active: true });
                 }}
                 disabled={busy}
@@ -12487,13 +12559,23 @@ function PayToCard({ ledgerId, readOnly }) {
               >
                 {busy ? "Saving" : "Save and put it on invoices"}
               </button>
+              {/* A real button, not a link in disguise.
+               *
+               * This was bare text with a colour, which on a card full of text
+               * reads as a caption. Two actions sit here and both should look
+               * like something you press. */}
               <button
                 onClick={() => save({ active: false })}
                 disabled={busy}
-                style={{ color: P.muted }}
-                className="h-11 px-2 text-[14.5px] press"
+                style={{
+                  background: P.surface,
+                  color: P.text,
+                  border: `1px solid ${P.line}`,
+                  borderRadius: R.pill,
+                }}
+                className="h-11 px-4 text-[14.5px] font-medium press"
               >
-                Save without sharing
+                Save, keep it private
               </button>
             </div>
           )}
