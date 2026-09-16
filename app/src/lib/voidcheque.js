@@ -142,11 +142,31 @@ export function voidChequeHtml(d, business) {
 </body></html>`;
 }
 
-/** Open it in a window, ready to print. */
-export function openVoidCheque(d, business) {
-  const w = window.open("", "_blank", "noopener,width=880,height=1000");
-  if (!w) return { ok: false, error: "Your browser blocked the window. Allow pop-ups for this site and try again." };
-  w.document.write(voidChequeHtml(d, business));
-  w.document.close();
+/* Printing it from inside the app.
+ *
+ * `window.open` was the wrong approach. An installed app runs in standalone
+ * mode, where opening a window is refused whatever the pop-up setting says,
+ * and no page can grant itself that permission: there is no API for it, so a
+ * button offering to enable pop-ups would be a button that lies.
+ *
+ * So the sheet is rendered in the page and printed from there. Everything else
+ * steps aside for the length of the print. It works in a browser, in an
+ * installed app, and on a phone, which the window never did.
+ */
+export function printElement(el) {
+  if (!el) return { ok: false, error: "Nothing to print." };
+  document.body.classList.add("printing-sheet");
+  el.classList.add("print-sheet");
+
+  const restore = () => {
+    document.body.classList.remove("printing-sheet");
+    el.classList.remove("print-sheet");
+    window.removeEventListener("afterprint", restore);
+  };
+  window.addEventListener("afterprint", restore);
+  window.print();
+  /* Safari does not always fire afterprint, and a page left in its printing
+     state is worse than a stray class. */
+  setTimeout(restore, 2000);
   return { ok: true };
 }

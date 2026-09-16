@@ -12311,6 +12311,148 @@ function whatIsMissing(d) {
   return [null, "Something is still missing."];
 }
 
+/* The void cheque, rendered in the app rather than a window.
+ *
+ * An installed app runs in standalone mode and refuses to open windows
+ * whatever the pop-up setting says, and no page can grant itself that
+ * permission: there is no API for it, so a button offering to enable pop-ups
+ * would be a button that lies.
+ *
+ * The sheet is drawn here and printed from the page, which behaves the same in
+ * a browser, in the installed app, and on a phone.
+ */
+function VoidChequeSheet({ d, business, onClose }) {
+  const sheet = useRef(null);
+  const [err, setErr] = useState("");
+
+  const rows = [
+    ["Beneficiary", d.beneficiaryName],
+    ["Beneficiary address", d.beneficiaryAddress],
+    ["Bank", d.bankName],
+    ["Branch address", d.branchAddress],
+    ["Account number", d.accountNumber],
+    ["Account type", d.accountType],
+    ...(d.country === "CA"
+      ? [["Transit number", d.transitNumber], ["Institution number", d.institutionNumber]] : []),
+    ...(d.country === "US" ? [["Routing number", d.routingNumber]] : []),
+    ...(d.iban ? [["IBAN", d.iban]] : []),
+    ...(d.swiftCode ? [["SWIFT / BIC", d.swiftCode]] : []),
+  ].filter(([, v]) => String(v || "").trim());
+
+  /* The line a person keys a payment from. Canada and the United States order
+     it differently, and one that reads correctly in the wrong country is worse
+     than none at all. */
+  const micr = d.country === "US"
+    ? `\u2446${d.routingNumber}\u2446 ${d.accountNumber}\u2448`
+    : d.country === "CA"
+      ? `\u2448000\u2448 \u2446${d.transitNumber}\u2446${d.institutionNumber}\u2446 ${d.accountNumber}\u2448`
+      : `${d.iban || d.accountNumber}${d.swiftCode ? ` \u00b7 ${d.swiftCode}` : ""}`;
+
+  return (
+    <Modal
+      onClose={onClose}
+      size="lg"
+      title="Void cheque"
+      panelClass="flex flex-col"
+      panelStyle={{ maxHeight: "88vh" }}
+    >
+      <ModalBody className="overflow-y-auto min-h-0 flex-1">
+        <div ref={sheet}>
+          <p style={{ color: P.muted }} className="text-[14.5px] mb-3">
+            Account details for {business || d.beneficiaryName}, issued {todayStr()}.
+          </p>
+
+          {/* No amount box, no payee line, no signature line. Those are what
+              make a cheque negotiable, and leaving them out is the point. */}
+          <div
+            style={{ background: "#FFFFFF", border: `1px solid ${P.line}`, borderRadius: 12 }}
+            className="relative overflow-hidden p-5"
+          >
+            <span
+              aria-hidden
+              style={{
+                position: "absolute", inset: 0, display: "flex",
+                alignItems: "center", justifyContent: "center", pointerEvents: "none",
+              }}
+            >
+              <span style={{
+                fontSize: 64, fontWeight: 700, letterSpacing: ".18em",
+                color: "rgba(196,68,47,.16)", transform: "rotate(-14deg)",
+              }}>VOID</span>
+            </span>
+
+            <div className="flex justify-between gap-5">
+              <span className="min-w-0">
+                <span style={{ color: "#1C1917" }} className="text-[15px] font-semibold block">
+                  {d.beneficiaryName}
+                </span>
+                <span style={{ color: "#5A534E", whiteSpace: "pre-line" }} className="text-[12.5px] block">
+                  {d.beneficiaryAddress}
+                </span>
+              </span>
+              <span className="text-right shrink-0">
+                <span style={{ color: "#1C1917" }} className="text-[14px] font-semibold block">
+                  {d.bankName}
+                </span>
+                <span style={{ color: "#5A534E" }} className="text-[12.5px] block">{d.branchAddress}</span>
+              </span>
+            </div>
+
+            <div
+              style={{ fontFamily: MONO, color: "#1C1917", borderTop: `1px dashed ${P.line}` }}
+              className="text-[15px] tracking-wider mt-8 pt-3"
+            >
+              {micr}
+            </div>
+            <div style={{ color: "#8A827B" }} className="text-[11.5px] mt-0.5">
+              {d.country === "CA" ? "transit \u00b7 institution \u00b7 account"
+                : d.country === "US" ? "routing \u00b7 account" : "account"}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            {rows.map(([k, v]) => (
+              <div
+                key={k}
+                className="flex items-baseline justify-between gap-3 py-2"
+                style={{ borderTop: `1px solid ${P.line}` }}
+              >
+                <span style={{ color: P.muted }} className="text-[14px]">{k}</span>
+                <span style={{ fontFamily: MONO, color: P.text }} className="text-[14px] text-right">{v}</span>
+              </div>
+            ))}
+          </div>
+
+          {d.note && <p style={{ color: P.muted }} className="text-[14px] mt-3">{d.note}</p>}
+
+          <p style={{ color: P.faint }} className="text-[12px] mt-4 leading-relaxed">
+            This sheet states account details for receiving payment. It is not a cheque and cannot be
+            presented: there is no amount, no payee and no signature. Treat it as you would a void
+            cheque, because it carries the same information.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mt-4 print-hide">
+          <button
+            onClick={() => {
+              const r = voidCheque.printElement(sheet.current);
+              if (!r.ok) setErr(r.error);
+            }}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+            className="h-11 px-4 text-[15px] font-medium press"
+          >
+            Save as PDF or print
+          </button>
+          <button onClick={onClose} style={{ color: P.muted }} className="h-11 px-2 text-[15px] press">
+            Close
+          </button>
+        </div>
+        {err && <p style={{ color: P.debit }} className="text-[14px] mt-2">{err}</p>}
+      </ModalBody>
+    </Modal>
+  );
+}
+
 function PayToCard({ ledgerId, ledgerName, readOnly }) {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
@@ -12325,6 +12467,7 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
      landed in a component eleven thousand lines away, and the ownership check
      is what noticed. */
   const [badField, setBadField] = useState("");
+  const [showCheque, setShowCheque] = useState(false);
 
   useEffect(() => {
     if (!ledgerId) return;
@@ -12421,10 +12564,7 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
               blanks on it is worse than none: somebody will send money to it. */}
           {ready && (
             <button
-              onClick={() => {
-                const r = voidCheque.openVoidCheque(d, ledgerName);
-                if (!r.ok) setErr(r.error);
-              }}
+              onClick={() => setShowCheque(true)}
               style={{
                 background: P.surface,
                 color: P.text,
@@ -12461,6 +12601,10 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
 
       {done && <p style={{ color: P.credit }} className="text-[13.5px] mt-1">{done}</p>}
       {err && <p style={{ color: P.debit }} className="text-[13.5px] mt-1">{err}</p>}
+
+      {showCheque && (
+        <VoidChequeSheet d={d} business={ledgerName} onClose={() => setShowCheque(false)} />
+      )}
 
       {open && (
         <div className="mt-3">
