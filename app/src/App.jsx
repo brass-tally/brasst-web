@@ -1246,6 +1246,7 @@ function Ledger({ onSignOut }) {
      Tally mentions them, the dock marks them, and neither can wait for someone
      to visit the page that would have told them. */
   const [inbound, setInbound] = useState([]);
+  const [inboundLive, setInboundLive] = useState(0);
 
   /* Contacts, loaded once per ledger and passed to every picker. One list in
      one place: a field that fetched its own would be a field that disagrees
@@ -1516,16 +1517,26 @@ function Ledger({ onSignOut }) {
     /* eslint-disable-next-line */
   }, [data?.ledger?.id, bankTxns.length]);
 
-  const refreshInbound = async () => {
+  /* One number for what is waiting.
+   *
+   * The dock's dot read this list while the tab's badge came from the tray's
+   * own copy, so two counts of one thing could disagree, and did: the tab
+   * said something was waiting and the icon showed nothing.
+   *
+   * The tray reports its count through `onCount`, which lands here. */
+  const refreshInbound = async (n) => {
+    if (typeof n === "number") setInboundLive(n);
     if (!data?.ledger?.id) return;
-    setInbound(await share.listInbound(data.ledger.id, "pending"));
+    const rows = await share.listInbound(data.ledger.id, "pending");
+    setInbound(rows);
+    if (typeof n !== "number") setInboundLive(rows.length);
   };
   useEffect(() => {
     if (!data?.ledger?.id || data.ledger.readOnly) { setInbound([]); return; }
     let alive = true;
     const load = async () => {
       const rows = await share.listInbound(data.ledger.id, "pending");
-      if (alive) setInbound(rows);
+      if (alive) { setInbound(rows); setInboundLive(rows.length); }
     };
 
     /* Raise anything a monthly arrangement owes, then look.
@@ -3057,7 +3068,7 @@ function Ledger({ onSignOut }) {
               if (where === "reconcile") return balance.source === "bank" ? setMatchOpen(true) : setReconciling(true);
               setTab(where);
             }}
-          inboundWaiting={(inbound || []).filter((iv) => iv.status === "pending").length} />
+          inboundWaiting={inboundLive} />
         )}
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions readOnly={readOnly} data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
@@ -3400,7 +3411,7 @@ function Ledger({ onSignOut }) {
             /* A dot on the section that has something waiting. An invoice
                that arrived while you were on Snapshot should be visible from
                Snapshot, not only once you happen to open AR / AP. */
-            dot={k === "invoices" && inbound.length > 0}
+            dot={k === "invoices" && inboundLive > 0}
             onClick={() => { setTab(k); setChatOpen(false); setMoreOpen(false); }}
           >
             <Icon size={19} />
@@ -7801,18 +7812,36 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
               <button
                 onClick={() => accept(inv)}
                 disabled={busy === inv.id}
-                style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                /* Quieter while a correction is being written.
+                 *
+                 * This is the brass primary, which reads as the thing to do,
+                 * and it sat at full strength while somebody was part way
+                 * through typing an objection to the same invoice. Two
+                 * confident actions, one of which contradicts the other. It
+                 * steps back until the correction is either sent or
+                 * abandoned. */
+                style={correcting?.id === inv.id
+                  ? { background: P.surface2, color: P.muted, borderRadius: R.pill }
+                  : { background: P.brass, color: P.onbrass, borderRadius: R.pill }}
                 className="h-11 px-4 text-[15px] font-medium press"
               >
                 {busy === inv.id ? "Adding" : "Add to what I owe"}
               </button>
+              {/* And this one shows it is open.
+                  It looked identical whether the form below was showing or
+                  not, so the only evidence of having pressed it was a panel
+                  further down the page that a phone may not have scrolled
+                  to. */}
               <button
                 onClick={() => { setCorrecting(correcting?.id === inv.id ? null : inv); setReason(""); }}
                 disabled={busy === inv.id}
-                style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+                aria-expanded={correcting?.id === inv.id}
+                style={correcting?.id === inv.id
+                  ? { background: P.brass, color: P.onbrass, borderRadius: R.pill }
+                  : { background: P.surface2, color: P.text, borderRadius: R.pill }}
                 className="h-11 px-4 text-[15px] font-medium press"
               >
-                Needs correction
+                {correcting?.id === inv.id ? "Writing a correction" : "Needs correction"}
               </button>
               <button
                 onClick={() => decline(inv)}
@@ -13205,7 +13234,8 @@ function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, ad
           </span>
           <span style={{ color: P.faint }} className="text-[13px]">
             {r.status === "draft" ? "not sent yet"
-              : r.status === "cancelled" ? "cancelled"
+              : r.status === "cancelled"
+                ? `cancelled${r.cancelledAt ? ` ${String(r.cancelledAt).slice(0, 16).replace("T", " ")}` : ""}${r.cancelledBy ? ` by ${r.cancelledBy}` : ""}`
               : r.status === "paid" ? `paid${r.dueOn ? "" : ""}`
               : `sent ${String(r.sentAt || "").slice(0, 10)}${r.opens > 0 ? ` · opened ${r.opens === 1 ? "once" : `${r.opens} times`}` : " · unopened"}`}
             {r.dueOn && r.status === "sent" ? ` · due ${r.dueOn}` : ""}
@@ -13241,8 +13271,24 @@ function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, ad
                 style={{ color: P.brassText }} className="text-[13.5px] press">
                 {busy === r.id ? "Sending" : "Send it again"}
               </button>
-              <button onClick={async () => { await billing.cancel(r.id); refresh(); }}
-                style={{ color: P.debit }} className="text-[13.5px] press">Cancel it</button>
+              <button
+                onClick={async () => {
+                  setBusy(r.id);
+                  const res = await billing.cancel(r.id);
+                  setBusy("");
+                  /* Refusals are shown. It can refuse: an invoice somebody has
+                     part paid cannot be cancelled without stranding that
+                     payment. */
+                  if (res?.ok === false) { setErr(res.error); return; }
+                  setDone(`${r.number} cancelled${res?.removed_obligation ? ", and taken out of what you are owed" : ""}.`);
+                  setTimeout(() => setDone(""), 6000);
+                  refresh();
+                  onChanged?.();
+                }}
+                disabled={busy === r.id}
+                style={{ color: P.debit }} className="text-[13.5px] press">
+                {busy === r.id ? "Cancelling" : "Cancel it"}
+              </button>
             </>
           )}
         </div>

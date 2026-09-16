@@ -37,6 +37,9 @@ const rowToInvoice = (r) => ({
   openedAt: r.opened_at || undefined,
   opens: r.opens || 0,
   obligationId: r.obligation_id || undefined,
+  cancelledAt: r.cancelled_at || undefined,
+  cancelledBy: r.cancelled_by || undefined,
+  cancelReason: r.cancel_reason || undefined,
 });
 
 export async function listSent(ledgerId) {
@@ -129,14 +132,27 @@ export async function send(invoiceId, { addAR }) {
   }, { ok: false, error: "Could not send it." });
 }
 
-export async function cancel(invoiceId) {
+/* Cancelling, which retires what the invoice raised.
+ *
+ * This used to mark the document and leave the receivable, so the books went
+ * on claiming money from somebody who had been told the bill was withdrawn.
+ *
+ * One call, because two calls from a browser that closes between them leave
+ * exactly that state. The database decides, and refuses when part of it has
+ * already been paid. */
+export async function cancel(invoiceId, reason = null) {
   assertWritable();
-  return soft("cancel invoice", async () => {
-    const { error } = await supabase
-      .from("sent_invoices").update({ status: "cancelled" }).eq("id", invoiceId);
+  try {
+    const { data, error } = await supabase.rpc("cancel_sent_invoice", {
+      p_invoice_id: invoiceId,
+      p_reason: reason,
+    });
     if (error) throw error;
-    return { ok: true };
-  }, { ok: false });
+    return data;
+  } catch (e) {
+    console.warn("cancel invoice failed:", e?.message || e);
+    return { ok: false, error: e?.message || "It could not be cancelled." };
+  }
 }
 
 export async function removeDraft(invoiceId) {
