@@ -18,6 +18,7 @@ import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from ".
 import { lookupRate } from "./lib/fx";
 import { listPlanned, addPlanned, updatePlanned, dropPlanned, plannedTotals } from "./lib/planned";
 import * as billing from "./lib/billing";
+import * as voidCheque from "./lib/voidcheque";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
 import { isReadOnly } from "./lib/access";
@@ -3064,6 +3065,7 @@ function Ledger({ onSignOut }) {
         {tab === "invoices" && (
           <InvoicesHub
             ledgerId={data.ledger.id}
+            ledgerName={data.ledger.name}
             ledgerCurrency={data.ledger.currency || "CAD"}
             contacts={contacts}
             addAR={addAR}
@@ -12309,7 +12311,7 @@ function whatIsMissing(d) {
   return [null, "Something is still missing."];
 }
 
-function PayToCard({ ledgerId, readOnly }) {
+function PayToCard({ ledgerId, ledgerName, readOnly }) {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -12414,18 +12416,39 @@ function PayToCard({ ledgerId, readOnly }) {
     <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-3">
       <div className="flex items-baseline justify-between gap-3">
         <span style={{ color: P.text }} className="text-[15.5px]">How they pay you</span>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          style={{
-            background: P.surface,
-            color: P.text,
-            border: `1px solid ${P.line}`,
-            borderRadius: R.pill,
-          }}
-          className="h-9 px-3.5 text-[13.5px] font-medium press shrink-0"
-        >
-          {open ? "Close" : d.active ? "Edit" : "Set it up"}
-        </button>
+        <span className="flex items-center gap-1.5 shrink-0">
+          {/* Only once there is something worth printing. A void cheque with
+              blanks on it is worse than none: somebody will send money to it. */}
+          {ready && (
+            <button
+              onClick={() => {
+                const r = voidCheque.openVoidCheque(d, ledgerName);
+                if (!r.ok) setErr(r.error);
+              }}
+              style={{
+                background: P.surface,
+                color: P.text,
+                border: `1px solid ${P.line}`,
+                borderRadius: R.pill,
+              }}
+              className="h-9 px-3.5 text-[13.5px] font-medium press"
+            >
+              Void cheque
+            </button>
+          )}
+          <button
+            onClick={() => setOpen((v) => !v)}
+            style={{
+              background: P.surface,
+              color: P.text,
+              border: `1px solid ${P.line}`,
+              borderRadius: R.pill,
+            }}
+            className="h-9 px-3.5 text-[13.5px] font-medium press"
+          >
+            {open ? "Close" : d.active ? "Edit" : "Set it up"}
+          </button>
+        </span>
       </div>
 
       <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
@@ -12591,7 +12614,7 @@ function PayToCard({ ledgerId, readOnly }) {
   );
 }
 
-function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onChanged, bare = false }) {
+function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, readOnly, onChanged, bare = false }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState("");
@@ -12765,7 +12788,7 @@ function BillingList({ ledgerId, ledgerCcy, contacts = [], addAR, readOnly, onCh
 
       {/* Above the list, because it belongs to every invoice rather than to
           any one of them. */}
-      <PayToCard ledgerId={ledgerId} readOnly={readOnly} />
+      <PayToCard ledgerId={ledgerId} ledgerName={ledgerName} readOnly={readOnly} />
 
       {drafts.map((r) => <Line key={r.id} r={r} />)}
       {live.map((r) => <Line key={r.id} r={r} />)}
@@ -13029,6 +13052,7 @@ function InvoicesHub(props) {
       {tab === "out" && (
         <BillingList
           ledgerId={props.ledgerId}
+          ledgerName={props.ledgerName}
           ledgerCcy={props.ledgerCurrency}
           contacts={props.contacts}
           addAR={props.addAR}
