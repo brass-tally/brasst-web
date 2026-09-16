@@ -36,3 +36,9 @@ verify_jwt = false
 # shared secret for the cron path and checks the caller's session otherwise.
 [functions.plaid]
 verify_jwt = false
+
+# A provider posting a webhook has no session, and a customer opening a payment
+# link has no account. Each path in this function authorises itself: webhooks by
+# signature, checkout by the invoice token.
+[functions.payments]
+verify_jwt = false

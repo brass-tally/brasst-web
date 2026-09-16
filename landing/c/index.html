@@ -168,6 +168,10 @@ let active = null;  // the token being viewed
  * dismiss it or send something else. */
 let flash = null;
 
+/* Which invoice the form is changing, if any. Null means it is writing a new
+   one, which is what it has always done. */
+let editingId = null;
+
 /* Help behind a mark.
  *
  * The explanations used to sit on the page, which is right once and clutter
@@ -419,8 +423,19 @@ async function showPortal(t, { anonymous = false } = {}) {
         /* Only something already finished can be put away. Hiding an invoice
            still waiting on them would hide the thing this page is for. */
         const canShelve = (i.status === "withdrawn" || i.status === "declined") && !i.archived_at;
+        /* Correcting one in place, rather than withdrawing and re-sending.
+           Two rows for one piece of work is how a business ends up asking
+           which is real. Allowed until they accept it; after that it is a
+           payable in their books and not ours to change. */
+        const canEdit = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
         const actions = (canRedo || canPull || canShelve)
           ? `<div class="small" style="margin-top:4px">
+              ${canEdit ? `<button class="ghost" data-edit="${esc(i.id)}"
+                  data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
+                  data-num="${esc(i.invoice_no || "")}" data-due="${esc(i.due_on || i.due_date || "")}"
+                  data-ccy="${esc(i.currency || "")}"
+                  >Change it</button>` : ""}
+              ${canEdit && (canRedo || canPull || canShelve) ? " · " : ""}
               ${canRedo ? `<button class="ghost" data-fix="${esc(i.invoice_no || "")}"
                   data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
                   data-ccy="${esc(i.currency || "")}"
@@ -652,6 +667,27 @@ async function showPortal(t, { anonymous = false } = {}) {
 
   /* Withdrawing asks first, because it cannot be undone from this side: the
      business would have to be asked to reinstate it. */
+  /* Changing an invoice in place.
+   *
+   * The form is the one already on the page, filled from the invoice and
+   * pointed at it. A second form would drift from the first, and this one
+   * already knows how to take a currency and a due date. */
+  for (const b of wrap.querySelectorAll("[data-edit]")) {
+    b.onclick = () => {
+      editingId = b.dataset.edit;
+      document.getElementById("desc").value = b.dataset.desc || "";
+      document.getElementById("amt").value = b.dataset.amt || "";
+      document.getElementById("num").value = b.dataset.num || "";
+      document.getElementById("due").value = b.dataset.due || "";
+      if (b.dataset.ccy) document.getElementById("ccy").value = b.dataset.ccy;
+      document.getElementById("form-title").textContent = `Changing ${b.dataset.num || "that invoice"}`;
+      document.getElementById("clear").style.display = "inline-flex";
+      document.getElementById("send").textContent = "Send the change";
+      document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("desc").focus();
+    };
+  }
+
   for (const b of wrap.querySelectorAll("[data-pull]")) {
     b.onclick = async () => {
       if (!confirm("Withdraw this invoice? They will see it as withdrawn, and you would have to send a new one.")) return;
@@ -731,6 +767,8 @@ async function showPortal(t, { anonymous = false } = {}) {
    * no way back out: somebody who changed their mind had to clear four fields
    * by hand or reload the page. */
   document.getElementById("clear").onclick = () => {
+    editingId = null;
+    document.getElementById("send").textContent = "Send it";
     for (const id of ["desc", "amt", "num", "due"]) document.getElementById(id).value = "";
     fileInput.value = "";
     showFile();
@@ -773,6 +811,56 @@ async function showPortal(t, { anonymous = false } = {}) {
         return;
       }
       ok.textContent = "";
+    }
+
+    /* Changing one, rather than sending another.
+     *
+     * Same button, same fields, and the server decides whether it is allowed:
+     * an invoice they have already accepted is refused there, not merely left
+     * without a button. */
+    if (editingId) {
+      const { data: ed, error: edErr } = await sb.rpc("portal_edit_invoice", {
+        p_token: active,
+        p_invoice_id: editingId,
+        p_amount: amount,
+        p_description: document.getElementById("desc").value.trim() || null,
+        p_invoice_no: document.getElementById("num").value.trim() || null,
+        p_due_date: document.getElementById("due").value || null,
+        p_currency: document.getElementById("ccy").value,
+        p_note: null,
+      });
+      if (edErr || ed?.ok === false) {
+        err.textContent = edErr?.message || ed?.error || "That change did not go through.";
+        return;
+      }
+
+      /* Both sides told, without waiting: the change is already recorded and a
+         slow mail service should not hold up the confirmation. */
+      fetch(`${PROJECT}/functions/v1/invoice-mail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` },
+        body: JSON.stringify({
+          action: "portal-edited",
+          token: active,
+          was: ed.was,
+          now: ed.now,
+          invoice_no: ed.invoice_no,
+          currency: document.getElementById("ccy").value,
+        }),
+      }).catch(() => {});
+
+      const moved = Math.abs(Number(ed.was) - Number(ed.now)) > 0.005;
+      flash = {
+        at: Date.now(),
+        title: moved
+          ? `${ed.invoice_no || "That invoice"} is now ${money(ed.now, ccy)}`
+          : `${ed.invoice_no || "That invoice"} updated`,
+        detail: `${d.business} has been emailed, and it is back with them for review. Nothing was owed on the old figure.`,
+      };
+      editingId = null;
+      ok.textContent = "";
+      showPortal(active, { anonymous }).catch(() => {});
+      return;
     }
 
     const { data, error } = await sb.rpc("portal_submit_invoice", {

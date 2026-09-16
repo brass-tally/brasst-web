@@ -296,17 +296,75 @@ function payBlock(d) {
 
     ${payBlock(d)}
 
-    <div class="card noprint">
+    <div class="card noprint" id="paycard">
       <div class="eyebrow">Paying it</div>
-      <p class="sub" style="margin:0">Pay ${esc(d.from)} the way you normally do. This page is a record,
-        not a checkout: Brasstally never handles the money. It updates itself when the payment is
-        filed, so you can check here rather than asking.</p>
+      <div id="payways"></div>
+      <p class="sub" style="margin:0">Or pay ${esc(d.from)} the way you normally do. The money goes to
+        them, not to Brasstally, and this page updates itself once the payment lands.</p>
     </div>
 
     <footer>
       Issued ${esc(d.issued_on)} by ${esc(d.from)} through Brasstally.<br/>
       <span style="opacity:.6">${BUILD}</span>
     </footer>`;
+  /* Ways to pay, drawn only for what this business has switched on.
+   *
+   * The button asks the server for a checkout the moment it is pressed rather
+   * than a link being made when the invoice went out: a session made three
+   * weeks ago may have expired, and a customer meeting a dead page assumes the
+   * invoice is wrong rather than the link. */
+  (async () => {
+    if (settled) return;
+    let opts = null;
+    try {
+      const r = await fetch(`${PROJECT}/rest/v1/rpc/invoice_pay_options`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
+        body: JSON.stringify({ p_token: token }),
+      });
+      opts = await r.json();
+    } catch { return; }
+
+    const ways = (opts && opts.providers) || [];
+    if (!ways.length) return;
+
+    const NAMES = { stripe: "card", paypal: "PayPal", square: "card" };
+    const box = document.getElementById("payways");
+    if (!box) return;
+
+    box.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${ways.map((w) => `<button class="go" data-pay="${esc(w)}" style="margin-top:0">
+        Pay by ${esc(NAMES[w] || w)}
+      </button>`).join("")}
+    </div>
+    <p class="small" id="payerr" style="color:var(--debit)"></p>`;
+
+    for (const b of box.querySelectorAll("[data-pay]")) {
+      b.onclick = async () => {
+        const label = b.textContent;
+        b.textContent = "Opening…";
+        b.disabled = true;
+        try {
+          const r = await fetch(`${PROJECT}/functions/v1/payments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` },
+            body: JSON.stringify({ action: "checkout", token, provider: b.dataset.pay }),
+          });
+          const d = await r.json();
+          if (!d?.ok || !d.url) throw new Error(d?.error || "That did not open.");
+          /* Same tab. A payment page opened in a new window is the thing a
+             phone browser is most likely to block, and the invoice is here to
+             come back to. */
+          window.location.href = d.url;
+        } catch (e) {
+          document.getElementById("payerr").textContent = e.message;
+          b.textContent = label;
+          b.disabled = false;
+        }
+      };
+    }
+  })();
+
   const paypdf = document.getElementById("paypdf");
   if (paypdf) paypdf.onclick = printPayOnly;
 })();

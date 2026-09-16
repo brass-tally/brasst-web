@@ -746,3 +746,18 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
   }
   body.printing-sheet .print-hide { display: none !important; }
 }
+
+/* The receipt leaving.
+
+   It used to be removed outright, which reads as something going wrong rather
+   than something finishing. Fading out, slightly upward, is what the eye
+   expects of a thing that has completed. */
+.filed-go {
+  animation: filed-out 600ms ease forwards;
+}
+@keyframes filed-out {
+  to { opacity: 0; transform: translateY(-6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .filed-go { animation: none; opacity: 0; }
+}

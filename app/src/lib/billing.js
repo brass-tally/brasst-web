@@ -238,3 +238,91 @@ export function payToReady(d) {
   if (d.country === "US") return Boolean(d.routingNumber);
   return Boolean(d.iban || d.swiftCode);
 }
+
+/* ---------------- card payments ---------------- */
+
+/* Which ways of paying this ledger offers, and which the project can support.
+ *
+ * Two different questions: a provider with no key on the project cannot be
+ * switched on however much somebody wants it, and a provider with a key is
+ * still off until the owner says otherwise. */
+export async function listProviders(ledgerId) {
+  return soft("payment providers", async () => {
+    const [{ data: rows }, health] = await Promise.all([
+      supabase.from("payment_providers").select("*").eq("ledger_id", ledgerId),
+      supabase.functions.invoke("payments", { body: { action: "health" } }).catch(() => null),
+    ]);
+    const configured = health?.data?.configured || {};
+    return ["stripe", "paypal", "square"].map((k) => {
+      const row = (rows || []).find((r) => r.provider === k);
+      return {
+        provider: k,
+        enabled: Boolean(row?.enabled),
+        feesTo: row?.fees_to || "me",
+        configured: Boolean(configured[k]),
+      };
+    });
+  }, []);
+}
+
+export async function setProvider(ledgerId, provider, patch) {
+  assertWritable();
+  try {
+    const { error } = await supabase.from("payment_providers").upsert({
+      ledger_id: ledgerId,
+      provider,
+      enabled: patch.enabled ?? false,
+      fees_to: patch.feesTo || "me",
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "ledger_id,provider" });
+    if (error) throw error;
+    return { ok: true };
+  } catch (e) {
+    console.warn("set provider failed:", e?.message || e);
+    return { ok: false, error: e?.message || "That did not save." };
+  }
+}
+
+/* Card payments that have arrived and not yet been put in the books.
+ *
+ * The webhook records the money; it does not touch the ledger. Turning one
+ * into a transaction is a decision made in front of the figures, because a
+ * payment can be refunded, can be for the wrong invoice, and can arrive net of
+ * a fee nobody has accounted for. */
+export async function listUnconfirmed(ledgerId) {
+  return soft("card payments", async () => {
+    const { data, error } = await supabase
+      .from("invoice_payments")
+      .select("*, sent_invoices(number, party, obligation_id)")
+      .eq("ledger_id", ledgerId).eq("status", "paid").is("confirmed_at", null)
+      .order("paid_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map((r) => ({
+      id: r.id,
+      provider: r.provider,
+      amount: Number(r.amount) || 0,
+      fee: Number(r.fee) || 0,
+      net: Number(r.net) || 0,
+      currency: r.currency || "CAD",
+      paidAt: r.paid_at,
+      invoiceId: r.invoice_id || undefined,
+      number: r.sent_invoices?.number,
+      party: r.sent_invoices?.party,
+      obligationId: r.sent_invoices?.obligation_id || undefined,
+    }));
+  }, []);
+}
+
+export async function markConfirmed(paymentId, transactionId) {
+  assertWritable();
+  try {
+    const { error } = await supabase.from("invoice_payments").update({
+      confirmed_at: new Date().toISOString(),
+      transaction_id: transactionId || null,
+    }).eq("id", paymentId);
+    if (error) throw error;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "Could not record that." };
+  }
+}

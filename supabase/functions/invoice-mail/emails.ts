@@ -653,3 +653,77 @@ export function invoiceSentEmail(
 </td></tr></table>
 </body></html>`;
 }
+
+/* An invoice changed by the person who sent it.
+ *
+ * One template, two readers. The business is being told a figure in their tray
+ * moved and needs to look; the supplier is getting a receipt for something
+ * they just did. Same facts, different first sentence, because a shared
+ * template that reads oddly to one of them is two templates badly disguised.
+ */
+export function invoiceCorrectedEmail(
+  { to, business, party, number, was, now, currency, note, link }: {
+    to: "owner" | "supplier";
+    business: string; party: string; number: string;
+    was?: number | null; now: number; currency?: string | null;
+    note?: string | null; link: string;
+  },
+) {
+  const brass = "#A9620A";
+  const fill = "#F59E0B";
+  const ink = "#1C1917";
+  const muted = "#5A534E";
+  const paper = "#FAF9F7";
+  const ccy = currency || "CAD";
+  const money = (n: number) =>
+    `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0).toLocaleString("en-CA", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    })}`;
+
+  const headline = to === "owner"
+    ? `${party} changed ${number}`
+    : `Your change to ${number} is with ${business}`;
+
+  const opening = to === "owner"
+    ? `It is back in your tray as waiting, so nothing has moved in your books.`
+    : `${business} will see it as waiting again. Nothing was owed on the old figure.`;
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
+<title>${headline}</title></head>
+<body style="margin:0;padding:0;background:${paper};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:520px;background:#FFFFFF;border-radius:20px;padding:28px;
+           font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <tr><td>
+      <h1 style="margin:0 0 6px;font-size:21px;line-height:1.3;color:${ink};font-weight:600;">
+        ${headline}
+      </h1>
+
+      ${was != null
+        ? `<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;color:${ink};margin-bottom:14px;">
+             <span style="color:${muted};text-decoration:line-through;">${money(was)}</span>
+             &nbsp;&rarr;&nbsp;<strong>${money(now)}</strong>
+           </div>`
+        : `<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;color:${ink};margin-bottom:14px;">${money(now)}</div>`}
+
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+        <tr><td style="border-radius:999px;background:${fill};">
+          <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
+             font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
+            ${to === "owner" ? "Open the tray" : "See your account"}
+          </a>
+        </td></tr>
+      </table>
+
+      ${note ? `<p style="margin:0 0 12px;font-size:14.5px;line-height:1.55;color:${ink};">
+        &ldquo;${note}&rdquo;</p>` : ""}
+
+      <p style="margin:0;font-size:14px;line-height:1.55;color:${muted};">${opening}</p>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>`;
+}

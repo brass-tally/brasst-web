@@ -32,7 +32,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   invoiceReceivedEmail, invoiceSubmittedEmail, invoiceInviteEmail, invoiceDecidedEmail,
   invoiceCorrectionEmail, shareInviteEmail,
-  paymentMadeEmail, portalInviteEmail, invoiceSentEmail,
+  paymentMadeEmail, portalInviteEmail, invoiceSentEmail, invoiceCorrectedEmail,
 } from "./emails.ts";
 
 const BUCKET = "invoices";   // the bucket the app reads from; "receipts" was a guess and nothing could open the file
@@ -141,6 +141,16 @@ function linkFor(token: string, slug?: string | null) {
 /* A name as it appears in an address: lowercase, hyphens, nothing else. */
 const slugify = (name: string | null | undefined) =>
   String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || null;
+
+/* Money in a subject line. Small enough not to warrant a template, and wrong
+   often enough to be worth doing once. */
+const fmtMoney = (n: unknown, ccy: unknown) => {
+  const c = String(ccy || "CAD");
+  const v = (Math.abs(Number(n)) || 0).toLocaleString("en-CA", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  });
+  return c === "CAD" ? `$${v}` : `${c} ${v}`;
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -354,6 +364,75 @@ Deno.serve(async (req) => {
       }).eq("id", inv.id);
 
       return json({ ok: true, to: inv.contact_email, link, number: inv.number });
+    }
+
+    /* A supplier has changed an invoice. Tell both sides.
+     *
+     * The business needs to know because the figure in their tray moved, and
+     * the supplier needs their own copy because an edit with no receipt is one
+     * they will make twice.
+     */
+    if (action === "portal-edited") {
+      const { data: portal } = await db
+        .from("contact_portals").select("ledger_id, contact_id")
+        .eq("token", String(body.token || "")).eq("active", true).maybeSingle();
+      if (!portal) return json({ ok: false, error: "This link is not active." });
+
+      const { data: led } = await db
+        .from("ledgers").select("id, name, user_id").eq("id", portal.ledger_id).maybeSingle();
+      const { data: contact } = await db
+        .from("contacts").select("name, email").eq("id", portal.contact_id).maybeSingle();
+      if (!led || !contact) return json({ ok: false, error: "Nothing to notify about." });
+
+      const was = Number(body.was) || 0;
+      const now = Number(body.now) || 0;
+      const num = body.invoice_no ? String(body.invoice_no) : "an invoice";
+      const moved = Math.abs(was - now) > 0.005;
+
+      /* The subject says what changed, because an inbox is read as a list of
+         subjects and "invoice updated" tells nobody whether to look. */
+      const subject = moved
+        ? `${contact.name} changed ${num} to ${fmtMoney(now, body.currency)}`
+        : `${contact.name} corrected ${num}`;
+
+      const { data: owner } = await db.auth.admin.getUserById(led.user_id);
+      if (owner?.user?.email) {
+        await sendMail(
+          owner.user.email,
+          subject,
+          invoiceCorrectedEmail({
+            to: "owner",
+            business: led.name,
+            party: contact.name,
+            number: num,
+            was: moved ? was : null,
+            now,
+            currency: String(body.currency || "CAD"),
+            note: body.note ? String(body.note) : null,
+            link: `${(Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "")}/app`,
+          }),
+        );
+      }
+
+      if (contact.email) {
+        await sendMail(
+          contact.email,
+          `${led.name}: ${num} updated`,
+          invoiceCorrectedEmail({
+            to: "supplier",
+            business: led.name,
+            party: contact.name,
+            number: num,
+            was: moved ? was : null,
+            now,
+            currency: String(body.currency || "CAD"),
+            note: body.note ? String(body.note) : null,
+            link: `${(Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "")}/c/${String(body.token)}`,
+          }),
+        );
+      }
+
+      return json({ ok: true });
     }
 
     if (action === "portal-upload") {

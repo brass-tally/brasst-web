@@ -3057,7 +3057,7 @@ function Ledger({ onSignOut }) {
               if (where === "reconcile") return balance.source === "bank" ? setMatchOpen(true) : setReconciling(true);
               setTab(where);
             }}
-          />
+          inboundWaiting={(inbound || []).filter((iv) => iv.status === "pending").length} />
         )}
         {/* subcategory-aware forms need addSub */}
         {tab === "transactions" && <Transactions readOnly={readOnly} data={data} monthTx={monthTx} addTx={addTx} delTx={delTx} updateTx={updateTx} setTxAttachment={setTxAttachment} openPreview={openPreview} openImport={() => setImporting(true)} openTransfer={() => setTransferOpen(true)} addSub={addSub} addCredit={addCredit} month={month} cleared={cleared} />}
@@ -3069,6 +3069,8 @@ function Ledger({ onSignOut }) {
             ledgerCurrency={data.ledger.currency || "CAD"}
             contacts={contacts}
             addAR={addAR}
+            addTx={addTx}
+            settleAR={settleAR}
             readOnly={readOnly}
             openPreview={openPreview}
             onAccept={(inv) => addAR("payables", inv)}
@@ -3096,7 +3098,7 @@ function Ledger({ onSignOut }) {
             onDismissArrived={dismissArrival}
             arrivedBusy={arrivedBusy}
             onInboundChange={refreshInbound}
-          onContactsChange={refreshContacts} />
+          onContactsChange={refreshContacts} inbound={inbound} />
         )}
         {tab === "credits" && <CreditsCard readOnly={readOnly} data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
@@ -7389,11 +7391,24 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
        having been deleted rather than filed. Now it turns into its own
        receipt for a moment, then goes, so the eye follows the thing it acted
        on instead of hunting for what changed. */
-    setFiled({ id: inv.id, party: inv.party, amount: inv.amount, dueDate: inv.dueDate });
+    /* Long enough to read.
+     *
+     * 1.4 seconds is enough to notice a change and not enough to read one, so
+     * the receipt naming what was added was doing nobody any good. Five
+     * seconds, and it fades rather than blinking out, so the disappearance
+     * reads as finished rather than as something going wrong. */
+    setFiled({
+      id: inv.id,
+      party: inv.party,
+      amount: inv.amount,
+      dueDate: inv.dueDate,
+      description: inv.description || inv.invoiceNo || null,
+    });
+    setTimeout(() => setFiled((f) => (f ? { ...f, leaving: true } : f)), 4400);
     setTimeout(() => {
       setFiled(null);
       refresh();
-    }, 1400);
+    }, 5000);
   };
 
   const decline = async (inv) => {
@@ -8029,7 +8044,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
               )}
 
               {filed && (
-                <div className="py-6 text-center filed-pop">
+                <div className={"py-6 text-center filed-pop" + (filed.leaving ? " filed-go" : "")}>
                   <div
                     style={{ background: P.credit, color: "#fff" }}
                     className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3"
@@ -8041,6 +8056,9 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                     {filed.party} &middot; {fmt(filed.amount)}
                     {filed.dueDate ? ` · due ${filed.dueDate}` : ""}
                   </div>
+                  {filed.description && (
+                    <div style={{ color: P.faint }} className="text-[14px]">{filed.description}</div>
+                  )}
                   <div style={{ color: P.faint }} className="text-[14px] mt-1">Added to what you owe</div>
                 </div>
               )}
@@ -9570,7 +9588,7 @@ function SettingsPage({ theme, setTheme, ledgers, ledger, onPickLedger, onNewLed
 
 const CLOSE_KEY = (m) => `close:${m}`;
 
-function NeedsAttention({ data, insights, balance, consolidation, month, onGo, onAsk }) {
+function NeedsAttention({ data, insights, balance, consolidation, month, onGo, onAsk , inboundWaiting = 0 }) {
   const [exported, setExported] = useState(() => {
     try { return Boolean(window.localStorage.getItem(CLOSE_KEY(month))); } catch { return false; }
   });
@@ -9605,6 +9623,18 @@ function NeedsAttention({ data, insights, balance, consolidation, month, onGo, o
 
   const steps = [
     { label: "Consolidate the bank", done: !bankOff, go: () => onGo("reconcile") },
+    /* Invoices waiting belong to Invoices.
+     *
+     * This step did not exist, and the thing that most often wants you at the
+     * start of a month is a supplier's invoice sitting unreviewed. It sent
+     * people to AR / AP, which is where a bill lives after you accept it and
+     * not where you accept it. */
+    {
+      label: "Review invoices sent to you",
+      done: inboundWaiting === 0,
+      go: () => onGo("invoices"),
+      note: inboundWaiting ? `${inboundWaiting} waiting` : null,
+    },
     { label: `Settle ${monthLabel(month).split(" ")[0]} payables`, done: openThisMonth.length === 0, go: () => onGo("arap"), note: openThisMonth.length ? `${openThisMonth.length} left` : null },
     { label: "Chase what is overdue", done: overdue.length === 0, go: () => onGo("arap"), note: overdue.length ? `${overdue.length} overdue` : null },
     { label: "Review credit pools", done: !poolsUnreviewed, go: () => onGo("credits") },
@@ -9733,7 +9763,7 @@ function NeedsAttention({ data, insights, balance, consolidation, month, onGo, o
   );
 }
 
-function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk, balance, consolidation, onGo }) {
+function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk, balance, consolidation, onGo , inboundWaiting = 0 }) {
   const [drill, setDrill] = useState(null); // { type, category }
   const rows = (type) =>
     data.categories[type].map((c) => {
@@ -9749,7 +9779,7 @@ function Overview({ data, monthTx, sums, setPlanned, month, insights = [], onAsk
       <NeedsAttention
         data={data} insights={insights} balance={balance} consolidation={consolidation}
         month={month} onGo={onGo} onAsk={onAsk}
-      />
+      inboundWaiting={inboundWaiting} />
 
       <div className="flex items-baseline justify-between gap-3 mt-8 mb-3">
         <h2 style={{ fontFamily: SERIF }} className="text-xl">Planned against actual</h2>
@@ -12453,6 +12483,318 @@ function VoidChequeSheet({ d, business, onClose }) {
   );
 }
 
+/* A pay order: everything needed to pay one bill, on one sheet.
+ *
+ * What a bookkeeper hands to whoever actually moves the money. It exists
+ * because the answer is currently spread across four places: the amount is on
+ * the payable, the date is on the schedule, the bank details are in the email
+ * the supplier sent, and the invoice itself is in the tray.
+ *
+ * Nothing here is new information. It is the same facts, gathered, so that
+ * paying a bill does not require assembling it first.
+ */
+function PayOrderSheet({ item, invoice, business, onClose, openPreview }) {
+  const sheet = useRef(null);
+  const [err, setErr] = useState("");
+
+  const paid = Number(item.paidAmount) || 0;
+  const due = Math.max(0, Math.abs(Number(item.amount) || 0) - paid);
+  const payBy = (paid > 0.005 && item.balanceDue) || item.dueDate;
+  const overdue = payBy && payBy < todayStr();
+
+  /* How they asked to be paid, if they told us. An invoice that arrived
+     through a link carries whatever the supplier wrote on it. */
+  const how = invoice?.payNote || invoice?.note || null;
+
+  return (
+    <Modal
+      onClose={onClose}
+      size="lg"
+      title="Pay order"
+      panelClass="flex flex-col"
+      panelStyle={{ maxHeight: "88vh" }}
+    >
+      <ModalBody className="overflow-y-auto min-h-0 flex-1">
+        <div ref={sheet}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span style={{ color: P.muted }} className="text-[15px]">Pay</span>
+            <span style={{ fontFamily: MONO, color: P.text }} className="text-[22px] tabular-nums">
+              {fmt(due)}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between gap-3 mt-1">
+            <span style={{ color: P.text }} className="text-[17px]">{item.party}</span>
+            <span
+              style={{ color: overdue ? P.debit : P.muted }}
+              className="text-[14.5px]"
+            >
+              {payBy ? (overdue ? `was due ${payBy}` : `by ${payBy}`) : "no date set"}
+            </span>
+          </div>
+
+          {paid > 0.005 && (
+            <p style={{ color: P.muted }} className="text-[14px] mt-1">
+              {fmt(paid)} of {fmt(Math.abs(item.amount))} has already gone.
+            </p>
+          )}
+
+          <div className="mt-4">
+            {[
+              ["For", item.description],
+              ["Invoice", invoice?.invoiceNo],
+              ["Invoiced", invoice?.submittedAt ? String(invoice.submittedAt).slice(0, 10) : null],
+              ["In their currency", invoice && invoice.currency && invoice.currency !== "CAD"
+                ? `${invoice.currency} ${Math.abs(Number(invoice.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                : null],
+              ["Their address", invoice?.contactEmail],
+            ].filter(([, v]) => v).map(([k, v]) => (
+              <div
+                key={k}
+                className="flex items-baseline justify-between gap-3 py-2"
+                style={{ borderTop: `1px solid ${P.line}` }}
+              >
+                <span style={{ color: P.muted }} className="text-[14px]">{k}</span>
+                <span style={{ color: P.text }} className="text-[14px] text-right">{v}</span>
+              </div>
+            ))}
+          </div>
+
+          {how && (
+            <div className="mt-3">
+              <div style={{ color: P.text }} className="text-[15px] mb-1">How they asked to be paid</div>
+              <p style={{ color: P.muted }} className="text-[14px] whitespace-pre-line">{how}</p>
+            </div>
+          )}
+
+          {!how && (
+            <p style={{ color: P.faint }} className="text-[13.5px] mt-3 leading-relaxed">
+              They did not say how they want to be paid. Their invoice may carry the details, or ask
+              them: this sheet cannot invent an account number.
+            </p>
+          )}
+
+          <p style={{ color: P.faint }} className="text-[12px] mt-4 leading-relaxed">
+            Raised by {business || "Brasstally"} on {todayStr()}. This is an instruction to pay, not a
+            payment: nothing moves until somebody moves it.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mt-4 print-hide">
+          <button
+            onClick={() => {
+              const r = voidCheque.printElement(sheet.current);
+              if (!r.ok) setErr(r.error);
+            }}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+            className="h-11 px-4 text-[15px] font-medium press"
+          >
+            Save as PDF or print
+          </button>
+          {item.attachmentId && (
+            <button
+              onClick={() => openPreview?.(item.attachmentId, item.attachmentName || "invoice", item)}
+              style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+              className="h-11 px-4 text-[14.5px] font-medium press"
+            >
+              See their invoice
+            </button>
+          )}
+          <button onClick={onClose} style={{ color: P.muted }} className="h-11 px-2 text-[15px] press">
+            Close
+          </button>
+        </div>
+        {err && <p style={{ color: P.debit }} className="text-[14px] mt-2">{err}</p>}
+      </ModalBody>
+    </Modal>
+  );
+}
+
+/* Card payments: which ways of paying you offer, and what has arrived.
+ *
+ * The webhook records money the moment a provider reports it. It does not
+ * touch the books, and that is deliberate: a payment can be refunded, can be
+ * against the wrong invoice, and arrives net of a fee somebody has to account
+ * for. Putting it in the ledger is a decision made in front of the figures.
+ */
+function CardPaymentsCard({ ledgerId, readOnly, addTx, settleAR, onChanged }) {
+  const [rows, setRows] = useState([]);
+  const [waiting, setWaiting] = useState([]);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!ledgerId) return;
+    const [p, u] = await Promise.all([
+      billing.listProviders(ledgerId),
+      billing.listUnconfirmed(ledgerId),
+    ]);
+    setRows(p);
+    setWaiting(u);
+  }, [ledgerId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const NAMES = { stripe: "Stripe", paypal: "PayPal", square: "Square" };
+  const live = rows.filter((r) => r.enabled);
+
+  /* Into the books, with the fee as its own expense.
+   *
+   * The customer paid the full amount and the provider kept some of it. Two
+   * facts, and recording only the net loses the second: at year end the fees
+   * are a deductible cost that never existed. */
+  const confirm = async (p) => {
+    setBusy(p.id);
+    setErr("");
+    try {
+      const made = await addTx({
+        type: "income",
+        amount: p.amount,
+        date: String(p.paidAt || todayStr()).slice(0, 10),
+        description: `${NAMES[p.provider] || p.provider}${p.number ? ` · ${p.number}` : ""}${p.party ? ` · ${p.party}` : ""}`,
+        category: "Sales",
+        payMethod: "card",
+      });
+
+      if (p.fee > 0.005) {
+        await addTx({
+          type: "expense",
+          amount: p.fee,
+          date: String(p.paidAt || todayStr()).slice(0, 10),
+          description: `${NAMES[p.provider] || p.provider} fee${p.number ? ` on ${p.number}` : ""}`,
+          category: "Bank charges",
+          payMethod: "card",
+        });
+      }
+
+      if (p.obligationId) {
+        await settleAR?.("receivables", p.obligationId, {
+          amount: p.amount,
+          date: String(p.paidAt || todayStr()).slice(0, 10),
+        });
+      }
+
+      await billing.markConfirmed(p.id, made?.id || null);
+      await refresh();
+      onChanged?.();
+    } catch (e) {
+      setErr(e?.message || "Could not record it.");
+    }
+    setBusy("");
+  };
+
+  return (
+    <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <span style={{ color: P.text }} className="text-[15.5px]">Card payments</span>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{ background: P.surface, color: P.text, border: `1px solid ${P.line}`, borderRadius: R.pill }}
+          className="h-9 px-3.5 text-[13.5px] font-medium press shrink-0"
+        >
+          {open ? "Close" : live.length ? "Change" : "Set it up"}
+        </button>
+      </div>
+
+      <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+        {live.length
+          ? `${live.map((r) => NAMES[r.provider]).join(", ")} on your invoices`
+          : "Let customers pay an invoice by card."}
+      </p>
+
+      {err && <p style={{ color: P.debit }} className="text-[13.5px] mt-1">{err}</p>}
+
+      {/* What has arrived and is not yet in the books. Above the settings,
+          because it is the thing with something to do about it. */}
+      {waiting.length > 0 && (
+        <div className="mt-3">
+          <div style={{ color: P.text }} className="text-[14.5px] mb-1">
+            {waiting.length === 1 ? "A payment has arrived" : `${waiting.length} payments have arrived`}
+          </div>
+          {waiting.map((p) => (
+            <div key={p.id} className="py-2" style={{ borderTop: `1px solid ${P.line}` }}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span style={{ color: P.muted }} className="text-[14px] min-w-0 truncate">
+                  {NAMES[p.provider] || p.provider}
+                  {p.number ? ` · ${p.number}` : ""}
+                  {p.party ? ` · ${p.party}` : ""}
+                </span>
+                <span style={{ fontFamily: MONO, color: P.credit }} className="text-[14px] tabular-nums shrink-0">
+                  {fmt(p.amount)}
+                </span>
+              </div>
+              <div style={{ color: P.faint }} className="text-[12.5px]">
+                {String(p.paidAt || "").slice(0, 10)}
+                {p.fee > 0.005 ? ` · ${fmt(p.fee)} kept as a fee, ${fmt(p.net)} reaching you` : ""}
+              </div>
+              {!readOnly && (
+                <button
+                  onClick={() => confirm(p)}
+                  disabled={busy === p.id}
+                  style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                  className="h-9 px-3.5 text-[13.5px] font-medium press mt-1.5"
+                >
+                  {busy === p.id ? "Filing" : "Put it in the books"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {open && (
+        <div className="mt-3">
+          {rows.map((r) => (
+            <div key={r.provider} className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="min-w-0">
+                  <span style={{ color: P.text }} className="text-[14.5px] block">{NAMES[r.provider]}</span>
+                  <span style={{ color: P.faint }} className="text-[12.5px]">
+                    {r.configured
+                      ? r.enabled ? "on your invoices" : "ready, not switched on"
+                      : "no keys on this project"}
+                  </span>
+                </span>
+                {!readOnly && (
+                  <button
+                    onClick={async () => {
+                      if (!r.configured) {
+                        setErr(`${NAMES[r.provider]} needs its keys adding to the project's secrets before it can be switched on.`);
+                        return;
+                      }
+                      setBusy(r.provider);
+                      const res = await billing.setProvider(ledgerId, r.provider, { enabled: !r.enabled, feesTo: r.feesTo });
+                      setBusy("");
+                      if (!res.ok) setErr(res.error);
+                      else refresh();
+                    }}
+                    disabled={busy === r.provider}
+                    style={{
+                      background: r.enabled ? P.brass : P.surface,
+                      color: r.enabled ? P.onbrass : r.configured ? P.text : P.faint,
+                      border: r.enabled ? "none" : `1px solid ${P.line}`,
+                      borderRadius: R.pill,
+                    }}
+                    className="h-9 px-3.5 text-[13.5px] font-medium press shrink-0"
+                  >
+                    {busy === r.provider ? "…" : r.enabled ? "On" : "Turn on"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+
+          <p style={{ color: P.faint }} className="text-[12.5px] mt-2 leading-snug">
+            A payment shows here the moment the provider reports it, and goes into your books only
+            when you say so. Their fee is filed as its own expense, because the customer paid the full
+            amount and the fee is a cost you can claim.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PayToCard({ ledgerId, ledgerName, readOnly }) {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
@@ -12758,7 +13100,7 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
   );
 }
 
-function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, readOnly, onChanged, bare = false }) {
+function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, addTx, settleAR, readOnly, onChanged, bare = false }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState("");
@@ -12933,6 +13275,14 @@ function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, re
       {/* Above the list, because it belongs to every invoice rather than to
           any one of them. */}
       <PayToCard ledgerId={ledgerId} ledgerName={ledgerName} readOnly={readOnly} />
+
+      <CardPaymentsCard
+        ledgerId={ledgerId}
+        readOnly={readOnly}
+        addTx={addTx}
+        settleAR={settleAR}
+        onChanged={onChanged}
+      />
 
       {drafts.map((r) => <Line key={r.id} r={r} />)}
       {live.map((r) => <Line key={r.id} r={r} />)}
@@ -13200,6 +13550,8 @@ function InvoicesHub(props) {
           ledgerCcy={props.ledgerCurrency}
           contacts={props.contacts}
           addAR={props.addAR}
+          addTx={props.addTx}
+          settleAR={props.settleAR}
           readOnly={props.readOnly}
           onChanged={props.onCount}
           bare
@@ -13226,7 +13578,7 @@ function InvoicesHub(props) {
   );
 }
 
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank , onContactsChange }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank , onContactsChange , inbound = [] }) {
   /* Plans live beside the payables, never inside them. */
   const [plans, setPlans] = useState([]);
   const refreshPlans = useCallback(async () => {
@@ -13333,10 +13685,10 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         </div>
       )}
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} />
+        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} inbound={inbound} ledgerName={data.ledger.name} />
 
 
-        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} />
+        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} inbound={inbound} ledgerName={data.ledger.name} />
       </div>
 
       {/* Below the pair, not between them.
@@ -13350,6 +13702,8 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         readOnly={readOnly}
         onChanged={refreshPlans}
         onCommit={commitPlan}
+          inbound={inbound}
+          ledgerName={data.ledger.name}
       />
     </div>
   );
@@ -13590,8 +13944,13 @@ function PlannedList({ ledgerId, plans, onChanged, readOnly, onCommit }) {
   );
 }
 
-function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [], bankTxns = [], onPairBank }) {
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [], bankTxns = [], onPairBank , inbound = [], ledgerName }) {
   const [adding, setAdding] = useState(false);
+  /* Which bill's pay order is open. Declared in ARList because ARList renders
+     it: the first attempt anchored on a line that occurs earlier in the file
+     and put it in MatchView, which the ownership check would have caught and
+     the reader would not. */
+  const [payOrder, setPayOrder] = useState(null);
   const [settleFor, setSettleFor] = useState(null);   // item awaiting the confirm dialog
 
   /* A receipt arrived from Tally that pays one of these. Open the confirm on
@@ -13864,8 +14223,37 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
               shape put the party alone on the first line and everything else
               in a mono footnote, which read as metadata rather than as the
               thing itself. */}
+          {/* The invoice that raised this bill, on the line you settle from.
+
+              Accepting an inbound invoice already stored its file against the
+              payable, and nothing ever showed it: at the moment of paying, the
+              one document proving what you owe was three screens away in the
+              tray. */}
           <div className="text-[15px] truncate" style={{ color: P.text }}>
             {i.party}{i.description ? <span style={{ color: P.muted }}> · {i.description}</span> : null}
+            {kind === "payables" && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setPayOrder(i); }}
+                title="Everything needed to pay this, on one sheet"
+                style={{ color: P.brassText }}
+                className="ml-2 inline-flex items-center gap-1 text-[12.5px] align-middle"
+              >
+                pay order
+              </button>
+            )}
+            {i.attachmentId && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openPreview?.(i.attachmentId, i.attachmentName || "invoice", i);
+                }}
+                title="See the invoice"
+                style={{ color: P.brassText }}
+                className="ml-2 inline-flex items-center gap-1 text-[12.5px] align-middle"
+              >
+                <Paperclip size={11} /> invoice
+              </button>
+            )}
           </div>
           <div style={{ color: overdue ? P.debit : P.faint }} className="text-[13.5px] flex items-center gap-1.5 flex-wrap mt-0.5" data-meta>
             {isRec(i) && <RecMark />}
@@ -14128,7 +14516,20 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
           )}
         </div>
       )}
-      </div>
+      </div>      {payOrder && (
+        <PayOrderSheet
+          item={payOrder}
+          invoice={(inbound || []).find(
+            (iv) => iv.obligationId === payOrder.id
+              || (iv.party === payOrder.party && Math.abs(Math.abs(iv.amount) - Math.abs(payOrder.amount)) < 0.01),
+          ) || null}
+          business={ledgerName}
+          openPreview={openPreview}
+          onClose={() => setPayOrder(null)}
+        />
+      )}
+
+
     </section>
   );
 }
