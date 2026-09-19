@@ -272,6 +272,15 @@ export async function listProviders(ledgerId) {
          "no keys on this project", which covers both cases. */
       supabase.functions.invoke("payments", { body: { action: "health" } }).catch(() => null),
     ]);
+    /* Three states, not two.
+     *
+     * "No keys on this project" was shown whenever the health check failed,
+     * which is also what happens when the payments function has never been
+     * deployed. Those are different problems with different fixes, and telling
+     * somebody to add keys they may already have added is worse than saying
+     * nothing.
+     */
+    const reachable = Boolean(health?.data?.ok);
     const configured = health?.data?.configured || {};
     return ["stripe", "paypal", "square"].map((k) => {
       const row = (rows || []).find((r) => r.provider === k);
@@ -279,7 +288,8 @@ export async function listProviders(ledgerId) {
         provider: k,
         enabled: Boolean(row?.enabled),
         feesTo: row?.fees_to || "me",
-        configured: Boolean(configured[k]),
+        configured: reachable && Boolean(configured[k]),
+        reachable,
       };
     });
   }, []);

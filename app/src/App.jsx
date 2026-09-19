@@ -7948,11 +7948,24 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   A supplier has been emailed and asked to change something;
                   that is a state the invoice is in, and it should read as one
                   rather than being inferable from a greyed control. */}
+              {/* A band, not a line of text. It was the same size and weight
+                  as everything around it, so the one fact that changes what
+                  you can do about this invoice read as a caption. */}
               {inv.correctionAt && (
-                <div style={{ color: P.brassText }} className="text-[13.5px] w-full mb-1">
-                  Sent back {String(inv.correctionAt).slice(0, 10)}
-                  {inv.correctionNote ? `: “${inv.correctionNote}”` : ""}
-                  <span style={{ color: P.faint }}> · they have been emailed and can change it from their page</span>
+                <div
+                  style={{
+                    color: P.brassText,
+                    background: `linear-gradient(90deg, ${P.brass}1F, ${P.brass}08 60%, transparent)`,
+                    borderLeft: `2px solid ${P.brass}`,
+                    borderRadius: 8,
+                  }}
+                  className="text-[13.5px] w-full mb-2 px-2.5 py-2"
+                >
+                  <span className="font-medium">Sent back {String(inv.correctionAt).slice(0, 10)}</span>
+                  {inv.correctionNote ? <span>: “{inv.correctionNote}”</span> : null}
+                  <span style={{ color: P.faint }} className="block text-[12.5px] mt-0.5">
+                    They have been emailed and can change it from their page.
+                  </span>
                 </div>
               )}
               {/* And this one shows it is open.
@@ -7960,6 +7973,12 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   not, so the only evidence of having pressed it was a panel
                   further down the page that a phone may not have scrolled
                   to. */}
+              {/* Gone once the correction has gone.
+                  Offering "Needs correction" beside "Waiting on their change"
+                  is the interface contradicting itself: the request has been
+                  made and the only sensible next moves are to wait or to
+                  decline. */}
+              {!inv.correctionAt && (
               <button
                 onClick={() => { setCorrecting(correcting?.id === inv.id ? null : inv); setReason(""); }}
                 disabled={busy === inv.id}
@@ -7971,6 +7990,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
               >
                 {correcting?.id === inv.id ? "Writing a correction" : "Needs correction"}
               </button>
+              )}
               <button
                 onClick={() => decline(inv)}
                 disabled={busy === inv.id}
@@ -12907,14 +12927,20 @@ function CardPaymentsCard({ ledgerId, readOnly, addTx, settleAR, onChanged }) {
                 <span className="min-w-0">
                   <span style={{ color: P.text }} className="text-[14.5px] block">{NAMES[r.provider]}</span>
                   <span style={{ color: P.faint }} className="text-[12.5px]">
-                    {r.configured
-                      ? r.enabled ? "on your invoices" : "ready, not switched on"
-                      : "no keys on this project"}
+                    {!r.reachable ? "the payments service is not deployed yet"
+                      : r.configured
+                        ? r.enabled ? "on your invoices" : "ready, not switched on"
+                        : "no keys on this project"}
                   </span>
                 </span>
                 {!readOnly && (
                   <button
                     onClick={async () => {
+                      /* Say which of the two problems it is. */
+                      if (!r.reachable) {
+                        setErr("The payments function has not been deployed to this project yet, so nothing can be switched on.");
+                        return;
+                      }
                       if (!r.configured) {
                         setErr(`${NAMES[r.provider]} needs its keys adding to the project's secrets before it can be switched on.`);
                         return;
