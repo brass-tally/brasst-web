@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import {
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
-  LayoutGrid, Receipt, TrendingUp, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
+  LayoutGrid, Receipt, TrendingUp, PieChart, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
   Search, Sparkles, AlertTriangle, Info, ChevronRight, ChevronLeft, Copy, History, SlidersHorizontal as Sliders, HelpCircle, Settings as SettingsIcon, Menu as MenuIcon, Shield, ExternalLink, Landmark, Eye, Inbox, Link2 as LinkIcon, RefreshCw, Users,
   MessageCircle, BarChart3
 } from "lucide-react";
@@ -20,6 +20,7 @@ import { listPlanned, addPlanned, updatePlanned, dropPlanned, plannedTotals } fr
 import * as billing from "./lib/billing";
 import * as subscriptions from "./lib/subscriptions";
 import * as spendgraph from "./lib/spendgraph";
+import * as catalogue from "./lib/catalogue";
 import * as voidCheque from "./lib/voidcheque";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
@@ -2847,6 +2848,10 @@ function Ledger({ onSignOut }) {
        and writing an invoice is a thing you sit down to do. Daily reading
        first, deliberate work after it. */
     ["invoices", "Invoices", FileText],
+    /* Beside Invoices, because both answer questions about money in motion
+       rather than money at rest. Its own icon too: it shared TrendingUp with
+       P&L, and two sections with one icon is two nobody can tell apart. */
+    ["graph", "Finance graph", PieChart],
     ["pl", "P&L", TrendingUp],
     ["credits", "Credits", Coins],
     ["calendar", "Calendar", CalendarDays],
@@ -2854,10 +2859,6 @@ function Ledger({ onSignOut }) {
     /* Connectors belongs with the sections, not buried in settings.
        A bank that has stopped talking is the one failure here that gets worse
        quietly, and it cannot be marked if there is nowhere to mark. */
-    /* Reports used to be reachable only from a menu. It is a section now,
-       and the picture sits above the tables because "where is it going" is
-       the question, and a table is the evidence for the answer. */
-    ["graph", "Finance graph", TrendingUp],
     ["integrations", "Connectors", Plug],
   ];
 
@@ -3215,7 +3216,23 @@ function Ledger({ onSignOut }) {
           data={data} inbound={inbound} openPreview={openPreview} onConfirmVoid={askConfirm} />
         )}
         {tab === "taxpack" && (
-          <TaxPack data={data} month={month} openPreview={openPreview} ledgerName={data.ledger.name} />
+          <div className="space-y-6">
+            {/* Filing and deadlines, where somebody thinking about the year
+                looks for them. */}
+            <IntegrationsTab
+              only="filing"
+              data={data}
+              openGuide={openGuide}
+              /* The same inline updater the connectors call site builds.
+                 There is no shared function to reach for, so this mirrors it
+                 rather than inventing a name that does not exist. */
+              updateLedgerMeta={(patch) => setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }))}
+              onSynced={afterSync}
+              onConnectionsChange={setBankConns}
+              onReview={() => setMatchOpen(true)}
+            />
+            <TaxPack data={data} month={month} openPreview={openPreview} ledgerName={data.ledger.name} />
+          </div>
         )}
         {tab === "legal-data" && <LegalPage which="data" />}
         {tab === "legal-privacy" && <LegalPage which="privacy" />}
@@ -13274,6 +13291,139 @@ function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] }) {
   );
 }
 
+/* The catalogue, in cards, by category.
+ *
+ * Each card states what is true of that service and nothing more. A Connect
+ * button on something with no integration is a lie somebody discovers by
+ * pressing it, so the states are drawn differently and named:
+ *
+ *   Connected     a real integration, set up
+ *   In your feed  no integration, but the bank shows what you pay and when
+ *   I want this   neither, and asking is recorded
+ */
+function ConnectorGrid({ bankTxns = [], connected = [] }) {
+  const [cat, setCat] = useState("all");
+  const [asked, setAsked] = useState([]);
+
+  const subs = useMemo(() => subscriptions.findSubscriptions(bankTxns), [bankTxns]);
+  const rows = useMemo(() => catalogue.build(subs, connected), [subs, connected]);
+
+  const counts = useMemo(() => {
+    const out = { all: rows.length };
+    for (const r of rows) out[r.category] = (out[r.category] || 0) + 1;
+    return out;
+  }, [rows]);
+
+  const shown = cat === "all" ? rows : rows.filter((r) => r.category === cat);
+  const seen = rows.filter((r) => r.state === "seen");
+  const monthly = seen.reduce((n, r) => n + (r.sub?.monthly || 0), 0);
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+        <span style={{ color: P.text }} className="text-[15.5px]">{rows.length} services</span>
+        {seen.length > 0 && (
+          <span style={{ fontFamily: MONO, color: P.text }} className="text-[15.5px] tabular-nums">
+            {fmt(monthly)}<span style={{ color: P.faint }} className="text-[13px]"> a month</span>
+          </span>
+        )}
+      </div>
+      <p style={{ color: P.faint }} className="text-[13.5px] mb-3">
+        {seen.length
+          ? `${seen.length} charging you, found in your bank feed.`
+          : "Anything charging you appears here once your feed has three of its charges."}
+      </p>
+
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {catalogue.CATEGORIES.filter((c) => c.id === "all" || counts[c.id]).map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setCat(c.id)}
+            style={{
+              background: cat === c.id ? P.brass : P.surface2,
+              color: cat === c.id ? P.onbrass : P.muted,
+              borderRadius: R.pill,
+            }}
+            className="h-9 px-3 text-[13.5px] font-medium press"
+          >
+            {c.label}<span style={{ opacity: 0.7 }}> {counts[c.id] || 0}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-2.5">
+        {shown.map((r) => (
+          <div
+            key={r.id}
+            style={{
+              background: P.surface2,
+              borderRadius: 14,
+              border: `1px solid ${r.state === "connected" ? P.brass : "transparent"}`,
+            }}
+            className="p-3.5"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <span style={{ color: P.text }} className="text-[14.5px] min-w-0 truncate">{r.name}</span>
+              {r.sub && (
+                <span style={{ fontFamily: MONO, color: P.text }} className="text-[14px] tabular-nums shrink-0">
+                  {fmt(r.sub.amount)}
+                </span>
+              )}
+            </div>
+            <div style={{ color: P.faint }} className="text-[12.5px] mt-0.5">
+              {r.state === "connected" ? r.note || "connected"
+                : r.sub ? `every ${r.sub.every} · next ${r.sub.nextDue}`
+                  : r.note || "no charges seen"}
+            </div>
+            <div className="mt-2">
+              {r.state === "connected" && (
+                <span
+                  style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[12px] font-semibold"
+                >
+                  <Check size={11} /> Connected
+                </span>
+              )}
+              {r.state === "seen" && (
+                <span
+                  style={{ background: P.surface, color: P.muted, borderRadius: R.pill }}
+                  className="inline-flex items-center px-2.5 py-1 text-[12px] font-medium"
+                >
+                  In your feed
+                </span>
+              )}
+              {r.state === "available" && (
+                <span
+                  style={{ background: P.surface, color: P.muted, borderRadius: R.pill }}
+                  className="inline-flex items-center px-2.5 py-1 text-[12px] font-medium"
+                >
+                  Ready to set up
+                </span>
+              )}
+              {r.state === "wanted" && (
+                <button
+                  onClick={() => setAsked((v) => (v.includes(r.id) ? v : [...v, r.id]))}
+                  style={{ color: asked.includes(r.id) ? P.credit : P.faint }}
+                  className="text-[12.5px] press"
+                >
+                  {asked.includes(r.id) ? "Noted" : "I want this"}
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p style={{ color: P.faint }} className="text-[12.5px] mt-3 leading-snug">
+        Brasstally connects to your bank, and to Stripe, PayPal and Square for taking payment.
+        Everything else here is recognised from your bank feed rather than connected: the figures
+        are real, because they are charges that already went through, but nothing is read from
+        those services directly.
+      </p>
+    </div>
+  );
+}
+
 function PayToCard({ ledgerId, ledgerName, readOnly }) {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
@@ -17038,7 +17188,7 @@ function SendToAccountant({ subject, shortBody, fullText, files, email, setEmail
   );
 }
 
-function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0, bankTxns = [] }) {
+function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0, bankTxns = [], only = null }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
   const fye = data.ledger.fye || "12-31";
@@ -17149,6 +17299,15 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
 
   return (
     <div className="space-y-6 stagger">
+      {/* Connectors is about where figures come from. Filing is not: a
+          corporation tax draft is not a connection to anything, and somebody
+          arriving here to fix a bank feed had to scroll past a T2 return.
+
+          Gated rather than split into a second component, because the tax
+          markup shares its state with this page and pulling it apart would
+          leave two components owning one set of figures. */}
+      {only !== "filing" && (
+        <>
       {/* What is connected, in categories, because "Connectors" currently
           means a bank feed and two tax panels sitting in one column with no
           indication that they are different kinds of thing. */}
@@ -17161,14 +17320,15 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
 
       <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} openGuide={openGuide} onReview={onReview} syncedAt={syncedAt} />
 
-      {/* What the feed already knows, which nobody had to connect. */}
+      {/* Everything Brasstally can see, by category. Connected where a
+          connection exists, recognised where one does not, and never a Connect
+          button on something that cannot be connected. */}
       <section style={cardStyle()} className="p-5">
-        <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">What repeats</h2>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Services</h2>
         <p style={{ color: P.muted }} className="text-[15px] mb-3">
-          Subscriptions found in charges that have already gone through. No vendor to connect and
-          no inbox to read: anything billing you on a schedule is already in your bank feed.
+          What you are connected to, and what your bank feed shows you are paying for.
         </p>
-        <SubscriptionsCard bankTxns={bankTxns} ledgerCcy={data.ledger?.currency} />
+        <ConnectorGrid bankTxns={bankTxns} connected={["plaid"]} />
       </section>
 
       <div>
@@ -17178,6 +17338,11 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
         </p>
       </div>
 
+        </>
+      )}
+
+      {only === "filing" && (
+        <>
       {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
       {!isBiz ? <PersonalTaxCard data={data} openGuide={openGuide} /> : (
       <section style={cardStyle()} className="p-5">
@@ -17291,6 +17456,9 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
         )}
       </section>
       )}
+        </>
+      )}
+
     </div>
   );
 }
