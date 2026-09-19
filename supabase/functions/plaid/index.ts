@@ -723,6 +723,71 @@ Deno.serve(async (req) => {
      * Removal is idempotent at Plaid, and an Item already gone reports as
      * such rather than failing, so running this twice is safe.
      */
+    /* Removing Items by the id Plaid names them by.
+     *
+     * Plaid support hands you item_ids. `/item/remove` takes an access_token
+     * and there is no endpoint to go from one to the other, so the mapping has
+     * to come from our own rows: the live table first, then the retired one,
+     * which exists precisely because a token thrown away is a token nobody can
+     * ever use to clean up.
+     *
+     * Anything with no token here cannot be removed by us at all, and the
+     * answer is to send that shorter list back to support. This reports them
+     * rather than failing silently on them.
+     */
+    if (action === "remove_orphans") {
+      const ids: string[] = Array.isArray(body.item_ids) ? body.item_ids.map(String) : [];
+      if (!ids.length) return json({ ok: false, error: "No item ids given." });
+
+      const removed: string[] = [];
+      const failed: { item_id: string; error: string }[] = [];
+      const noToken: string[] = [];
+      const skippedLive: string[] = [];
+
+      for (const itemId of ids) {
+        /* An Item still attached to a ledger is never removed here, whatever a
+           list says. Support sees Plaid's side; only we can see whether
+           somebody is using it. */
+        const { data: live } = await supabase
+          .from("bank_connections").select("id, access_token, institution_name")
+          .eq("item_id", itemId).maybeSingle();
+
+        if (live?.access_token) {
+          skippedLive.push(`${itemId} (${live.institution_name || "a live connection"})`);
+          continue;
+        }
+
+        const { data: retired } = await supabase
+          .from("retired_bank_items").select("id, access_token")
+          .eq("item_id", itemId).maybeSingle();
+
+        const token = retired?.access_token;
+        if (!token) { noToken.push(itemId); continue; }
+
+        const r = await plaid("/item/remove", { access_token: token });
+        if (r.ok || r.data?.error_code === "ITEM_NOT_FOUND") {
+          /* Already gone at Plaid counts as removed: the goal is that it is
+             not there, not that we were the ones to do it. */
+          removed.push(itemId);
+          await supabase.from("retired_bank_items")
+            .update({ removed_at: new Date().toISOString() }).eq("id", retired.id);
+        } else {
+          failed.push({ item_id: itemId, error: r.data?.error_message || "removal refused" });
+        }
+      }
+
+      return json({
+        ok: true,
+        removed,
+        failed,
+        no_token: noToken,
+        skipped_live: skippedLive,
+        note: noToken.length
+          ? "We never stored a token for these, so only Plaid support can remove them. Send them this list."
+          : undefined,
+      });
+    }
+
     if (action === "purge_retired") {
       const { data: rows } = await supabase
         .from("retired_bank_items").select("id, access_token, item_id, institution")
@@ -730,6 +795,18 @@ Deno.serve(async (req) => {
 
       const out: Array<Record<string, unknown>> = [];
       for (const r of rows || []) {
+        /* A row with no token cannot be removed by us.
+         *
+         * Those exist now: an Item we know about from Plaid support, whose
+         * token was thrown away before we learned to keep them. Calling
+         * /item/remove with null would fail per row and bury the real result.
+         * It is reported instead, because that list is what goes back to
+         * support. */
+        if (!r.access_token) {
+          out.push({ item_id: r.item_id, institution: r.institution, ok: false,
+            error: "no token stored, only Plaid support can remove this one" });
+          continue;
+        }
         try {
           await plaid("/item/remove", { access_token: r.access_token });
           await supabase.from("retired_bank_items")
