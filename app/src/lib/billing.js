@@ -266,6 +266,10 @@ export async function listProviders(ledgerId) {
   return soft("payment providers", async () => {
     const [{ data: rows }, health] = await Promise.all([
       supabase.from("payment_providers").select("*").eq("ledger_id", ledgerId),
+      /* Quietly, because this runs on every visit to the Invoices page and a
+         project with no payments function should not fill a console with
+         failures for a feature nobody has switched on. The card already says
+         "no keys on this project", which covers both cases. */
       supabase.functions.invoke("payments", { body: { action: "health" } }).catch(() => null),
     ]);
     const configured = health?.data?.configured || {};

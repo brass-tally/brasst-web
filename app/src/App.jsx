@@ -1524,6 +1524,56 @@ function Ledger({ onSignOut }) {
    * said something was waiting and the icon showed nothing.
    *
    * The tray reports its count through `onCount`, which lands here. */
+  /* What wants you, per section, in words.
+   *
+   * There were two dots in the whole application and neither said what it
+   * meant. A mark you cannot name is worse than no mark: it makes somebody
+   * open a section to find out, discover nothing obvious, and learn to ignore
+   * the mark.
+   *
+   * So every signal carries a count and a sentence, one place computes them,
+   * and the navigation and the tooltip read the same thing. If a section is
+   * marked, pressing and holding it tells you why.
+   */
+  const signals = useMemo(() => {
+    const today = todayStr();
+    const out = {};
+
+    if (inboundLive > 0) {
+      out.invoices = {
+        count: inboundLive,
+        why: `${inboundLive} ${inboundLive === 1 ? "invoice is" : "invoices are"} waiting for you to accept or decline`,
+      };
+    }
+
+    /* Overdue only. Everything open would mark this permanently, which is the
+       same as not marking it. */
+    const owedLate = (data?.payables || []).filter(
+      (o) => o.status === "open" && o.dueDate && o.dueDate < today,
+    ).length;
+    const owingLate = (data?.receivables || []).filter(
+      (o) => o.status === "open" && o.dueDate && o.dueDate < today,
+    ).length;
+    if (owedLate || owingLate) {
+      const bits = [];
+      if (owedLate) bits.push(`${owedLate} you owe`);
+      if (owingLate) bits.push(`${owingLate} owed to you`);
+      out.arap = { count: owedLate + owingLate, why: `Past its date: ${bits.join(", ")}` };
+    }
+
+    /* A bank that has stopped talking. The one thing here that gets worse
+       quietly. */
+    const stale = (data?.connections || []).filter((c) => c.error || c.needsReconnect).length;
+    if (stale) {
+      out.integrations = {
+        count: stale,
+        why: `${stale} bank ${stale === 1 ? "connection needs" : "connections need"} signing in again`,
+      };
+    }
+
+    return out;
+  }, [inboundLive, data?.payables, data?.receivables, data?.connections]);
+
   const refreshInbound = async (n) => {
     if (typeof n === "number") setInboundLive(n);
     if (!data?.ledger?.id) return;
@@ -3383,7 +3433,15 @@ function Ledger({ onSignOut }) {
                   className="more-item flex items-center gap-3 h-12 px-4 text-[15px] font-medium press"
                 >
                   <Icon size={18} />
-                  <span className="whitespace-nowrap">{label}</span>
+                  <span className="whitespace-nowrap flex-1 text-left">{label}</span>
+                  {signals[k] && (
+                    <span
+                      style={{ background: P.brass, color: P.onbrass, borderRadius: 999 }}
+                      className="px-1.5 py-0.5 text-[11.5px] font-semibold"
+                    >
+                      {signals[k].count}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -3411,7 +3469,11 @@ function Ledger({ onSignOut }) {
             /* A dot on the section that has something waiting. An invoice
                that arrived while you were on Snapshot should be visible from
                Snapshot, not only once you happen to open AR / AP. */
-            dot={k === "invoices" && inboundLive > 0}
+            /* The mark carries its number, and the button says why.
+               A bare dot makes somebody open the section to find out. */
+            dot={Boolean(signals[k])}
+            count={signals[k]?.count}
+            why={signals[k]?.why}
             onClick={() => { setTab(k); setChatOpen(false); setMoreOpen(false); }}
           >
             <Icon size={19} />
@@ -3420,6 +3482,10 @@ function Ledger({ onSignOut }) {
 
         <DockBtn
           label={moreOpen ? "Close" : "More"}
+          /* Something waiting behind the plus has to show on the plus, or it
+             is invisible until somebody happens to open it. */
+          dot={!moreOpen && tabs.some(([k]) => !DOCK.includes(k) && signals[k])}
+          why={tabs.filter(([k]) => !DOCK.includes(k) && signals[k]).map(([k]) => signals[k].why).join(". ")}
           active={moreOpen || tabs.some(([k]) => k === tab && !DOCK.includes(k))}
           onClick={() => setMoreOpen((v) => !v)}
         >
@@ -15892,7 +15958,7 @@ function ReportsTab({ data, month, balance, onAsk }) {
 }
 
 /* ================= floating dock button ================= */
-function DockBtn({ label, active, onClick, children, dot }) {
+function DockBtn({ label, active, onClick, children, dot, count, why }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -15900,8 +15966,10 @@ function DockBtn({ label, active, onClick, children, dot }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       type="button"
-      title={label}
-      aria-label={label}
+      /* The tooltip is where the reason lives. A count says something is
+         there; this says what. */
+      title={why ? `${label} — ${why}` : label}
+      aria-label={why ? `${label}, ${why}` : label}
       aria-current={active ? "page" : undefined}
       className="dock-btn relative rounded-full flex items-center justify-center shrink-0"
       style={{
@@ -15913,14 +15981,29 @@ function DockBtn({ label, active, onClick, children, dot }) {
     >
       {children}
       {dot && (
+        /* A number where there is one, a dot where there is not. "3" answers
+           the question a bare dot only raises. */
         <span
           aria-hidden
           style={{
-            position: "absolute", top: 6, right: 6, width: 8, height: 8,
-            borderRadius: "50%", background: P.brass,
+            position: "absolute",
+            top: count ? 2 : 6,
+            right: count ? 0 : 6,
+            minWidth: count ? 16 : 8,
+            height: count ? 16 : 8,
+            padding: count ? "0 4px" : 0,
+            borderRadius: 999,
+            background: P.brass,
+            color: P.onbrass,
+            fontSize: 10.5,
+            fontWeight: 700,
+            lineHeight: count ? "16px" : undefined,
+            textAlign: "center",
             boxShadow: `0 0 0 2px ${P.surface}`,
           }}
-        />
+        >
+          {count ? (count > 9 ? "9+" : count) : ""}
+        </span>
       )}
       {hover && !active && (
         <span
