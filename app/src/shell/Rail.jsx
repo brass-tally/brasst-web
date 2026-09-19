@@ -17,7 +17,7 @@ import { P, R, elev, MONO, SANS } from "../ui";
 const initials = (name) =>
   String(name || "").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase();
 
-export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, onNewLedger, onAccount, accountActive, dots = {} }) {
+export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, onNewLedger, onAccount, accountActive, signals = {} }) {
   const [menu, setMenu] = useState(false);
   const [hover, setHover] = useState(null);
 
@@ -30,13 +30,13 @@ export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, on
     return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", esc); };
   }, [menu]);
 
-  const Btn = ({ id, label, active, onClick, children, dot }) => (
+  const Btn = ({ id, label, active, onClick, children, dot, count, why }) => (
     <button
       onClick={onClick}
       onMouseEnter={() => setHover(id)}
       onMouseLeave={() => setHover(null)}
-      aria-label={label}
-      title={label}
+      aria-label={why ? `${label}, ${why}` : label}
+      title={why ? `${label} — ${why}` : label}
       className="relative flex items-center justify-center shrink-0"
       style={{
         width: 46, height: 46, borderRadius: 14,
@@ -48,14 +48,30 @@ export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, on
     >
       {children}
       {dot && (
+        /* The number, not a dot. "3" tells somebody how much is waiting;
+           a dot only tells them to go and look. */
         <span
           aria-hidden
           style={{
-            position: "absolute", top: 8, right: 8, width: 8, height: 8,
-            borderRadius: "50%", background: active ? P.onbrass : P.brass,
+            position: "absolute",
+            top: count ? 4 : 8,
+            right: count ? 2 : 8,
+            minWidth: count ? 16 : 8,
+            height: count ? 16 : 8,
+            padding: count ? "0 4px" : 0,
+            borderRadius: 999,
+            background: active ? P.onbrass : P.brass,
+            color: active ? P.brass : P.onbrass,
+            fontFamily: SANS,
+            fontSize: 10.5,
+            fontWeight: 700,
+            lineHeight: count ? "16px" : undefined,
+            textAlign: "center",
             boxShadow: `0 0 0 2px ${P.bg}`,
           }}
-        />
+        >
+          {count ? (count > 9 ? "9+" : count) : ""}
+        </span>
       )}
       {hover === id && !active && (
         <span
@@ -65,7 +81,10 @@ export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, on
             padding: "5px 11px", borderRadius: 9, whiteSpace: "nowrap", pointerEvents: "none", zIndex: 60,
           }}
         >
-          {label}
+          {/* The reason, where the name used to be. This tooltip is the one
+              place with room for a sentence, and a marked icon whose meaning
+              is a sentence away is the whole complaint. */}
+          {why ? `${label} — ${why}` : label}
         </span>
       )}
     </button>
@@ -166,8 +185,20 @@ export function Rail({ tabs, tab, setTab, ledgers = [], ledger, onPickLedger, on
         )}
       </div>
 
+      {/* A count and a reason, the same ones the dock shows.
+          A bare dot makes somebody open the section to find out what it meant;
+          the number says how many and the tooltip says what. */}
       {tabs.map(([k, label, Icon]) => (
-        <Btn key={k} id={k} label={label} active={tab === k} onClick={() => setTab(k)} dot={dots[k]}>
+        <Btn
+          key={k}
+          id={k}
+          label={label}
+          active={tab === k}
+          onClick={() => setTab(k)}
+          dot={Boolean(signals[k])}
+          count={signals[k]?.count}
+          why={signals[k]?.why}
+        >
           <Icon size={19} />
         </Btn>
       ))}

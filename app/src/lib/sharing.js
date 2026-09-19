@@ -187,6 +187,14 @@ export async function listInbound(ledgerId, status = "pending") {
       issueDate: r.issue_date || undefined, dueDate: r.due_date || undefined,
       note: r.note || undefined, filePath: r.file_path || undefined,
       recurrence: r.recurrence || "once", scheduleId: r.schedule_id || undefined,
+      /* A correction already asked for.
+       *
+       * The tray uses this to lock the accept button, and it was never
+       * returned: the lock existed in the interface and could never engage,
+       * which is worse than no lock because it reads as working. */
+      correctionAt: r.correction_at || undefined,
+      correctionNote: r.correction_note || undefined,
+      editedAt: r.edited_at || undefined,
       currency: r.currency || undefined,
       lines: Array.isArray(r.line_items) && r.line_items.length ? r.line_items : undefined,
       period: r.period || undefined,

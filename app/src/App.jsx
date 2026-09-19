@@ -18,6 +18,8 @@ import { ruleSignature, signatureIsUseful, directionOf, plannedByRules } from ".
 import { lookupRate } from "./lib/fx";
 import { listPlanned, addPlanned, updatePlanned, dropPlanned, plannedTotals } from "./lib/planned";
 import * as billing from "./lib/billing";
+import * as subscriptions from "./lib/subscriptions";
+import * as spendgraph from "./lib/spendgraph";
 import * as voidCheque from "./lib/voidcheque";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
@@ -2849,12 +2851,21 @@ function Ledger({ onSignOut }) {
     ["credits", "Credits", Coins],
     ["calendar", "Calendar", CalendarDays],
     ["contacts", "Contacts", Users],
+    /* Connectors belongs with the sections, not buried in settings.
+       A bank that has stopped talking is the one failure here that gets worse
+       quietly, and it cannot be marked if there is nowhere to mark. */
+    /* Reports used to be reachable only from a menu. It is a section now,
+       and the picture sits above the tables because "where is it going" is
+       the question, and a table is the evidence for the answer. */
+    ["graph", "Finance graph", TrendingUp],
+    ["integrations", "Connectors", Plug],
   ];
 
   /* What the dock shows without asking. Everything else is one tap further. */
   const DOCK = ["overview", "arap", "transactions", "invoices"];
   const TAB_TITLES = {
     overview: "Snapshot", invoices: "Invoices", transactions: "Transactions", pl: "P&L", arap: "AR / AP",
+    graph: "Finance graph",
     credits: "Credits", calendar: "Calendar", integrations: "Connectors",
     reports: "Reports", settings: "Settings", profile: "Profile", taxpack: "Tax pack", contacts: "Contacts",
     "legal-data": "Your data", "legal-privacy": "Privacy", "legal-terms": "Terms",
@@ -2877,7 +2888,12 @@ function Ledger({ onSignOut }) {
         onNewLedger={() => setNewLedgerOpen(true)}
         onAccount={() => { setTab("settings"); setChatOpen(false); }}
         accountActive={tab === "settings"}
-        dots={{ arap: inbound.length > 0 }}
+        /* The same signals the dock reads.
+            This said `{ arap: inbound.length > 0 }`: it put the count of
+            invoices waiting for you onto the AR / AP icon, which is both why
+            Invoices never lit up and why AR / AP was marked for a reason
+            nobody could name. One mistake, two symptoms. */
+          signals={signals}
       />
       <div className="flex-1 min-w-0">
       {/* The ledger is a reading surface, so it stops widening past the point
@@ -3163,11 +3179,21 @@ function Ledger({ onSignOut }) {
         )}
         {tab === "credits" && <CreditsCard readOnly={readOnly} data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
+        {tab === "graph" && (
+          <FinanceGraphTab
+            data={data}
+            month={month}
+            balance={balance}
+            onAsk={askAgent}
+            bankTxns={bankTxns}
+          />
+        )}
+
         {tab === "integrations" && <IntegrationsTab data={data} syncedAt={syncedAt} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
           setData((d) => ({ ...d, ledger: { ...d.ledger, ...patch } }));
           setLedgers((ls) => ls.map((l) => (l.id === data.ledger.id ? { ...l, ...patch } : l)));
           dbTry(() => db.updateLedger(data.ledger.id, patch));
-        }} />}
+        }} bankTxns={bankTxns} />}
         {tab === "reports" && <ReportsTab data={data} month={month} balance={balance} onAsk={askAgent} />}
         {tab === "profile" && (
           <AccountModal
@@ -7877,7 +7903,13 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
             <>
               <button
                 onClick={() => accept(inv)}
-                disabled={busy === inv.id}
+                /* Locked once a correction has gone.
+                 *
+                 * Asking for a change and then being able to accept the
+                 * unchanged invoice is two contradictory states at once. It
+                 * stays refusable, because a supplier who never answers should
+                 * not leave you stuck. */
+                disabled={busy === inv.id || Boolean(inv.correctionAt)}
                 /* Quieter while a correction is being written.
                  *
                  * This is the brass primary, which reads as the thing to do,
@@ -7886,13 +7918,26 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                  * confident actions, one of which contradicts the other. It
                  * steps back until the correction is either sent or
                  * abandoned. */
-                style={correcting?.id === inv.id
-                  ? { background: P.surface2, color: P.muted, borderRadius: R.pill }
+                style={(correcting?.id === inv.id || inv.correctionAt)
+                  ? { background: P.surface2, color: P.faint, borderRadius: R.pill }
                   : { background: P.brass, color: P.onbrass, borderRadius: R.pill }}
                 className="h-11 px-4 text-[15px] font-medium press"
               >
-                {busy === inv.id ? "Adding" : "Add to what I owe"}
+                {busy === inv.id ? "Adding"
+                  : inv.correctionAt ? "Waiting on their change"
+                    : "Add to what I owe"}
               </button>
+              {/* And it says so on the row, not only on a button.
+                  A supplier has been emailed and asked to change something;
+                  that is a state the invoice is in, and it should read as one
+                  rather than being inferable from a greyed control. */}
+              {inv.correctionAt && (
+                <div style={{ color: P.brassText }} className="text-[13.5px] w-full mb-1">
+                  Sent back {String(inv.correctionAt).slice(0, 10)}
+                  {inv.correctionNote ? `: “${inv.correctionNote}”` : ""}
+                  <span style={{ color: P.faint }}> · they have been emailed and can change it from their page</span>
+                </div>
+              )}
               {/* And this one shows it is open.
                   It looked identical whether the form below was showing or
                   not, so the only evidence of having pressed it was a panel
@@ -12890,6 +12935,345 @@ function CardPaymentsCard({ ledgerId, readOnly, addTx, settleAR, onChanged }) {
   );
 }
 
+/* What repeats, found in money that has already moved.
+ *
+ * Not a connector to each vendor, and not a request to read somebody's inbox.
+ * Every subscription is already in the bank feed as a charge that repeats, so
+ * this reads what is there: same payee, similar amount, regular gap.
+ *
+ * It catches the forgotten ones precisely because it does not need to know the
+ * vendor exists, which is the whole reason this is worth having.
+ */
+function SubscriptionsCard({ bankTxns = [], ledgerCcy }) {
+  const [open, setOpen] = useState(false);
+
+  const subs = useMemo(() => subscriptions.findSubscriptions(bankTxns), [bankTxns]);
+  const totals = useMemo(() => subscriptions.subscriptionTotals(subs), [subs]);
+  const soon = useMemo(() => subscriptions.dueSoon(subs, 14), [subs]);
+
+  if (!bankTxns.length) {
+    return (
+      <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4">
+        <span style={{ color: P.text }} className="text-[15.5px] block">Subscriptions</span>
+        <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+          Connect a bank and anything charging you on a schedule will appear here.
+        </p>
+      </div>
+    );
+  }
+
+  if (!subs.length) {
+    return (
+      <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4">
+        <span style={{ color: P.text }} className="text-[15.5px] block">Subscriptions</span>
+        <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+          Nothing in your feed repeats on a schedule yet. It takes three charges to be sure
+          something is a subscription rather than a coincidence.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span style={{ color: P.text }} className="text-[15.5px]">Subscriptions</span>
+        <span style={{ fontFamily: MONO, color: P.text }} className="text-[16px] tabular-nums">
+          {fmt(totals.monthly)}<span style={{ color: P.faint }} className="text-[13px]"> a month</span>
+        </span>
+      </div>
+
+      <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+        {totals.count} found in your bank feed · {fmt(totals.yearly)} a year
+        {soon.length ? ` · ${soon.length} charging within a fortnight` : ""}
+      </p>
+
+      {/* truncation-ok: capped at five until opened, and the button below
+          names the number hidden rather than leaving a silent cut. */}
+      {subs.slice(0, open ? subs.length : 5).map((sub) => (
+        <div key={sub.key} className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span style={{ color: P.text }} className="text-[14.5px] min-w-0 truncate">{sub.name}</span>
+            <span style={{ fontFamily: MONO, color: P.text }} className="text-[14.5px] tabular-nums shrink-0">
+              {fmt(sub.amount)}
+            </span>
+          </div>
+          <div style={{ color: P.faint }} className="text-[13px]">
+            every {sub.every} · next {sub.nextDue}
+            {sub.every !== "month" ? ` · ${fmt(sub.monthly)} a month` : ""}
+          </div>
+          {/* A price rise on something nobody looks at is the commonest way a
+              subscription becomes expensive. */}
+          {sub.rose && (
+            <div style={{ color: P.brassText }} className="text-[13px]">
+              went up from {fmt(sub.rose.from)} to {fmt(sub.rose.to)}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {subs.length > 5 && (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{ color: P.brassText }}
+          className="text-[13.5px] press mt-2"
+        >
+          {open ? "Show fewer" : `${subs.length - 5} more · show all ${subs.length}`}
+        </button>
+      )}
+
+      <p style={{ color: P.faint }} className="text-[12.5px] mt-3 leading-snug">
+        Read from charges that have already gone through, so this is what you are actually paying
+        rather than what you think you signed up for. Nothing here is filed or cancelled for you.
+      </p>
+    </div>
+  );
+}
+
+/* Where the spend is going, as something to look at.
+ *
+ * Drawn rather than listed, because "what is this business spending on" is the
+ * question people have and rarely phrase, and a table only answers it for
+ * somebody who already knows what to ask.
+ *
+ * SVG and CSS, no library: a force simulation would be sixty kilobytes to
+ * arrange nine circles, and the arrangement is not the insight.
+ */
+function SpendGraph({ rows = [], total = 0, onPick, picked }) {
+  const nodes = useMemo(() => spendgraph.layout(rows, { radius: 118 }), [rows]);
+
+  if (!rows.length) {
+    return (
+      <p style={{ color: P.faint }} className="text-[14.5px] py-6 text-center">
+        Nothing filed as spending this month yet.
+      </p>
+    );
+  }
+
+  const size = 340;
+  const c = size / 2;
+
+  return (
+    <div className="flex justify-center">
+      <svg
+        viewBox={`0 0 ${size} ${size}`}
+        style={{ width: "100%", maxWidth: 420 }}
+        role="img"
+        aria-label={`Spending by category: ${rows.map((r) => `${r.name} ${fmt(r.total)}`).join(", ")}`}
+      >
+        {/* The lines first, so the circles sit on top of them. */}
+        {nodes.map((n) => (
+          <line
+            key={`l-${n.name}`}
+            x1={c} y1={c} x2={c + n.x} y2={c + n.y}
+            stroke={P.line} strokeWidth={1}
+            className="graph-line"
+            style={{ animationDelay: `${n.delay}ms` }}
+          />
+        ))}
+
+        {/* The total, in the middle, because every spoke is a share of it. */}
+        <circle cx={c} cy={c} r={46} fill={P.surface2} />
+        <text x={c} y={c - 4} textAnchor="middle"
+          style={{ fontFamily: MONO, fontSize: 15, fill: P.text }}>
+          {fmt(total)}
+        </text>
+        <text x={c} y={c + 13} textAnchor="middle"
+          style={{ fontFamily: SANS, fontSize: 10.5, fill: P.faint }}>
+          out this month
+        </text>
+
+        {nodes.map((n) => {
+          const on = picked === n.name;
+          return (
+            <g
+              key={n.name}
+              className="graph-node"
+              style={{ animationDelay: `${n.delay}ms`, cursor: onPick ? "pointer" : "default" }}
+              onClick={() => onPick?.(on ? null : n.name)}
+            >
+              <circle
+                cx={c + n.x} cy={c + n.y} r={n.r}
+                fill={n.isTail ? P.surface2 : P.brass}
+                fillOpacity={on ? 1 : n.isTail ? 1 : 0.22}
+                stroke={on ? P.brass : n.isTail ? P.line : P.brass}
+                strokeWidth={on ? 2 : 1}
+              />
+              <text
+                x={c + n.x} y={c + n.y + 3} textAnchor="middle"
+                style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 600, fill: P.text, pointerEvents: "none" }}
+              >
+                {n.pct >= 4 ? `${n.pct}%` : ""}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+/* Finance graph: where it goes, what repeats, and the numbers behind both.
+ *
+ * Three things in the order somebody actually asks them. Where is it going.
+ * What is going out whether I act or not. Show me the figures.
+ */
+function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] }) {
+  const [picked, setPicked] = useState(null);
+
+  const monthTx = useMemo(
+    () => (data.transactions || []).filter((t) => String(t.date || "").slice(0, 7) === month),
+    [data.transactions, month],
+  );
+
+  const rows = useMemo(() => spendgraph.spendByCategory(monthTx), [monthTx]);
+  const spent = useMemo(() => rows.reduce((n, r) => n + r.total, 0), [rows]);
+  const trend = useMemo(() => spendgraph.monthlyTrend(data.transactions || []), [data.transactions]);
+
+  const subs = useMemo(() => subscriptions.findSubscriptions(bankTxns), [bankTxns]);
+  const subTotals = useMemo(() => subscriptions.subscriptionTotals(subs), [subs]);
+
+  const chosen = picked ? rows.find((r) => r.name === picked) : null;
+
+  const exportCsv = () => {
+    const csv = spendgraph.toCsv(rows);
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `brasstally-spending-${month}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const biggestMonth = Math.max(...trend.map((t) => t.total), 1);
+
+  return (
+    <div className="space-y-6 stagger">
+      <section style={cardStyle()} className="p-5">
+        <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Where it goes</h2>
+        <p style={{ color: P.muted }} className="text-[15px]">
+          {monthLabel(month)}. Press a category to see who is behind it.
+        </p>
+
+        <SpendGraph rows={rows} total={spent} picked={picked} onPick={setPicked} />
+
+        {/* Pressing a circle answers the question the picture raises. A
+            category is an answer; the payee behind it is the thing you can
+            actually act on. */}
+        {chosen && (
+          <div style={{ background: P.surface2, borderRadius: 14 }} className="p-4 mt-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <span style={{ color: P.text }} className="text-[15.5px]">{chosen.name}</span>
+              <span style={{ fontFamily: MONO, color: P.text }} className="text-[15.5px] tabular-nums">
+                {fmt(chosen.total)}
+              </span>
+            </div>
+            <div style={{ color: P.faint }} className="text-[13px] mb-1">
+              {chosen.count} {chosen.count === 1 ? "entry" : "entries"} this month
+            </div>
+            {chosen.parties.map((p) => (
+              <div key={p.name} className="flex items-baseline justify-between gap-3 py-1">
+                <span style={{ color: P.muted }} className="text-[14px] min-w-0 truncate">{p.name}</span>
+                <span style={{ fontFamily: MONO, color: P.muted }} className="text-[14px] tabular-nums shrink-0">
+                  {fmt(p.total)}
+                </span>
+              </div>
+            ))}
+            {chosen.isTail && (
+              <p style={{ color: P.faint }} className="text-[13px]">
+                Everything too small to draw on its own, gathered so the picture still adds up.
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* What goes out whether you act or not. Stated as a figure, at the top
+          of its own card, because "what do my subscriptions cost me" is a
+          question with one number as its answer. */}
+      <section style={cardStyle()} className="p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">What repeats</h2>
+          <span style={{ fontFamily: MONO, color: P.text }} className="text-[22px] tabular-nums">
+            {fmt(subTotals.monthly)}
+            <span style={{ color: P.faint }} className="text-[13px]"> a month</span>
+          </span>
+        </div>
+        <p style={{ color: P.muted }} className="text-[15px] mb-3">
+          {subTotals.count
+            ? `${subTotals.count} subscriptions, ${fmt(subTotals.yearly)} a year, found in charges that have already gone through.`
+            : "Subscriptions found in your bank feed will appear here."}
+        </p>
+        <SubscriptionsCard bankTxns={bankTxns} ledgerCcy={data.ledger?.currency} />
+      </section>
+
+      {/* Month over month. Small, because it answers one question: is this
+          getting worse. */}
+      {trend.length > 1 && (
+        <section style={cardStyle()} className="p-5">
+          <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Month by month</h2>
+          <p style={{ color: P.muted }} className="text-[15px] mb-3">Everything filed as spending.</p>
+          <div className="flex items-end gap-2" style={{ height: 120 }}>
+            {trend.map((t) => (
+              <div key={t.month} className="flex-1 flex flex-col items-center justify-end gap-1">
+                <span style={{ fontFamily: MONO, color: P.faint }} className="text-[11px]">
+                  {Math.round(t.total)}
+                </span>
+                <div
+                  title={`${t.month}: ${fmt(t.total)}`}
+                  style={{
+                    width: "100%",
+                    height: `${Math.max(3, (t.total / biggestMonth) * 88)}px`,
+                    background: t.month === month ? P.brass : P.surface2,
+                    borderRadius: 6,
+                  }}
+                />
+                <span style={{ color: P.faint }} className="text-[11px]">{t.month.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* The figures behind the picture, takeable. A chart somebody cannot
+          check is a chart they have to trust. */}
+      <section style={cardStyle()} className="p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+          <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">The numbers</h2>
+          <button
+            onClick={exportCsv}
+            disabled={!rows.length}
+            style={{ background: P.surface2, color: P.text, borderRadius: R.pill }}
+            className="h-10 px-3.5 text-[14px] font-medium press"
+          >
+            <Download size={13} className="inline mb-0.5" /> Export CSV
+          </button>
+        </div>
+        {rows.map((r) => (
+          <div
+            key={r.name}
+            className="flex items-baseline justify-between gap-3 py-2"
+            style={{ borderTop: `1px solid ${P.line}` }}
+          >
+            <span style={{ color: P.text }} className="text-[14.5px] min-w-0 truncate">
+              {r.name}
+              <span style={{ color: P.faint }}> · {r.count}</span>
+            </span>
+            <span style={{ fontFamily: MONO, color: P.text }} className="text-[14.5px] tabular-nums shrink-0">
+              {fmt(r.total)}
+            </span>
+          </div>
+        ))}
+        {!rows.length && (
+          <p style={{ color: P.faint }} className="text-[14.5px]">Nothing filed as spending this month.</p>
+        )}
+      </section>
+
+      <ReportsTab data={data} month={month} balance={balance} onAsk={onAsk} />
+    </div>
+  );
+}
+
 function PayToCard({ ledgerId, ledgerName, readOnly }) {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
@@ -16654,7 +17038,7 @@ function SendToAccountant({ subject, shortBody, fullText, files, email, setEmail
   );
 }
 
-function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0 }) {
+function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0, bankTxns = [] }) {
   const isBiz = data.ledger.kind === "business";
   const bizTx = data.transactions.filter((t) => (isBiz ? true : t.account === "business"));
   const fye = data.ledger.fye || "12-31";
@@ -16765,7 +17149,34 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
 
   return (
     <div className="space-y-6 stagger">
+      {/* What is connected, in categories, because "Connectors" currently
+          means a bank feed and two tax panels sitting in one column with no
+          indication that they are different kinds of thing. */}
+      <div>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Your money, coming in</h2>
+        <p style={{ color: P.muted }} className="text-[15px] mb-3">
+          Where the figures come from without anybody typing them.
+        </p>
+      </div>
+
       <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} openGuide={openGuide} onReview={onReview} syncedAt={syncedAt} />
+
+      {/* What the feed already knows, which nobody had to connect. */}
+      <section style={cardStyle()} className="p-5">
+        <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">What repeats</h2>
+        <p style={{ color: P.muted }} className="text-[15px] mb-3">
+          Subscriptions found in charges that have already gone through. No vendor to connect and
+          no inbox to read: anything billing you on a schedule is already in your bank feed.
+        </p>
+        <SubscriptionsCard bankTxns={bankTxns} ledgerCcy={data.ledger?.currency} />
+      </section>
+
+      <div>
+        <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Filing and deadlines</h2>
+        <p style={{ color: P.muted }} className="text-[15px] mb-3">
+          What the government expects, and when.
+        </p>
+      </div>
 
       {/* ---------- CRA: T2 for business ledgers, T1 for personal ---------- */}
       {!isBiz ? <PersonalTaxCard data={data} openGuide={openGuide} /> : (

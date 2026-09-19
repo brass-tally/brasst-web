@@ -761,3 +761,34 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
 @media (prefers-reduced-motion: reduce) {
   .filed-go { animation: none; opacity: 0; }
 }
+
+/* The spend graph arriving.
+
+   Each spoke draws itself and each circle settles into place a beat after the
+   one before. The stagger is what makes it read as one thing assembling rather
+   than nine things appearing, and it runs once on arrival rather than looping:
+   a figure that keeps moving is a figure nobody can read. */
+.graph-line {
+  animation: graph-line-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: center;
+}
+@keyframes graph-line-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.graph-node {
+  animation: graph-node-in 620ms cubic-bezier(0.22, 1.2, 0.36, 1) both;
+  transform-origin: center;
+  transition: opacity .2s ease;
+}
+@keyframes graph-node-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.graph-node:hover circle { fill-opacity: 0.45; }
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-line, .graph-node { animation: none; }
+}
