@@ -193,6 +193,7 @@ const rowToPay = (r) => r && ({
   institutionNumber: r.institution_number || "",
   transitNumber: r.transit_number || "",
   routingNumber: r.routing_number || "",
+  wireRoutingNumber: r.wire_routing_number || "",
   iban: r.iban || "",
   swiftCode: r.swift_code || "",
   bankName: r.bank_name || "",
@@ -221,7 +222,8 @@ export function blankPayTo(country = "CA") {
     isDefault: false,
     country,
     beneficiaryName: "", beneficiaryAddress: "", accountNumber: "", accountType: "chequing",
-    institutionNumber: "", transitNumber: "", routingNumber: "", iban: "", swiftCode: "",
+    institutionNumber: "", transitNumber: "", routingNumber: "", wireRoutingNumber: "",
+    iban: "", swiftCode: "",
     bankName: "", branchAddress: "", note: "", active: false,
   };
 }
@@ -244,6 +246,7 @@ export async function savePayTo(ledgerId, d) {
       institution_number: d.institutionNumber || null,
       transit_number: d.transitNumber || null,
       routing_number: d.routingNumber || null,
+      wire_routing_number: d.wireRoutingNumber || null,
       iban: d.iban || null,
       swift_code: d.swiftCode || null,
       bank_name: d.bankName || null,
@@ -324,7 +327,7 @@ export function payToFor(accounts = [], currency) {
  * Three groups, named, required first.
  */
 export function payGroupsFor(country) {
-  const numbers = country === "US" ? ["routingNumber", "accountNumber"]
+  const numbers = country === "US" ? ["routingNumber", "accountNumber", "wireRoutingNumber"]
     : country === "OTHER" ? ["iban", "accountNumber", "swiftCode"]
       : ["transitNumber", "institutionNumber", "accountNumber"];
 
@@ -337,7 +340,7 @@ export function payGroupsFor(country) {
       note: country === "CA"
         ? "Transit, institution and account are the three along the bottom of a cheque."
         : country === "US"
-          ? "Routing and account are the two along the bottom of a cheque."
+          ? "Routing and account are the two along the bottom of a cheque. Most US banks use a different routing number for wires, so add that too if you have one."
           : "An IBAN, or an account number with a SWIFT code.",
       fields: numbers,
     },

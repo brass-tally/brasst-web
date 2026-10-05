@@ -13474,6 +13474,7 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
     transitNumber: "Transit number",
     institutionNumber: "Institution number",
     routingNumber: "Routing number",
+    wireRoutingNumber: "Wire routing number",
     iban: "IBAN",
     swiftCode: "SWIFT / BIC",
     bankName: "Bank name",
@@ -13482,7 +13483,8 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
   const HINTS = {
     transitNumber: "five digits",
     institutionNumber: "three digits",
-    routingNumber: "nine digits",
+    routingNumber: "nine digits, the one on your cheque",
+    wireRoutingNumber: "nine digits, often different from the one on your cheque",
     swiftCode: "only needed for payments from abroad",
   };
   const REQUIRED = {

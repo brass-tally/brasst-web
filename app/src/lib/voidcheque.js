@@ -48,7 +48,13 @@ function detailRows(d) {
   if (d.country === "CA") {
     rows.push(["Transit number", d.transitNumber], ["Institution number", d.institutionNumber]);
   }
-  if (d.country === "US") rows.push(["Routing number", d.routingNumber]);
+  if (d.country === "US") {
+    rows.push(["Routing number (ACH)", d.routingNumber]);
+    /* The second number, when there is one. A wire sent to the ACH routing
+       number is rejected or returned days later minus a fee, and nothing on
+       either side explains why. */
+    rows.push(["Routing number (wire)", d.wireRoutingNumber]);
+  }
   if (d.iban) rows.push(["IBAN", d.iban]);
   if (d.swiftCode) rows.push(["SWIFT / BIC", d.swiftCode]);
   return rows.filter(([, v]) => String(v || "").trim());

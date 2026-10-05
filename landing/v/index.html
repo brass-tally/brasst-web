@@ -196,7 +196,11 @@ function payBlock(d) {
     ["Account type", p.account_type],
     p.country === "CA" ? ["Transit number", p.transit_number, true] : null,
     p.country === "CA" ? ["Institution number", p.institution_number, true] : null,
-    p.country === "US" ? ["Routing number", p.routing_number, true] : null,
+    p.country === "US" ? ["Routing number (ACH)", p.routing_number, true] : null,
+    /* The wire number, when the business has one. A wire sent to the ACH
+       routing number is rejected or returned days later minus a fee, and
+       nothing on either side explains why. */
+    p.country === "US" ? ["Routing number (wire)", p.wire_routing_number, true] : null,
     ["IBAN", p.iban, true],
     ["SWIFT / BIC", p.swift_code, true],
   ].filter((r) => r && r[1]);
