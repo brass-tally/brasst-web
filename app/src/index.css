@@ -720,32 +720,13 @@ button:not(:disabled) { -webkit-tap-highlight-color: transparent; touch-action: 
   border: 0;
 }
 
-/* Printing one thing off a page full of things.
+/* The print rules that were here are gone.
 
-   Used for the void cheque, which used to open in a window. An installed app
-   refuses to open windows whatever the pop-up setting says, so the sheet is
-   rendered here and everything around it steps aside for the length of the
-   print.
-
-   `visibility` rather than `display`, because hiding an ancestor with display
-   removes its descendants too, and the sheet lives inside the page it is
-   hiding. */
-@media print {
-  body.printing-sheet * { visibility: hidden; }
-  body.printing-sheet .print-sheet,
-  body.printing-sheet .print-sheet * { visibility: visible; }
-  body.printing-sheet .print-sheet {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    padding: 0;
-    margin: 0;
-    background: #fff;
-    box-shadow: none;
-  }
-  body.printing-sheet .print-hide { display: none !important; }
-}
+   The void cheque and the pay order are real PDFs now, drawn with jsPDF. They
+   lived inside a fixed-position modal, and a fixed ancestor prints on every
+   page, which is where the duplicate came from. A print dialogue was also not
+   a download: it asked somebody to find "save as PDF" in a menu that differs
+   on every browser and is missing on some phones. */
 
 /* The receipt leaving.
 

@@ -12529,7 +12529,6 @@ function whatIsMissing(d) {
  * a browser, in the installed app, and on a phone.
  */
 function VoidChequeSheet({ d, business, onClose }) {
-  const sheet = useRef(null);
   const [err, setErr] = useState("");
 
   const rows = [
@@ -12569,7 +12568,7 @@ function VoidChequeSheet({ d, business, onClose }) {
       panelStyle={{ maxHeight: "88vh" }}
     >
       <ModalBody className="overflow-y-auto min-h-0 flex-1">
-        <div ref={sheet}>
+        <div>
           <p style={{ color: P.muted }} className="text-[14.5px] mb-3">
             Account details for {business || d.beneficiaryName}, issued {todayStr()}.
           </p>
@@ -12644,16 +12643,22 @@ function VoidChequeSheet({ d, business, onClose }) {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 mt-4 print-hide">
+        <div className="flex flex-wrap items-center gap-2 mt-4">
+          {/* A file, not a print dialogue.
+           *
+           * Printing asked somebody to find "save as PDF" in a menu that
+           * differs on every browser and is missing on some phones, and the
+           * sheet sits inside a fixed-position modal, which prints on every
+           * page: that was the duplicate. */}
           <button
             onClick={() => {
-              const r = voidCheque.printElement(sheet.current);
+              const r = voidCheque.downloadVoidCheque(d, business);
               if (!r.ok) setErr(r.error);
             }}
             style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
             className="h-11 px-4 text-[15px] font-medium press"
           >
-            Save as PDF or print
+            <Download size={14} className="inline mb-0.5" /> Download PDF
           </button>
           <button onClick={onClose} style={{ color: P.muted }} className="h-11 px-2 text-[15px] press">
             Close
@@ -12676,7 +12681,6 @@ function VoidChequeSheet({ d, business, onClose }) {
  * paying a bill does not require assembling it first.
  */
 function PayOrderSheet({ item, invoice, business, onClose, openPreview }) {
-  const sheet = useRef(null);
   const [err, setErr] = useState("");
 
   const paid = Number(item.paidAmount) || 0;
@@ -12697,7 +12701,7 @@ function PayOrderSheet({ item, invoice, business, onClose, openPreview }) {
       panelStyle={{ maxHeight: "88vh" }}
     >
       <ModalBody className="overflow-y-auto min-h-0 flex-1">
-        <div ref={sheet}>
+        <div>
           <div className="flex items-baseline justify-between gap-3">
             <span style={{ color: P.muted }} className="text-[15px]">Pay</span>
             <span style={{ fontFamily: MONO, color: P.text }} className="text-[22px] tabular-nums">
@@ -12761,16 +12765,32 @@ function PayOrderSheet({ item, invoice, business, onClose, openPreview }) {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 mt-4 print-hide">
+        <div className="flex flex-wrap items-center gap-2 mt-4">
+          {/* A file, for the same reasons as the void cheque. */}
           <button
             onClick={() => {
-              const r = voidCheque.printElement(sheet.current);
-              if (!r.ok) setErr(r.error);
+              const res = voidCheque.downloadPayOrder({
+                business,
+                party: item.party,
+                amount: fmt(due),
+                when: payBy ? (overdue ? `was due ${payBy}` : `by ${payBy}`) : "no date set",
+                overdue,
+                alreadyPaid: paid > 0.005
+                  ? `${fmt(paid)} of ${fmt(Math.abs(item.amount))} has already gone.` : null,
+                rows: [
+                  ["For", item.description],
+                  ["Invoice", invoice?.invoiceNo],
+                  ["Invoiced", invoice?.submittedAt ? String(invoice.submittedAt).slice(0, 10) : null],
+                  ["Their address", invoice?.contactEmail],
+                ],
+                how,
+              });
+              if (!res.ok) setErr(res.error);
             }}
             style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
             className="h-11 px-4 text-[15px] font-medium press"
           >
-            Save as PDF or print
+            <Download size={14} className="inline mb-0.5" /> Download PDF
           </button>
           {item.attachmentId && (
             <button
