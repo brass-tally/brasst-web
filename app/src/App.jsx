@@ -13492,7 +13492,6 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
   };
 
   const d = editing;
-  const fields = d ? billing.payFieldsFor(d.country) : [];
   const ready = d ? billing.payToReady(d) : false;
   const needed = (f) =>
     d && ((REQUIRED[d.country] || []).includes(f)
@@ -13670,44 +13669,63 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
             {CCY.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
 
-          {fields.map((f) => (
-            <div key={f} className="mt-2">
-              <label style={{ color: P.muted }} className="text-[13.5px] block">
-                {LABELS[f]}
-                {needed(f)
-                  ? <span style={{ color: P.debit }} aria-hidden> *</span>
-                  : <span style={{ color: P.faint }}> · optional</span>}
-                {HINTS[f] && <span style={{ color: P.faint }}> · {HINTS[f]}</span>}
-                {needed(f) && <span className="sr-only"> (required)</span>}
-              </label>
-              {f === "accountType" ? (
-                <select
-                  value={d.accountType || ""}
-                  onChange={(e) => setEditing({ ...d, accountType: e.target.value })}
-                  style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
-                  className="w-full h-11 px-3 text-[15px] outline-none border-none mt-1"
-                >
-                  <option value="chequing">Chequing</option>
-                  <option value="savings">Savings</option>
-                  <option value="business">Business</option>
-                </select>
-              ) : (
-                <input
-                  id={`payto-${f}`}
-                  value={d[f] || ""}
-                  onChange={(e) => {
-                    setEditing({ ...d, [f]: e.target.value });
-                    if (badField === f) { setBadField(""); setErr(""); }
-                  }}
-                  inputMode={/Number$/.test(f) ? "numeric" : undefined}
-                  style={{
-                    background: P.surface2, color: P.text, borderRadius: 13,
-                    border: badField === f ? `1.5px solid ${P.debit}` : "1.5px solid transparent",
-                    fontFamily: /Number$|iban|swift/i.test(f) ? MONO : undefined,
-                  }}
-                  className="w-full h-11 px-3.5 text-[15px] outline-none mt-1"
-                />
+          {/* Grouped, with what a transfer will not go without at the top.
+
+              A flat list put the two numbers a Canadian transfer needs seventh
+              and eighth, under an optional address, where they were reported as
+              missing. A field you cannot find is a field that is not there. */}
+          {billing.payGroupsFor(d.country).map((group) => (
+            <div key={group.id} className="mt-4">
+              <div
+                style={{ color: P.text, borderTop: `1px solid ${P.line}` }}
+                className="text-[13.5px] font-medium pt-3"
+              >
+                {group.title}
+              </div>
+              {group.note && (
+                <p style={{ color: P.faint }} className="text-[12.5px] mb-1">{group.note}</p>
               )}
+
+              {group.fields.map((f) => (
+                <div key={f} className="mt-2">
+                  <label style={{ color: P.muted }} className="text-[13.5px] block">
+                    {LABELS[f]}
+                    {needed(f)
+                      ? <span style={{ color: P.debit }} aria-hidden> *</span>
+                      : <span style={{ color: P.faint }}> · optional</span>}
+                    {HINTS[f] && <span style={{ color: P.faint }}> · {HINTS[f]}</span>}
+                    {needed(f) && <span className="sr-only"> (required)</span>}
+                  </label>
+                  {f === "accountType" ? (
+                    <select
+                      value={d.accountType || ""}
+                      onChange={(e) => setEditing({ ...d, accountType: e.target.value })}
+                      style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+                      className="w-full h-11 px-3 text-[15px] outline-none border-none mt-1"
+                    >
+                      <option value="chequing">Chequing</option>
+                      <option value="savings">Savings</option>
+                      <option value="business">Business</option>
+                    </select>
+                  ) : (
+                    <input
+                      id={`payto-${f}`}
+                      value={d[f] || ""}
+                      onChange={(e) => {
+                        setEditing({ ...d, [f]: e.target.value });
+                        if (badField === f) { setBadField(""); setErr(""); }
+                      }}
+                      inputMode={/Number$/.test(f) ? "numeric" : undefined}
+                      style={{
+                        background: P.surface2, color: P.text, borderRadius: 13,
+                        border: badField === f ? `1.5px solid ${P.debit}` : "1.5px solid transparent",
+                        fontFamily: /Number$|iban|swift/i.test(f) ? MONO : undefined,
+                      }}
+                      className="w-full h-11 px-3.5 text-[15px] outline-none mt-1"
+                    />
+                  )}
+                </div>
+              ))}
             </div>
           ))}
 

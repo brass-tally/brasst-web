@@ -313,13 +313,52 @@ export function payToFor(accounts = [], currency) {
   return live.find((a) => a.currency === currency) || live.find((a) => a.isDefault) || live[0] || null;
 }
 
-/** What a given country actually needs, so the form asks for that and no more. */
+/* The form, in groups, with what a transfer will not go without at the top.
+ *
+ * It used to be one flat list in an order nobody chose: the two numbers a
+ * Canadian transfer actually needs sat seventh and eighth, under an optional
+ * branch address, which on a phone is below the fold of a form nobody scrolls
+ * twice. The owner reported them as missing, and that is the correct reading
+ * of a field you cannot find.
+ *
+ * Three groups, named, required first.
+ */
+export function payGroupsFor(country) {
+  const numbers = country === "US" ? ["routingNumber", "accountNumber"]
+    : country === "OTHER" ? ["iban", "accountNumber", "swiftCode"]
+      : ["transitNumber", "institutionNumber", "accountNumber"];
+
+  return [
+    {
+      id: "numbers",
+      title: country === "US" ? "The numbers a US transfer needs"
+        : country === "OTHER" ? "The numbers an international transfer needs"
+          : "The numbers a Canadian transfer needs",
+      note: country === "CA"
+        ? "Transit, institution and account are the three along the bottom of a cheque."
+        : country === "US"
+          ? "Routing and account are the two along the bottom of a cheque."
+          : "An IBAN, or an account number with a SWIFT code.",
+      fields: numbers,
+    },
+    {
+      id: "who",
+      title: "Who is being paid",
+      fields: ["beneficiaryName", "beneficiaryAddress"],
+    },
+    {
+      id: "bank",
+      title: "Which bank",
+      fields: country === "CA" || country === "US"
+        ? ["bankName", "branchAddress", "accountType", "swiftCode"]
+        : ["bankName", "branchAddress", "accountType"],
+    },
+  ];
+}
+
+/** Flat, for anything that wants the whole list. */
 export function payFieldsFor(country) {
-  const common = ["beneficiaryName", "beneficiaryAddress", "accountNumber", "accountType",
-                  "bankName", "branchAddress"];
-  if (country === "US") return [...common, "routingNumber", "swiftCode"];
-  if (country === "OTHER") return [...common, "iban", "swiftCode"];
-  return [...common, "transitNumber", "institutionNumber", "swiftCode"];
+  return payGroupsFor(country).flatMap((g) => g.fields);
 }
 
 /** Whether it is complete enough to put in front of a customer. */
