@@ -12541,7 +12541,12 @@ function VoidChequeSheet({ d, business, onClose }) {
     ["Account type", d.accountType],
     ...(d.country === "CA"
       ? [["Transit number", d.transitNumber], ["Institution number", d.institutionNumber]] : []),
-    ...(d.country === "US" ? [["Routing number", d.routingNumber]] : []),
+    /* Both US routing numbers, labelled. A wire sent to the ACH number is
+       rejected days later minus a fee, and nothing explains why. The wire row
+       appears only when there is one, because an empty labelled row invites a
+       question nobody can answer. */
+    ...(d.country === "US" ? [["Routing number (ACH)", d.routingNumber]] : []),
+    ...(d.country === "US" ? [["Routing number (wire)", d.wireRoutingNumber]] : []),
     ...(d.iban ? [["IBAN", d.iban]] : []),
     ...(d.swiftCode ? [["SWIFT / BIC", d.swiftCode]] : []),
   ].filter(([, v]) => String(v || "").trim());
@@ -13574,10 +13579,31 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
             <div className="flex flex-wrap items-center gap-2 mt-1.5">
               <button onClick={() => { setEditing(r); setErr(""); setBadField(""); }}
                 style={{ color: P.brassText }} className="text-[13px] press">Edit</button>
-              {billing.payToReady(r) && (
-                <button onClick={() => setCheque(r)}
-                  style={{ color: P.brassText }} className="text-[13px] press">Void cheque</button>
-              )}
+              {/* Always offered, never silently absent.
+               *
+               * It was hidden until the account was complete, which is the
+               * same fault as a greyed button: the control is missing, nothing
+               * says why, and it reads as broken rather than blocked.
+               * Pressing it on an incomplete account names the missing field
+               * and opens the form at it. */}
+              <button
+                onClick={() => {
+                  if (billing.payToReady(r)) { setCheque(r); return; }
+                  const [field, why] = whatIsMissing(r);
+                  setEditing(r);
+                  setErr(`A void cheque needs the whole account. ${why}`);
+                  setBadField(field || "");
+                  setTimeout(() => {
+                    const node = document.getElementById(`payto-${field}`);
+                    node?.focus();
+                    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+                  }, 60);
+                }}
+                style={{ color: billing.payToReady(r) ? P.brassText : P.faint }}
+                className="text-[13px] press"
+              >
+                Void cheque
+              </button>
               {!r.isDefault && r.active && (
                 <button
                   onClick={async () => {
