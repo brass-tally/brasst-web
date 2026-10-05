@@ -203,8 +203,25 @@ function payBlock(d) {
 
   if (!rows.length) return "";
 
+  /* Which account, and whether it is the right one for this invoice.
+   *
+   * A business may hold several. The server picks the one whose currency
+   * matches the invoice, and says so here, because a customer sent an account
+   * in the wrong currency pays a conversion they did not agree to and a
+   * correspondent fee nobody mentioned. */
+  const ccyNote = p.currency && !p.matches_invoice
+    ? `<p class="small" style="color:var(--debit);margin:-4px 0 10px">
+         This account receives ${esc(p.currency)} and the invoice is in ${esc(d.currency || "CAD")}.
+         Ask ${esc(d.from)} before sending it.
+       </p>`
+    : p.currency
+      ? `<p class="small" style="margin:-6px 0 10px">The account for ${esc(p.currency)}.</p>`
+      : "";
+
   return `<div class="card pay">
     <div class="eyebrow">Where to send it</div>
+    ${p.label ? `<p class="small" style="margin:-6px 0 2px"><b>${esc(p.label)}</b></p>` : ""}
+    ${ccyNote}
     <p class="small" style="margin:-6px 0 10px">
       ${esc(d.from)} &middot; invoice ${esc(d.number)}
     </p>

@@ -171,7 +171,20 @@ export async function removeDraft(invoiceId) {
  * Off until somebody has filled it in and turned it on, so a half-typed
  * account number never reaches a customer.
  */
+
+
+/* Several accounts, not one.
+ *
+ * A business billing in two currencies has two, and they are not
+ * interchangeable: a US customer paying a Canadian account by wire loses money
+ * to conversion and a correspondent fee, and a Canadian customer sent a routing
+ * number has nothing to type it into.
+ */
 const rowToPay = (r) => r && ({
+  id: r.id,
+  label: r.label || "",
+  currency: r.currency || "",
+  isDefault: Boolean(r.is_default),
   country: r.country || "CA",
   beneficiaryName: r.beneficiary_name || "",
   beneficiaryAddress: r.beneficiary_address || "",
@@ -188,29 +201,41 @@ const rowToPay = (r) => r && ({
   active: Boolean(r.active),
 });
 
-export async function getPayTo(ledgerId) {
+export async function listPayTo(ledgerId) {
   return soft("payment details", async () => {
     const { data, error } = await supabase
-      .from("payment_details").select("*").eq("ledger_id", ledgerId).maybeSingle();
+      .from("payment_details").select("*").eq("ledger_id", ledgerId)
+      .order("is_default", { ascending: false })
+      .order("updated_at", { ascending: false });
     if (error) throw error;
-    return rowToPay(data) || null;
-  }, null);
+    return (data || []).map(rowToPay);
+  }, []);
+}
+
+/** What a blank one looks like, with the currency implied by the country. */
+export function blankPayTo(country = "CA") {
+  return {
+    id: null,
+    label: country === "CA" ? "Canadian account" : country === "US" ? "US account" : "International account",
+    currency: country === "CA" ? "CAD" : country === "US" ? "USD" : "",
+    isDefault: false,
+    country,
+    beneficiaryName: "", beneficiaryAddress: "", accountNumber: "", accountType: "chequing",
+    institutionNumber: "", transitNumber: "", routingNumber: "", iban: "", swiftCode: "",
+    bankName: "", branchAddress: "", note: "", active: false,
+  };
 }
 
 export async function savePayTo(ledgerId, d) {
   assertWritable();
-  /* The reason travels with the failure.
-   *
-   * `soft` returns null and logs, which is right for a list that can render
-   * empty and wrong for a button: pressing it did nothing, said nothing, and
-   * the only trace was a console line nobody reads while pressing a button.
-   *
-   * This is the fourth time this session I have found that shape. It is the
-   * one to watch for rather than fix case by case: a swallowed error behind a
-   * control is indistinguishable from a control that does not work. */
   try {
+    if (typeof supabase?.from !== "function") {
+      throw new Error("This build is missing part of the billing library. Deploy app/src/lib/billing.js alongside App.jsx.");
+    }
     const body = {
       ledger_id: ledgerId,
+      label: d.label || null,
+      currency: d.currency || null,
       country: d.country || "CA",
       beneficiary_name: d.beneficiaryName || null,
       beneficiary_address: d.beneficiaryAddress || null,
@@ -227,14 +252,65 @@ export async function savePayTo(ledgerId, d) {
       active: Boolean(d.active),
       updated_at: new Date().toISOString(),
     };
-    const { data, error } = await supabase
-      .from("payment_details").upsert(body, { onConflict: "ledger_id" }).select().single();
+
+    const q = d.id
+      ? supabase.from("payment_details").update(body).eq("id", d.id).select().single()
+      : supabase.from("payment_details").insert(body).select().single();
+
+    const { data, error } = await q;
     if (error) throw error;
+
+    /* The first account to be switched on becomes the default, because an
+       invoice needs one and nobody should have to know that. */
+    if (body.active) {
+      const { count } = await supabase
+        .from("payment_details").select("id", { count: "exact", head: true })
+        .eq("ledger_id", ledgerId).eq("is_default", true);
+      if (!count) await setDefaultPayTo(ledgerId, data.id);
+    }
+
     return { ok: true, saved: rowToPay(data) };
   } catch (e) {
     console.warn("save payment details failed:", e?.message || e);
     return { ok: false, error: e?.message || "It did not save." };
   }
+}
+
+/* Exactly one default. Cleared first, because the partial unique index refuses
+   two and the failure would otherwise land on the person pressing the button. */
+export async function setDefaultPayTo(ledgerId, id) {
+  assertWritable();
+  try {
+    const { error: clearErr } = await supabase
+      .from("payment_details").update({ is_default: false })
+      .eq("ledger_id", ledgerId).eq("is_default", true);
+    if (clearErr) throw clearErr;
+
+    const { error } = await supabase
+      .from("payment_details").update({ is_default: true, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) throw error;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "Could not set that as the default." };
+  }
+}
+
+export async function removePayTo(id) {
+  assertWritable();
+  try {
+    const { error } = await supabase.from("payment_details").delete().eq("id", id);
+    if (error) throw error;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "Could not remove it." };
+  }
+}
+
+/** Which account a customer billed in this currency should be shown. */
+export function payToFor(accounts = [], currency) {
+  const live = accounts.filter((a) => a.active);
+  return live.find((a) => a.currency === currency) || live.find((a) => a.isDefault) || live[0] || null;
 }
 
 /** What a given country actually needs, so the form asks for that and no more. */

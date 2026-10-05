@@ -13451,31 +13451,20 @@ function ConnectorGrid({ bankTxns = [], connected = [] }) {
 }
 
 function PayToCard({ ledgerId, ledgerName, readOnly }) {
-  const [d, setD] = useState(null);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState("");
-  /* Declared with the others, above the early return.
-     A hook after `if (!d) return null` runs on some renders and not others,
-     which is the one thing React cannot tolerate. */
+  const [rows, setRows] = useState([]);
+  const [editing, setEditing] = useState(null);   // a draft, or null
+  const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
-  /* Which field the complaint is about, so the card can mark it. Declared here
-     because this is the component that reads and sets it: the first attempt
-     landed in a component eleven thousand lines away, and the ownership check
-     is what noticed. */
   const [badField, setBadField] = useState("");
-  const [showCheque, setShowCheque] = useState(false);
+  const [done, setDone] = useState("");
+  const [cheque, setCheque] = useState(null);     // which one to draw
 
-  useEffect(() => {
+  const refresh = useCallback(async () => {
     if (!ledgerId) return;
-    billing.getPayTo(ledgerId).then((v) => setD(v || {
-      country: "CA", beneficiaryName: "", beneficiaryAddress: "", accountNumber: "",
-      accountType: "chequing", institutionNumber: "", transitNumber: "", routingNumber: "",
-      iban: "", swiftCode: "", bankName: "", branchAddress: "", note: "", active: false,
-    }));
+    setRows(await billing.listPayTo(ledgerId));
   }, [ledgerId]);
 
-  if (!d) return null;
+  useEffect(() => { refresh(); }, [refresh]);
 
   const LABELS = {
     beneficiaryName: "Beneficiary name",
@@ -13496,35 +13485,22 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
     routingNumber: "nine digits",
     swiftCode: "only needed for payments from abroad",
   };
-
-  const fields = billing.payFieldsFor(d.country);
-  const ready = billing.payToReady(d);
-
-  /* What a transfer will not go without, by country.
-   *
-   * An asterisk on everything is the same as an asterisk on nothing. These are
-   * the fields a bank rejects the payment without; the rest help a person at
-   * the other end find the right account and are genuinely optional. */
   const REQUIRED = {
     CA: ["beneficiaryName", "accountNumber", "bankName", "transitNumber", "institutionNumber"],
     US: ["beneficiaryName", "accountNumber", "bankName", "routingNumber"],
     OTHER: ["beneficiaryName", "accountNumber", "bankName"],
-  }[d.country] || [];
+  };
+
+  const d = editing;
+  const fields = d ? billing.payFieldsFor(d.country) : [];
+  const ready = d ? billing.payToReady(d) : false;
   const needed = (f) =>
-    REQUIRED.includes(f) || (d.country === "OTHER" && (f === "iban" || f === "swiftCode"));
+    d && ((REQUIRED[d.country] || []).includes(f)
+      || (d.country === "OTHER" && (f === "iban" || f === "swiftCode")));
 
   const save = async (patch = {}) => {
-    setBusy(true);
+    setBusy("save");
     setErr("");
-
-    /* Guard against a half-deployed library.
-     *
-     * If `billing.js` has not been updated alongside `App.jsx`, this function
-     * does not exist, calling it throws, and the click handler dies silently:
-     * no save, no message, a button that looks broken rather than blocked.
-     *
-     * Files deployed one at a time is how this project is updated, so the code
-     * has to survive it and say what happened. */
     let res;
     try {
       if (typeof billing.savePayTo !== "function") {
@@ -13532,91 +13508,144 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
       }
       res = await billing.savePayTo(ledgerId, { ...d, ...patch });
     } catch (e) {
-      setBusy(false);
-      setErr(e?.message || "It did not save.");
-      return;
+      setBusy(""); setErr(e?.message || "It did not save."); return;
     }
-    setBusy(false);
-
-    /* A button that cannot do its job says so. It used to check the result for
-       truthiness and then do nothing at all when it was null, which reads as a
-       dead control rather than a blocked one. */
-    if (!res?.ok) {
-      setErr(res?.error || "It did not save. Try again in a moment.");
-      return;
-    }
-
-    setD(res.saved);
-    setDone(patch.active === false ? "Off. It will not appear on invoices."
-      : res.saved.active ? "Saved. It goes out with every invoice." : "Saved, and kept to yourself.");
+    setBusy("");
+    if (!res?.ok) { setErr(res?.error || "It did not save."); return; }
+    setDone(patch.active === false
+      ? `${res.saved.label || "That account"} saved, kept to yourself.`
+      : `${res.saved.label || "That account"} saved, and on your invoices.`);
     setTimeout(() => setDone(""), 6000);
+    setEditing(null);
+    refresh();
   };
+
+  /* Which currencies you actually bill in, so the picker offers those first
+     rather than a list of every currency on earth. */
+  const CCY = ["CAD", "USD", "EUR", "GBP", "AUD", "PKR"];
 
   return (
     <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4 mb-3">
       <div className="flex items-baseline justify-between gap-3">
         <span style={{ color: P.text }} className="text-[15.5px]">How they pay you</span>
-        <span className="flex items-center gap-1.5 shrink-0">
-          {/* Only once there is something worth printing. A void cheque with
-              blanks on it is worse than none: somebody will send money to it. */}
-          {ready && (
-            <button
-              onClick={() => setShowCheque(true)}
-              style={{
-                background: P.surface,
-                color: P.text,
-                border: `1px solid ${P.line}`,
-                borderRadius: R.pill,
-              }}
-              className="h-9 px-3.5 text-[13.5px] font-medium press"
-            >
-              Void cheque
-            </button>
-          )}
+        {!readOnly && !editing && (
           <button
-            onClick={() => setOpen((v) => !v)}
-            style={{
-              background: P.surface,
-              color: P.text,
-              border: `1px solid ${P.line}`,
-              borderRadius: R.pill,
-            }}
-            className="h-9 px-3.5 text-[13.5px] font-medium press"
+            onClick={() => { setEditing(billing.blankPayTo("CA")); setErr(""); setBadField(""); }}
+            style={{ background: P.surface, color: P.text, border: `1px solid ${P.line}`, borderRadius: R.pill }}
+            className="h-9 px-3.5 text-[13.5px] font-medium press shrink-0"
           >
-            {open ? "Close" : d.active ? "Edit" : "Set it up"}
+            <Plus size={12} className="inline mb-0.5" /> Add an account
           </button>
-        </span>
+        )}
       </div>
 
       <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
-        {d.active && ready
-          ? `${d.bankName || "Your bank"}, account ending ${String(d.accountNumber).slice(-4)} · on every invoice`
-          : ready
-            ? "Filled in, but not going out. Turn it on to put it on your invoices."
-            : "Your bank details, printed on every invoice so nobody has to ask."}
+        {rows.length
+          ? "An invoice shows the account that matches its currency."
+          : "Your bank details, printed on every invoice so nobody has to ask."}
       </p>
 
       {done && <p style={{ color: P.credit }} className="text-[13.5px] mt-1">{done}</p>}
-      {err && <p style={{ color: P.debit }} className="text-[13.5px] mt-1">{err}</p>}
+      {err && !editing && <p style={{ color: P.debit }} className="text-[13.5px] mt-1">{err}</p>}
 
-      {showCheque && (
-        <VoidChequeSheet d={d} business={ledgerName} onClose={() => setShowCheque(false)} />
-      )}
+      {/* truncation-ok: every account is listed, there is no cap. */}
+      {rows.map((r) => (
+        <div key={r.id} className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span style={{ color: P.text }} className="text-[14.5px] min-w-0 truncate">
+              {r.label || `${r.country} account`}
+              {r.isDefault && (
+                <span style={{ background: P.brass, color: P.onbrass, borderRadius: 999 }}
+                  className="ml-2 px-2 py-0.5 text-[11px] font-semibold">default</span>
+              )}
+            </span>
+            <span style={{ fontFamily: MONO, color: P.faint }} className="text-[13px] shrink-0">
+              {r.currency || r.country}
+            </span>
+          </div>
+          <div style={{ color: P.faint }} className="text-[12.5px]">
+            {r.bankName || "No bank named"}
+            {r.accountNumber ? ` · ending ${String(r.accountNumber).slice(-4)}` : ""}
+            {r.active ? "" : " · not on invoices"}
+          </div>
 
-      {open && (
-        <div className="mt-3">
+          {!readOnly && (
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              <button onClick={() => { setEditing(r); setErr(""); setBadField(""); }}
+                style={{ color: P.brassText }} className="text-[13px] press">Edit</button>
+              {billing.payToReady(r) && (
+                <button onClick={() => setCheque(r)}
+                  style={{ color: P.brassText }} className="text-[13px] press">Void cheque</button>
+              )}
+              {!r.isDefault && r.active && (
+                <button
+                  onClick={async () => {
+                    setBusy(r.id);
+                    const res = await billing.setDefaultPayTo(ledgerId, r.id);
+                    setBusy("");
+                    if (!res.ok) setErr(res.error); else refresh();
+                  }}
+                  disabled={busy === r.id}
+                  style={{ color: P.muted }} className="text-[13px] press">
+                  {busy === r.id ? "…" : "Make default"}
+                </button>
+              )}
+              <button
+                onClick={async () => {
+                  setBusy(r.id);
+                  const res = await billing.removePayTo(r.id);
+                  setBusy("");
+                  if (!res.ok) setErr(res.error); else refresh();
+                }}
+                disabled={busy === r.id}
+                style={{ color: P.debit }} className="text-[13px] press">Remove</button>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {editing && (
+        <div style={{ background: P.surface, borderRadius: 14 }} className="p-3.5 mt-3">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span style={{ color: P.text }} className="text-[14.5px]">
+              {d.id ? "Editing an account" : "A new account"}
+            </span>
+            <button onClick={() => { setEditing(null); setErr(""); setBadField(""); }}
+              style={{ color: P.faint }} className="text-[13.5px] press">Close</button>
+          </div>
+
           <p style={{ color: P.faint }} className="text-[12.5px] mb-2">
             <span style={{ color: P.debit }}>*</span> a transfer will not go without it.
             Everything else helps the person at the other end find the right account.
           </p>
 
-          <div className="flex flex-wrap gap-1.5 mb-2">
+          <label style={{ color: P.muted }} className="text-[13.5px] block">
+            What you call it<span style={{ color: P.debit }}> *</span>
+          </label>
+          <input
+            value={d.label || ""}
+            onChange={(e) => setEditing({ ...d, label: e.target.value })}
+            placeholder="Canadian account"
+            style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+          />
+
+          <div className="flex flex-wrap gap-1.5 mt-3 mb-2">
             {[["CA", "Canada"], ["US", "United States"], ["OTHER", "Elsewhere"]].map(([k, label]) => (
               <button
                 key={k}
-                onClick={() => setD({ ...d, country: k })}
+                onClick={() => setEditing({
+                  ...d,
+                  country: k,
+                  /* The currency follows the country unless somebody has already
+                     chosen otherwise, because a Canadian account receiving USD
+                     exists and the form should not overwrite that. */
+                  currency: d.currency && d.currency !== (d.country === "CA" ? "CAD" : d.country === "US" ? "USD" : "")
+                    ? d.currency
+                    : (k === "CA" ? "CAD" : k === "US" ? "USD" : ""),
+                })}
                 style={{
-                  background: d.country === k ? P.brass : P.surface,
+                  background: d.country === k ? P.brass : P.surface2,
                   color: d.country === k ? P.onbrass : P.muted,
                   borderRadius: R.pill,
                 }}
@@ -13626,6 +13655,20 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
               </button>
             ))}
           </div>
+
+          <label style={{ color: P.muted }} className="text-[13.5px] block">
+            Currency it receives
+            <span style={{ color: P.faint }}> · an invoice in this currency shows this account</span>
+          </label>
+          <select
+            value={d.currency || ""}
+            onChange={(e) => setEditing({ ...d, currency: e.target.value })}
+            style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3 text-[15px] outline-none border-none mt-1"
+          >
+            <option value="">Any currency</option>
+            {CCY.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
 
           {fields.map((f) => (
             <div key={f} className="mt-2">
@@ -13640,8 +13683,8 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
               {f === "accountType" ? (
                 <select
                   value={d.accountType || ""}
-                  onChange={(e) => setD({ ...d, accountType: e.target.value })}
-                  style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+                  onChange={(e) => setEditing({ ...d, accountType: e.target.value })}
+                  style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
                   className="w-full h-11 px-3 text-[15px] outline-none border-none mt-1"
                 >
                   <option value="chequing">Chequing</option>
@@ -13652,12 +13695,13 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
                 <input
                   id={`payto-${f}`}
                   value={d[f] || ""}
-                  onChange={(e) => { setD({ ...d, [f]: e.target.value }); if (badField === f) { setBadField(""); setErr(""); } }}
+                  onChange={(e) => {
+                    setEditing({ ...d, [f]: e.target.value });
+                    if (badField === f) { setBadField(""); setErr(""); }
+                  }}
                   inputMode={/Number$/.test(f) ? "numeric" : undefined}
                   style={{
-                    background: P.surface, color: P.text, borderRadius: 13,
-                    /* The field the complaint names is outlined, so nobody has
-                       to match a sentence to a box by reading. */
+                    background: P.surface2, color: P.text, borderRadius: 13,
                     border: badField === f ? `1.5px solid ${P.debit}` : "1.5px solid transparent",
                     fontFamily: /Number$|iban|swift/i.test(f) ? MONO : undefined,
                   }}
@@ -13669,80 +13713,58 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
 
           <div className="mt-2">
             <label style={{ color: P.muted }} className="text-[13.5px] block">
-              Anything else they should know
-              <span style={{ color: P.faint }}> · optional</span>
+              Anything else they should know<span style={{ color: P.faint }}> · optional</span>
             </label>
             <input
               value={d.note || ""}
-              onChange={(e) => setD({ ...d, note: e.target.value })}
+              onChange={(e) => setEditing({ ...d, note: e.target.value })}
               placeholder="Please quote the invoice number"
-              style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+              style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
               className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
             />
           </div>
 
-          {!ready && (
-            <p style={{ color: P.faint }} className="text-[13px] mt-2 leading-snug">
-              {d.country === "CA"
-                ? "A name, an account number, a bank, a transit and an institution number are what a Canadian transfer needs."
-                : d.country === "US"
-                  ? "A name, an account number, a bank and a routing number are what a US transfer needs."
-                  : "A name, an account number, a bank, and an IBAN or SWIFT code."}
-            </p>
-          )}
+          {err && <p style={{ color: P.debit }} className="text-[13.5px] mt-2">{err}</p>}
 
-          {!readOnly && (
-            <div className="flex flex-wrap items-center gap-2 mt-3">
-              {/* Pressable even when incomplete.
-               *
-               * A greyed button is indistinguishable from a broken one, and
-               * the person pressing it cannot tell which field is missing.
-               * Pressing it names the missing field instead. */}
-              <button
-                onClick={() => {
-                  if (!ready) {
-                    const [field, why] = whatIsMissing(d);
-                    setErr(why);
-                    setBadField(field || "");
-                    if (field) {
-                      const el = document.getElementById(`payto-${field}`);
-                      el?.focus();
-                      el?.scrollIntoView({ block: "center", behavior: "smooth" });
-                    }
-                    return;
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              onClick={() => {
+                if (!String(d.label || "").trim()) {
+                  setErr("Give it a name, so you can tell it from the others.");
+                  return;
+                }
+                if (!ready) {
+                  const [field, why] = whatIsMissing(d);
+                  setErr(why);
+                  setBadField(field || "");
+                  if (field) {
+                    const node = document.getElementById(`payto-${field}`);
+                    node?.focus();
+                    node?.scrollIntoView({ block: "center", behavior: "smooth" });
                   }
-                  save({ active: true });
-                }}
-                disabled={busy}
-                style={{
-                  background: ready ? P.brass : P.surface2,
-                  color: ready ? P.onbrass : P.muted,
-                  borderRadius: R.pill,
-                }}
-                className="h-11 px-4 text-[15px] font-medium press"
-              >
-                {busy ? "Saving" : "Save and put it on invoices"}
-              </button>
-              {/* A real button, not a link in disguise.
-               *
-               * This was bare text with a colour, which on a card full of text
-               * reads as a caption. Two actions sit here and both should look
-               * like something you press. */}
-              <button
-                onClick={() => save({ active: false })}
-                disabled={busy}
-                style={{
-                  background: P.surface,
-                  color: P.text,
-                  border: `1px solid ${P.line}`,
-                  borderRadius: R.pill,
-                }}
-                className="h-11 px-4 text-[14.5px] font-medium press"
-              >
-                Save, keep it private
-              </button>
-            </div>
-          )}
+                  return;
+                }
+                save({ active: true });
+              }}
+              disabled={busy !== ""}
+              style={{
+                background: ready ? P.brass : P.surface2,
+                color: ready ? P.onbrass : P.muted,
+                borderRadius: R.pill,
+              }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {busy === "save" ? "Saving" : "Save and put it on invoices"}
+            </button>
+            <button
+              onClick={() => save({ active: false })}
+              disabled={busy !== ""}
+              style={{ background: P.surface2, color: P.text, border: `1px solid ${P.line}`, borderRadius: R.pill }}
+              className="h-11 px-4 text-[14.5px] font-medium press"
+            >
+              Save, keep it private
+            </button>
+          </div>
 
           <p style={{ color: P.faint }} className="text-[12.5px] mt-2 leading-snug">
             These are the details printed at the bottom of every invoice anybody has ever sent, and a
@@ -13750,6 +13772,10 @@ function PayToCard({ ledgerId, ledgerName, readOnly }) {
             share them the way you would a cheque.
           </p>
         </div>
+      )}
+
+      {cheque && (
+        <VoidChequeSheet d={cheque} business={ledgerName} onClose={() => setCheque(null)} />
       )}
     </div>
   );
