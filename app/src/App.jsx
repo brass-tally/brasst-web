@@ -3188,7 +3188,7 @@ function Ledger({ onSignOut }) {
             balance={balance}
             onAsk={askAgent}
             bankTxns={bankTxns}
-          />
+          ledgers={ledgers || []} readOnly={readOnly} />
         )}
 
         {tab === "integrations" && <IntegrationsTab data={data} syncedAt={syncedAt} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
@@ -13032,35 +13032,122 @@ function CardPaymentsCard({ ledgerId, readOnly, addTx, settleAR, onChanged }) {
  * It catches the forgotten ones precisely because it does not need to know the
  * vendor exists, which is the whole reason this is worth having.
  */
-function SubscriptionsCard({ bankTxns = [], ledgerCcy }) {
-  const [open, setOpen] = useState(false);
+function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], readOnly }) {
+  const [tags, setTags] = useState([]);
+  const [elsewhere, setElsewhere] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
 
-  const subs = useMemo(() => subscriptions.findSubscriptions(bankTxns), [bankTxns]);
-  const totals = useMemo(() => subscriptions.subscriptionTotals(subs), [subs]);
-  const soon = useMemo(() => subscriptions.dueSoon(subs, 14), [subs]);
+  const refresh = useCallback(async () => {
+    if (!ledgerId) return;
+    const [t, e] = await Promise.all([
+      subscriptions.listTags(ledgerId),
+      subscriptions.listChargedHere(ledgerId),
+    ]);
+    setTags(t);
+    setElsewhere(e);
+  }, [ledgerId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const found = useMemo(() => subscriptions.findAll(bankTxns), [bankTxns]);
+  const rows = useMemo(() => subscriptions.applyTags(found, tags), [found, tags]);
+
+  const known = rows.filter((r) => r.confidence === "known" || r.side === "business");
+  const rest = rows.filter((r) => !known.includes(r));
+  /* The headline is what you are still paying. Something that stopped
+     charging in July is not a monthly cost, and counting it overstates the
+     figure people make decisions on. */
+  const running = known.filter((r) => r.status !== "stopped" && !r.cancelledOn);
+  const totals = subscriptions.subscriptionTotals(running);
+  const stopped = known.filter((r) => r.status === "stopped" || r.cancelledOn);
+  const biz = subscriptions.businessTotals(rows);
+
+  const otherLedgers = ledgers.filter((l) => l.id !== ledgerId);
+
+  const save = async (patch) => {
+    setBusy(editing.key);
+    setErr("");
+    const res = await subscriptions.saveTag(ledgerId, { payeeKey: editing.key, ...editing.tag, ...patch });
+    setBusy("");
+    if (!res.ok) { setErr(res.error); return; }
+    setEditing(null);
+    refresh();
+  };
 
   if (!bankTxns.length) {
     return (
       <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4">
         <span style={{ color: P.text }} className="text-[15.5px] block">Subscriptions</span>
         <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
-          Connect a bank and anything charging you on a schedule will appear here.
+          Connect a bank and anything charging you on a schedule appears here.
         </p>
       </div>
     );
   }
 
-  if (!subs.length) {
-    return (
-      <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4">
-        <span style={{ color: P.text }} className="text-[15.5px] block">Subscriptions</span>
-        <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
-          Nothing in your feed repeats on a schedule yet. It takes three charges to be sure
-          something is a subscription rather than a coincidence.
-        </p>
+  const SIDE = {
+    business: { label: "Business", bg: P.brass + "24", fg: P.brassText },
+    personal: { label: "Personal", bg: P.surface, fg: P.muted },
+    mixed: { label: "Split", bg: P.credit + "24", fg: P.credit },
+    unset: null,
+  };
+
+  const Row = ({ r }) => (
+    <div className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span style={{ color: P.text }} className="text-[14.5px] min-w-0 truncate">
+          {r.name}
+          {SIDE[r.side] && (
+            <span
+              style={{ background: SIDE[r.side].bg, color: SIDE[r.side].fg, borderRadius: 999 }}
+              className="ml-2 px-2 py-0.5 text-[11.5px] font-medium"
+            >
+              {SIDE[r.side].label}
+            </span>
+          )}
+        </span>
+        <span style={{ fontFamily: MONO, color: P.text }} className="text-[14.5px] tabular-nums shrink-0">
+          {fmt(r.monthly)}
+        </span>
       </div>
-    );
-  }
+
+      {/* What it is, in the fewest words that are still true. A varying charge
+          says its range rather than pretending to a single figure. */}
+      <div style={{ color: P.faint }} className="text-[12.5px]">
+        {r.kind === "varies"
+          ? `${fmt(r.low)} to ${fmt(r.high)} a month · ${r.charges} charges`
+          : `${fmt(r.amount)} every ${r.every}${r.nextDue ? ` · next ${r.nextDue}` : ""}`}
+        {r.rose ? ` · rose from ${fmt(r.rose.from)}` : ""}
+      </div>
+
+      {/* When it started and whether it is still going.
+          A list with no dates answers "what do I pay for" and not "am I still
+          paying for it", which is the question that saves money. */}
+      <div
+        style={{ color: r.status === "stopped" ? P.debit : P.faint }}
+        className="text-[12.5px]"
+      >
+        {r.status === "stopped"
+          ? `Stopped · ${r.statusWhy}`
+          : r.cancelledOn
+            ? `You marked it cancelled ${r.cancelledOn}`
+            : `Since ${r.firstCharged}${r.monthsRunning ? ` · ${r.monthsRunning} months` : ""}`}
+      </div>
+
+      {!readOnly && (
+        <button
+          onClick={() => setEditing({ key: r.key, name: r.name, tag: tags.find((t) => t.payeeKey === r.key) || {} })}
+          style={{ color: P.brassText }}
+          className="text-[12.5px] press mt-1"
+        >
+          {r.tagged ? "Edit" : "Tag it"}
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div style={{ background: P.surface2, borderRadius: 16 }} className="p-4">
@@ -13072,61 +13159,165 @@ function SubscriptionsCard({ bankTxns = [], ledgerCcy }) {
       </div>
 
       <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
-        {totals.count} found in your bank feed · {fmt(totals.yearly)} a year
-        {soon.length ? ` · ${soon.length} charging within a fortnight` : ""}
+        {totals.count} running · {fmt(totals.yearly)} a year
+        {stopped.length ? ` · ${stopped.length} stopped` : ""}
+        {biz.monthly > 0 ? ` · ${fmt(biz.monthly)} tagged business` : ""}
       </p>
 
-      {/* truncation-ok: capped at five until opened, and the button below
-          names the number hidden rather than leaving a silent cut. */}
-      {subs.slice(0, open ? subs.length : 5).map((sub) => (
-        <div key={sub.key} className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
-          <div className="flex items-baseline justify-between gap-3">
-            <span style={{ color: P.text }} className="text-[14.5px] min-w-0 truncate">{sub.name}</span>
-            <span style={{ fontFamily: MONO, color: P.text }} className="text-[14.5px] tabular-nums shrink-0">
-              {fmt(sub.amount)}
-            </span>
-          </div>
-          <div style={{ color: P.faint }} className="text-[13px]">
-            every {sub.every} · next {sub.nextDue}
-            {sub.every !== "month" ? ` · ${fmt(sub.monthly)} a month` : ""}
-          </div>
-          {/* A price rise on something nobody looks at is the commonest way a
-              subscription becomes expensive. */}
-          {sub.rose && (
-            <div style={{ color: P.brassText }} className="text-[13px]">
-              went up from {fmt(sub.rose.from)} to {fmt(sub.rose.to)}
-            </div>
-          )}
-        </div>
-      ))}
+      {err && <p style={{ color: P.debit }} className="text-[13px] mt-1">{err}</p>}
 
-      {subs.length > 5 && (
-        <button
-          onClick={() => setOpen((v) => !v)}
-          style={{ color: P.brassText }}
-          className="text-[13.5px] press mt-2"
+      {/* Charged to a card on another ledger, and tagged as belonging here.
+          A personal card paying for business software is the ordinary case for
+          an owner-operator, and the business side should not have to pretend
+          it does not happen. */}
+      {elsewhere.length > 0 && (
+        <div
+          style={{ background: P.surface, borderLeft: `3px solid ${P.brass}`, borderRadius: "0 12px 12px 0" }}
+          className="p-3 mt-3"
         >
-          {open ? "Show fewer" : `${subs.length - 5} more · show all ${subs.length}`}
-        </button>
+          <div style={{ color: P.text }} className="text-[14px]">
+            {elsewhere.length} paid on another card
+          </div>
+          <div style={{ color: P.faint }} className="text-[12.5px]">
+            {elsewhere.map((t) => t.label || t.payeeKey).join(", ")} · tagged as belonging to this ledger
+          </div>
+        </div>
       )}
 
-      <p style={{ color: P.faint }} className="text-[12.5px] mt-3 leading-snug">
-        Read from charges that have already gone through, so this is what you are actually paying
-        rather than what you think you signed up for. Nothing here is filed or cancelled for you.
-      </p>
+      {known.map((r) => <Row key={r.key} r={r} />)}
+
+      {/* truncation-ok: the count of what is hidden is stated on the button. */}
+      {rest.length > 0 && (
+        <>
+          {showAll && rest.map((r) => <Row key={r.key} r={r} />)}
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            style={{ color: P.brassText }}
+            className="text-[13px] press mt-2"
+          >
+            {showAll
+              ? "Show only what I recognise"
+              : `${rest.length} more repeat, which may not be subscriptions`}
+          </button>
+        </>
+      )}
+
+      {editing && (
+        <div style={{ background: P.surface, borderRadius: 14 }} className="p-3.5 mt-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span style={{ color: P.text }} className="text-[14.5px]">{editing.name}</span>
+            <button onClick={() => setEditing(null)} style={{ color: P.faint }}
+              className="text-[13.5px] press">Close</button>
+          </div>
+
+          <label style={{ color: P.muted }} className="text-[13.5px] block">What you call it</label>
+          <input
+            value={editing.tag.label ?? ""}
+            onChange={(e) => setEditing({ ...editing, tag: { ...editing.tag, label: e.target.value } })}
+            placeholder={editing.name}
+            style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+          />
+
+          <label style={{ color: P.muted }} className="text-[13.5px] block mt-3">Whose cost is it</label>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {[["business", "Business"], ["personal", "Personal"], ["mixed", "Both"]].map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setEditing({ ...editing, tag: { ...editing.tag, side: k } })}
+                style={{
+                  background: editing.tag.side === k ? P.brass : P.surface2,
+                  color: editing.tag.side === k ? P.onbrass : P.muted,
+                  borderRadius: R.pill,
+                }}
+                className="h-9 px-3 text-[13.5px] font-medium press"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Where the cost belongs, when it is not where the charge landed.
+              This is the whole reason the table exists. */}
+          {(editing.tag.side === "business" || editing.tag.side === "mixed") && otherLedgers.length > 0 && (
+            <>
+              <label style={{ color: P.muted }} className="text-[13.5px] block mt-3">
+                Show it on
+                <span style={{ color: P.faint }}> · the charge stays on this feed either way</span>
+              </label>
+              <select
+                value={editing.tag.chargedTo || ""}
+                onChange={(e) => setEditing({ ...editing, tag: { ...editing.tag, chargedTo: e.target.value || null } })}
+                style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+                className="w-full h-11 px-3 text-[15px] outline-none border-none mt-1"
+              >
+                <option value="">This ledger only</option>
+                {otherLedgers.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            </>
+          )}
+
+          {editing.tag.side === "mixed" && (
+            <>
+              <label style={{ color: P.muted }} className="text-[13.5px] block mt-3">
+                How much of it is business
+              </label>
+              <div className="flex items-center gap-3 mt-1">
+                <input
+                  type="range" min="0" max="100" step="5"
+                  value={Math.round((editing.tag.businessShare ?? 0.5) * 100)}
+                  onChange={(e) => setEditing({
+                    ...editing,
+                    tag: { ...editing.tag, businessShare: Number(e.target.value) / 100 },
+                  })}
+                  style={{ flex: 1, accentColor: P.brass }}
+                />
+                <span style={{ fontFamily: MONO, color: P.text }} className="text-[14px] tabular-nums">
+                  {Math.round((editing.tag.businessShare ?? 0.5) * 100)}%
+                </span>
+              </div>
+            </>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              onClick={() => save({})}
+              disabled={busy !== ""}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {busy ? "Saving" : "Save"}
+            </button>
+            <button
+              onClick={() => save({ cancelledOn: todayStr() })}
+              disabled={busy !== ""}
+              style={{ color: P.muted }}
+              className="h-11 px-2 text-[14px] press"
+            >
+              I cancelled it
+            </button>
+            <button
+              onClick={() => save({ hidden: true })}
+              disabled={busy !== ""}
+              style={{ color: P.muted }}
+              className="h-11 px-2 text-[14px] press"
+            >
+              Not a subscription
+            </button>
+          </div>
+
+          <p style={{ color: P.faint }} className="text-[12px] mt-2 leading-snug">
+            Tagging changes nothing in your books. The charge stays where the bank put it; this is
+            about which ledger has to answer for the cost.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
 
-/* Where the spend is going, as something to look at.
- *
- * Drawn rather than listed, because "what is this business spending on" is the
- * question people have and rarely phrase, and a table only answers it for
- * somebody who already knows what to ask.
- *
- * SVG and CSS, no library: a force simulation would be sixty kilobytes to
- * arrange nine circles, and the arrangement is not the insight.
- */
 function SpendGraph({ rows = [], total = 0, onPick, picked }) {
   const nodes = useMemo(() => spendgraph.layout(rows, { radius: 118 }), [rows]);
 
@@ -13206,7 +13397,7 @@ function SpendGraph({ rows = [], total = 0, onPick, picked }) {
  * Three things in the order somebody actually asks them. Where is it going.
  * What is going out whether I act or not. Show me the figures.
  */
-function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] }) {
+function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] , ledgers = [], readOnly = false }) {
   const [picked, setPicked] = useState(null);
 
   const monthTx = useMemo(
@@ -13218,7 +13409,10 @@ function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] }) {
   const spent = useMemo(() => rows.reduce((n, r) => n + r.total, 0), [rows]);
   const trend = useMemo(() => spendgraph.monthlyTrend(data.transactions || []), [data.transactions]);
 
-  const subs = useMemo(() => subscriptions.findSubscriptions(bankTxns), [bankTxns]);
+  /* findAll, not findSubscriptions: the strict test misses usage-billed
+     software entirely, which on a real account is the largest recurring cost
+     on the statement. */
+  const subs = useMemo(() => subscriptions.findAll(bankTxns), [bankTxns]);
   const subTotals = useMemo(() => subscriptions.subscriptionTotals(subs), [subs]);
 
   const chosen = picked ? rows.find((r) => r.name === picked) : null;
@@ -13292,7 +13486,13 @@ function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] }) {
             ? `${subTotals.count} subscriptions, ${fmt(subTotals.yearly)} a year, found in charges that have already gone through.`
             : "Subscriptions found in your bank feed will appear here."}
         </p>
-        <SubscriptionsCard bankTxns={bankTxns} ledgerCcy={data.ledger?.currency} />
+        <SubscriptionsCard
+          bankTxns={bankTxns}
+          ledgerId={data.ledger?.id}
+          ledgerKind={data.ledger?.kind}
+          ledgers={ledgers || []}
+          readOnly={readOnly}
+        />
       </section>
 
       {/* Month over month. Small, because it answers one question: is this

@@ -23,6 +23,7 @@ export const CATEGORIES = [
   { id: "comms", label: "Communication" },
   { id: "finance", label: "Finance" },
   { id: "marketing", label: "Marketing" },
+  { id: "other", label: "Other" },
 ];
 
 /* Matched against a normalised bank descriptor. Order matters only where one
@@ -71,6 +72,45 @@ export const SERVICES = [
   { id: "shopify", name: "Shopify", category: "marketing", match: ["SHOPIFY"] },
   { id: "squarespace", name: "Squarespace", category: "marketing", match: ["SQUARESPACE"] },
   { id: "godaddy", name: "GoDaddy", category: "marketing", match: ["GODADDY"] },
+
+  /* Added after reading five real statements, where each of these was charging
+     every month and none was recognised. */
+  { id: "apple", name: "Apple", category: "productivity", match: ["APPLE"] },
+  { id: "elevenlabs", name: "ElevenLabs", category: "developer", match: ["ELEVENLABS", "ELEVEN LABS"] },
+  { id: "upstash", name: "Upstash", category: "developer", match: ["UPSTASH"] },
+  { id: "railway", name: "Railway", category: "developer", match: ["RAILWAY"] },
+  { id: "render", name: "Render", category: "developer", match: ["RENDER COM", "RENDER"] },
+  { id: "linear", name: "Linear", category: "productivity", match: ["LINEAR"] },
+  { id: "loom", name: "Loom", category: "comms", match: ["LOOM"] },
+  { id: "calendly", name: "Calendly", category: "productivity", match: ["CALENDLY"] },
+  { id: "docusign", name: "DocuSign", category: "productivity", match: ["DOCUSIGN"] },
+  { id: "signcom", name: "Sign.com", category: "productivity", match: ["SIGN COM", "SIGNCOM"] },
+  { id: "spotify", name: "Spotify", category: "other", match: ["SPOTIFY"] },
+  { id: "netflix", name: "Netflix", category: "other", match: ["NETFLIX"] },
+  { id: "wise", name: "Wise", category: "finance", match: ["WISE", "TRANSFERWISE"] },
+
+  /* Named by the owner after reading their own statements, plus the hosting
+     and mail services that sit alongside them. */
+  { id: "postmark", name: "Postmark", category: "developer", match: ["POSTMARKAPP", "POSTMARK"] },
+  { id: "hostinger", name: "Hostinger", category: "developer", match: ["HOSTINGER"] },
+  { id: "amazonprime", name: "Amazon Prime", category: "other", match: ["AMAZON PRIME", "AMZN PRIME"] },
+  { id: "namecheap", name: "Namecheap", category: "developer", match: ["NAMECHEAP"] },
+  { id: "netlify", name: "Netlify", category: "developer", match: ["NETLIFY"] },
+  { id: "fly", name: "Fly.io", category: "developer", match: ["FLY IO", "FLYIO"] },
+  { id: "resend", name: "Resend", category: "developer", match: ["RESEND"] },
+  { id: "twilio", name: "Twilio", category: "comms", match: ["TWILIO"] },
+  { id: "sendgrid", name: "SendGrid", category: "comms", match: ["SENDGRID"] },
+  { id: "plaid", name: "Plaid", category: "finance", match: ["PLAID"] },
+  { id: "stripe-sub", name: "Stripe billing", category: "finance", match: ["STRIPE"] },
+  { id: "zapier", name: "Zapier", category: "productivity", match: ["ZAPIER"] },
+  { id: "miro", name: "Miro", category: "design", match: ["MIRO"] },
+  { id: "webflow", name: "Webflow", category: "marketing", match: ["WEBFLOW"] },
+  { id: "framer", name: "Framer", category: "design", match: ["FRAMER"] },
+  { id: "cursor", name: "Cursor", category: "developer", match: ["CURSOR"] },
+  { id: "perplexity", name: "Perplexity", category: "developer", match: ["PERPLEXITY"] },
+  { id: "midjourney", name: "Midjourney", category: "design", match: ["MIDJOURNEY"] },
+  { id: "replit", name: "Replit", category: "developer", match: ["REPLIT"] },
+  { id: "digitalocean2", name: "DigitalOcean", category: "developer", match: ["DIGITAL OCEAN"] },
 ];
 
 /** Which known service a bank descriptor belongs to, if any. */
