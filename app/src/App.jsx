@@ -21,6 +21,7 @@ import * as billing from "./lib/billing";
 import * as subscriptions from "./lib/subscriptions";
 import * as spendgraph from "./lib/spendgraph";
 import * as catalogue from "./lib/catalogue";
+import * as insight from "./lib/invoiceInsight";
 import * as voidCheque from "./lib/voidcheque";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
@@ -3158,7 +3159,7 @@ function Ledger({ onSignOut }) {
             onFindOpenPayables={() => (data.payables || []).filter((p) => p.status === "open")}
             onConfirmVoid={askConfirm}
             onContactsChange={refreshContacts}
-          />
+          payables={data.payables} receivables={data.receivables} />
         )}
 
         {tab === "arap" && (
@@ -13937,82 +13938,116 @@ function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, ad
     onChanged?.();
   };
 
+  /* Ordered by what needs doing, not by when it was written.
+     Overdue first, then not opened, then opened and waiting. A list sorted by
+     date puts the thing you must act on today underneath three you need not
+     think about. */
+  const bySt = (a, b) => insight.sentState(a).order - insight.sentState(b).order;
   const drafts = rows.filter((r) => r.status === "draft");
-  const live = rows.filter((r) => r.status === "sent");
+  const live = rows.filter((r) => r.status === "sent").sort(bySt);
   const closed = rows.filter((r) => r.status === "paid" || r.status === "cancelled");
   const owedOut = live.reduce((n, r) => n + Math.abs(r.amount), 0);
 
-  const Line = ({ r }) => (
-    <div className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="min-w-0">
-          <span style={{ color: P.text }} className="text-[15px] block truncate">
-            {r.party}
-            <span style={{ fontFamily: MONO, color: P.faint }} className="text-[13px] ml-2">{r.number}</span>
+  /* One row, saying how the invoice is actually doing.
+   *
+   * "Sent" is true of an invoice posted an hour ago and one ignored for six
+   * weeks, and the difference is the entire question. The state phrase answers
+   * it, and the sort puts whatever needs doing at the top.
+   */
+  const TONE = { bad: P.debit, warn: P.brassText, quiet: P.faint, good: P.credit };
+
+  const Line = ({ r }) => {
+    const st = insight.sentState(r);
+    return (
+      <div className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="min-w-0">
+            <span style={{ color: P.text }} className="text-[15px] block truncate">
+              {r.party}
+              <span style={{ fontFamily: MONO, color: P.faint }} className="text-[13px] ml-2">{r.number}</span>
+            </span>
+            <span style={{ color: TONE[st.tone] || P.faint }} className="text-[13px]">
+              {st.label}
+              {r.status === "cancelled" && r.cancelledAt
+                ? ` · ${String(r.cancelledAt).slice(0, 10)}${r.cancelledBy ? ` by ${r.cancelledBy}` : ""}`
+                : ""}
+            </span>
           </span>
-          <span style={{ color: P.faint }} className="text-[13px]">
-            {r.status === "draft" ? "not sent yet"
-              : r.status === "cancelled"
-                ? `cancelled${r.cancelledAt ? ` ${String(r.cancelledAt).slice(0, 16).replace("T", " ")}` : ""}${r.cancelledBy ? ` by ${r.cancelledBy}` : ""}`
-              : r.status === "paid" ? `paid${r.dueOn ? "" : ""}`
-              : `sent ${String(r.sentAt || "").slice(0, 10)}${r.opens > 0 ? ` · opened ${r.opens === 1 ? "once" : `${r.opens} times`}` : " · unopened"}`}
-            {r.dueOn && r.status === "sent" ? ` · due ${r.dueOn}` : ""}
+          <span
+            style={{ fontFamily: MONO, color: r.status === "paid" ? P.credit : P.text }}
+            className="text-[15px] tabular-nums shrink-0"
+          >
+            {fmtIn(r.amount, r.currency, ledgerCcy)}
           </span>
-        </span>
-        <span style={{ fontFamily: MONO, color: r.status === "paid" ? P.credit : P.text }}
-          className="text-[15px] tabular-nums shrink-0">
-          {fmtIn(r.amount, r.currency, ledgerCcy)}
-        </span>
-      </div>
-      {!readOnly && (
-        <div className="flex flex-wrap items-center gap-2 mt-1.5">
-          {r.status === "draft" && (
-            <>
-              <button onClick={() => { setDraft({ ...r, taxRate: r.amount ? r.taxAmount / (r.amount - r.taxAmount) : 0, lines: r.lines || [{ desc: "", qty: 1, rate: "" }] }); setOpen(true); }}
-                style={{ color: P.brassText }} className="text-[13.5px] press">Open it</button>
-              <button onClick={async () => { await billing.removeDraft(r.id); refresh(); }}
-                style={{ color: P.faint }} className="text-[13.5px] press">Delete</button>
-            </>
-          )}
-          {r.status === "sent" && (
-            <>
-              <button
-                onClick={() => {
-                  navigator.clipboard?.writeText(`https://www.brasstally.com/v/${r.token}`);
-                  setDone("Address copied.");
-                  setTimeout(() => setDone(""), 4000);
-                }}
-                style={{ color: P.brassText }} className="text-[13.5px] press">Copy the address</button>
-              <button
-                onClick={async () => { setBusy(r.id); await billing.send(r.id, { addAR }); setBusy(""); refresh(); }}
-                disabled={busy === r.id}
-                style={{ color: P.brassText }} className="text-[13.5px] press">
-                {busy === r.id ? "Sending" : "Send it again"}
-              </button>
-              <button
-                onClick={async () => {
-                  setBusy(r.id);
-                  const res = await billing.cancel(r.id);
-                  setBusy("");
-                  /* Refusals are shown. It can refuse: an invoice somebody has
-                     part paid cannot be cancelled without stranding that
-                     payment. */
-                  if (res?.ok === false) { setErr(res.error); return; }
-                  setDone(`${r.number} cancelled${res?.removed_obligation ? ", and taken out of what you are owed" : ""}.`);
-                  setTimeout(() => setDone(""), 6000);
-                  refresh();
-                  onChanged?.();
-                }}
-                disabled={busy === r.id}
-                style={{ color: P.debit }} className="text-[13.5px] press">
-                {busy === r.id ? "Cancelling" : "Cancel it"}
-              </button>
-            </>
-          )}
         </div>
-      )}
-    </div>
-  );
+
+        {!readOnly && (
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+            {r.status === "draft" && (
+              <>
+                <button
+                  onClick={() => {
+                    setDraft({
+                      ...r,
+                      taxRate: r.amount ? r.taxAmount / (r.amount - r.taxAmount) : 0,
+                      lines: r.lines || [{ desc: "", qty: 1, rate: "" }],
+                    });
+                    setOpen(true);
+                  }}
+                  style={{ color: P.brassText }} className="text-[13.5px] press">Open it</button>
+                <button onClick={async () => { await billing.removeDraft(r.id); refresh(); }}
+                  style={{ color: P.faint }} className="text-[13.5px] press">Delete</button>
+              </>
+            )}
+
+            {r.status === "sent" && (
+              <>
+                {/* The chase, worded for what actually happened. An invoice
+                    never opened is probably in a spam folder; one opened and
+                    unpaid needs a conversation. Saying which saves somebody
+                    chasing the wrong way. */}
+                <button
+                  onClick={async () => {
+                    setBusy(r.id);
+                    await billing.send(r.id, { addAR });
+                    setBusy("");
+                    setDone(!r.opens
+                      ? `Sent again to ${r.party}. If it is still not opened, the address may be wrong.`
+                      : `Sent again to ${r.party}.`);
+                    setTimeout(() => setDone(""), 8000);
+                    refresh();
+                  }}
+                  disabled={busy === r.id}
+                  style={{ color: P.brassText }} className="text-[13.5px] press">
+                  {busy === r.id ? "Sending" : r.opens ? "Send a reminder" : "Send it again"}
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(`https://www.brasstally.com/v/${r.token}`);
+                    setDone("Address copied.");
+                    setTimeout(() => setDone(""), 4000);
+                  }}
+                  style={{ color: P.muted }} className="text-[13.5px] press">Copy the address</button>
+                <button
+                  onClick={async () => {
+                    setBusy(r.id);
+                    const res = await billing.cancel(r.id);
+                    setBusy("");
+                    if (res?.ok === false) { setErr(res.error); return; }
+                    setDone(`${r.number} cancelled${res?.removed_obligation ? ", and taken out of what you are owed" : ""}.`);
+                    setTimeout(() => setDone(""), 6000);
+                    refresh();
+                    onChanged?.();
+                  }}
+                  disabled={busy === r.id}
+                  style={{ color: P.debit }} className="text-[13.5px] press">Cancel it</button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     /* Inside the hub this is a tab, not a section: its own card and heading
@@ -14247,20 +14282,37 @@ function BillingList({ ledgerId, ledgerName, ledgerCcy, contacts = [], addAR, ad
  * One heading now, and three tabs in the order the work happens: you send
  * something, something arrives, and the link is the plumbing behind the second.
  */
+/* Everything invoice shaped, with the answer at the top.
+ *
+ * A flat list of invoices is a filing cabinet: it answers "what do I have",
+ * and the question people have is "what needs me". Those are different, and
+ * the second can be computed, so it is.
+ *
+ * Three tabs underneath for when somebody wants the cabinet after all.
+ */
 function InvoicesHub(props) {
-  const [tab, setTab] = useState("out");
-
-  /* The badge counts what is waiting on you.
-   *
-   * `InvoiceTools` already reports that number through `onCount`, so the hub
-   * listens rather than being handed a figure from above that nothing in this
-   * component computes. I reached for a name that did not exist here, and the
-   * linter caught it before you did. */
+  const [tab, setTab] = useState("now");
   const [waiting, setWaiting] = useState(0);
   const noteCount = (n) => {
     if (typeof n === "number") setWaiting(n);
     props.onCount?.(n);
   };
+
+  const [sent, setSent] = useState([]);
+  useEffect(() => {
+    if (props.ledgerId) billing.listSent(props.ledgerId).then(setSent);
+  }, [props.ledgerId, props.refreshKey]);
+
+  const actions = useMemo(() => insight.whatNeedsYou({
+    inbound: props.inbound || [],
+    sent,
+    payables: props.payables || [],
+    receivables: props.receivables || [],
+  }), [props.inbound, sent, props.payables, props.receivables]);
+
+  const dupes = useMemo(() => insight.findDuplicates(props.inbound || []), [props.inbound]);
+
+  const TONE = { bad: P.debit, warn: P.brassText, quiet: P.muted, good: P.credit };
 
   const Tab = ({ id, label, badge }) => {
     const on = tab === id;
@@ -14301,11 +14353,59 @@ function InvoicesHub(props) {
         {props.trailing}
       </div>
 
+      {/* What needs you, before anything else.
+          At most four, in the order they hurt, each with the reason attached.
+          A list of everything that could want attention is a list nobody
+          reads, and the fifth item is always the first ignored. */}
+      {actions.length > 0 && (
+        <div className="mb-3">
+          {actions.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => setTab(a.action === "unopened" || a.action === "chase" ? "out" : "now")}
+              style={{
+                background: P.surface2,
+                borderLeft: `3px solid ${TONE[a.tone] || P.line}`,
+                borderRadius: "0 12px 12px 0",
+              }}
+              className="w-full text-left p-3 mb-1.5 press"
+            >
+              <div style={{ color: P.text }} className="text-[14.5px]">{a.title}</div>
+              <div style={{ color: P.faint }} className="text-[13px]">{a.why}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {actions.length === 0 && (
+        <p style={{ color: P.credit }} className="text-[14.5px] mb-3">
+          Nothing is waiting on you.
+        </p>
+      )}
+
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-2">
+        <Tab id="now" label="Sent to you" badge={waiting} />
         <Tab id="out" label="You send" />
-        <Tab id="in" label="Sent to you" badge={waiting} />
         <Tab id="link" label="Your link" />
       </div>
+
+      {/* Duplicates, where they can be acted on rather than only counted. */}
+      {tab === "now" && dupes.length > 0 && (
+        <div
+          style={{ background: P.surface2, borderLeft: `3px solid ${P.debit}`, borderRadius: "0 12px 12px 0" }}
+          className="p-3 mb-3"
+        >
+          <div style={{ color: P.debit }} className="text-[14px] font-medium">
+            {dupes.length === 1 ? "A possible duplicate" : `${dupes.length} possible duplicates`}
+          </div>
+          {dupes.map((pair) => (
+            <div key={pair.key} style={{ color: P.muted }} className="text-[13px] mt-1">
+              {pair.a.party} · {fmt(Math.abs(pair.a.amount))} · {pair.why}.
+              <span style={{ color: P.faint }}> Accept one and decline the other, or ask them.</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {tab === "out" && (
         <BillingList
@@ -14324,7 +14424,7 @@ function InvoicesHub(props) {
 
       {tab !== "out" && (
         <InvoiceTools
-          only={tab === "in" ? "inbox" : "link"}
+          only={tab === "now" ? "inbox" : "link"}
           ledgerId={props.ledgerId}
           ledgerCurrency={props.ledgerCurrency}
           openPreview={props.openPreview}

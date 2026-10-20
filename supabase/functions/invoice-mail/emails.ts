@@ -645,6 +645,12 @@ export function invoiceSentEmail(
         nothing to ask for.
       </p>
 
+      <p style="margin:0 0 12px;font-size:14px;line-height:1.55;color:${muted};">
+        Work with more than one business that uses Brasstally? Sign in at
+        <a href="https://www.brasstally.com/suppliers" style="color:${brass}">brasstally.com/suppliers</a>
+        with this address and they will all be in one place.
+      </p>
+
       <p style="margin:14px 0 0;font-size:13px;line-height:1.5;color:#8A827B;">
         Sent by ${business}${party ? ` to ${party}` : ""} through Brasstally.
       </p>

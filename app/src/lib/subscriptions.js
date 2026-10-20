@@ -61,13 +61,29 @@ export function findSubscriptions(lines = [], { minCharges = 3 } = {}) {
 
   for (const t of lines) {
     /* Money going out only. A refund or an incoming payment from the same name
-       would drag the average away from what is actually charged. */
-    const amount = Number(t.amount) || 0;
-    if (amount >= 0) continue;
+       would drag the average away from what is actually charged.
+     *
+     * Two shapes arrive here and both have to work. A ledger transaction is
+     * signed, negative for spending. A BANK line is stored as an absolute
+     * amount with the direction in its own field, which is how Plaid's rows
+     * land in this project.
+     *
+     * The original test was `amount >= 0`, which on bank rows is every line,
+     * every time: nothing was ever detected and it looked like a data problem.
+     * It was not. */
+    const raw = Number(t.amount) || 0;
+    const outgoing = t.direction
+      ? t.direction === "debit"
+      : t.type
+        ? t.type === "expense"
+        : raw < 0;
+    if (!outgoing) continue;
+    const amount = Math.abs(raw);
+    if (!amount) continue;
     const name = normalisePayee(t.description || t.name);
     if (name.length < 3) continue;
     if (!groups.has(name)) groups.set(name, []);
-    groups.get(name).push({ d: day(t.date), amount: Math.abs(amount), raw: t });
+    groups.get(name).push({ d: day(t.date), amount, raw: t });
   }
 
   const found = [];

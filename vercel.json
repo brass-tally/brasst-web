@@ -33,6 +33,14 @@
       "trailingSlash": false,
       "rewrites": [
         {
+          "source": "/suppliers",
+          "destination": "/suppliers/index.html"
+        },
+        {
+          "source": "/suppliers/",
+          "destination": "/suppliers/index.html"
+        },
+        {
           "source": "/v/:token",
           "destination": "/v/index.html"
         },
@@ -186,6 +194,12 @@
     },
     {
       "source": "/v/:token",
+      "destination": {
+        "service": "landing"
+      }
+    },
+    {
+      "source": "/suppliers",
       "destination": {
         "service": "landing"
       }
