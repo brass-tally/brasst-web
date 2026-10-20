@@ -7791,20 +7791,40 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
       return null;
     })();
 
-    const state = pendingHere
-      ? "waiting on you"
-      : sc
-        ? [
-            last
-              ? `${last.invoiceNo || "last one"} ${paid ? `paid${ob.settledOn ? ` ${ob.settledOn}` : ""}` : "added to what you owe"}`
-              : "nothing yet",
-            `next on the ${ordinal(sc.dayOfMonth)}`,
-          ].join(" · ")
-        : inv?.status === "accepted"
-          ? paid
-            ? `paid${ob.settledOn ? ` ${ob.settledOn}` : ""}`
-            : "added to what you owe"
-          : "set aside";
+    /* One short line, not a sentence.
+     *
+     * This built phrases like "INV-004 added to what you owe · next on the
+     * 15th", which is accurate and unreadable at a glance: every row looked
+     * like every other row and the eye had nowhere to land.
+     *
+     * A tag says the state in two or three words, and the detail that used to
+     * be crammed beside it moves to its own quiet line where it can be
+     * skipped. */
+    const tag = pendingHere
+      ? { label: "Waiting on you", tone: "warn" }
+      : inv?.correctionAt
+        ? { label: "Sent back", tone: "warn" }
+        : paid
+          ? { label: paidStamp?.full ? "Paid" : "Part paid", tone: "good" }
+          : inv?.status === "accepted" || last
+            ? { label: "In your books", tone: "quiet" }
+            : inv?.status === "declined"
+              ? { label: "Declined", tone: "quiet" }
+              : inv?.status === "withdrawn"
+                ? { label: "Withdrawn", tone: "quiet" }
+                : { label: "Set aside", tone: "quiet" };
+
+    const TAG_BG = { warn: P.brass + "24", good: P.credit + "24", quiet: P.surface2 };
+    const TAG_FG = { warn: P.brassText, good: P.credit, quiet: P.faint };
+
+    /* The detail, on its own line, in the order somebody reads it: which
+       invoice, when it came, and anything still outstanding about it. */
+    const detail = [
+      inv?.invoiceNo,
+      inv?.submittedAt ? insight.ago(inv.submittedAt) : null,
+      sc ? `then the ${ordinal(sc.dayOfMonth)} each month` : null,
+      ob && ob.status === "open" && ob.dueDate ? insight.dueWords(ob.dueDate).label : null,
+    ].filter(Boolean).join(" · ");
 
     return (
       <div className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
@@ -7812,6 +7832,15 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
           <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
             {row.party}
             {row.description ? <span style={{ color: P.muted }}> &middot; {row.description}</span> : null}
+            {/* One tag, not three. Monthly, paid and part paid were separate
+                pills that could all appear at once, so a row could carry three
+                badges and a sentence and still not say what to do. */}
+            <span
+              style={{ background: TAG_BG[tag.tone], color: TAG_FG[tag.tone], borderRadius: 999 }}
+              className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
+            >
+              {tag.label}
+            </span>
             {row.kind === "monthly" && (
               <span
                 style={{ background: P.brass + "24", color: P.brassText, borderRadius: 999 }}
@@ -7827,18 +7856,8 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                 it up. The stamp says which, and for a part payment it says how
                 much, because "part paid" without a figure is a question
                 rather than an answer. */}
-            {paidStamp && (
-              <span
-                style={{
-                  background: (paidStamp.full ? P.credit : P.brass) + "24",
-                  color: paidStamp.full ? P.credit : P.brassText,
-                  borderRadius: 999,
-                }}
-                className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
-              >
-                {paidStamp.label}
-              </span>
-            )}
+            {/* The paid pill was here. It is the tag now, so the row cannot
+                show "Paid" twice in two different shapes. */}
           </span>
           <span
             style={{ fontFamily: MONO, color: pendingHere ? P.debit : P.faint }}
@@ -7877,11 +7896,11 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
           </div>
         )}
 
-        <div style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
-          {inv?.invoiceNo ? `${inv.invoiceNo} · ` : ""}
-          {inv?.dueDate ? `due ${inv.dueDate} · ` : ""}
-          {state}
-        </div>
+        {/* The detail, quiet and skippable. The state is a tag on the line
+            above, where the eye already is. */}
+        {detail && (
+          <div style={{ color: P.faint }} className="text-[13px] mt-0.5">{detail}</div>
+        )}
 
         {inv?.lines?.length > 0 && pendingHere && (
           <div style={{ background: P.surface2, borderRadius: 12 }} className="mt-2 px-3 py-2">

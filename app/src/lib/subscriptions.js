@@ -20,15 +20,97 @@ const day = (d) => Math.floor(new Date(`${String(d).slice(0, 10)}T00:00:00`).get
  * store number changes every month and the name does not, so the trailing
  * reference is dropped rather than treated as part of the name. */
 export function normalisePayee(text) {
-  return String(text || "")
-    .toUpperCase()
-    .replace(/\b(PAYPAL|SQ|SQUARE|TST)\s*\*/g, "")
-    .replace(/[*#]/g, " ")
-    .replace(/\b\d{3,}\b/g, " ")
-    .replace(/\b(INC|LLC|LTD|COM|CA|US|USD|CAD|SUBSCRIPTION|MONTHLY|RECURRING)\b/g, " ")
-    .replace(/[^A-Z ]/g, " ")
+  const raw = String(text || "").toUpperCase();
+
+  /* Strip the payment rails first: "SQ *", "PAYPAL *", "TST*" tell you how it
+     was charged, not by whom. */
+  const cleaned = raw
+    .replace(/\b(PAYPAL|SQ|SQUARE|TST|POS|VISA|MC|INTERAC)\s*\*?/g, " ")
+    .replace(/[*#,.]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  const NOISE = new Set([
+    "INC", "LLC", "LTD", "CORP", "CO", "GMBH", "PLC", "LIMITED", "COMPANY",
+    "SUBSCRIPTION", "MONTHLY", "ANNUAL", "RECURRING", "PAYMENT", "PURCHASE",
+    "CA", "US", "USA", "UK", "USD", "CAD", "EUR", "GBP", "HTTP", "HTTPS", "COM",
+    /* Leading articles, which are never the merchant. "THE COFFEE SHOP"
+       keying on "THE" would put every such business in one group. */
+    "THE", "A", "AN", "AND",
+  ]);
+
+  const words = [];
+  for (const token of cleaned.split(" ")) {
+    if (!token) continue;
+    /* A token with a digit in it is a reference, not a name.
+     *
+     * This is the bug that made the whole feature look broken. Only runs of
+     * three or more digits were stripped, so "GOOGLE *CLOUD 2H4XY1" became
+     * "GOOGLE CLOUD H XY" and next month's reference made a different name
+     * again: every charge grouped on its own and nothing ever repeated.
+     *
+     * The only things detected were descriptors with no reference at all,
+     * which is why a bank fee showed up and the software a business actually
+     * pays for did not. */
+    if (/\d/.test(token)) continue;
+    if (NOISE.has(token)) continue;
+    if (token.length < 2) continue;
+    words.push(token);
+    /* The first word is the merchant, and that is the whole key.
+     *
+     * Two words looked more precise and grouped worse: the same company
+     * appears as "ADOBE", "ADOBE INC" and "ADOBE CREATIVE CLOUD SAN JOSE", and
+     * keying on two of them splits one subscription into three.
+     *
+     * The cost is that "GOOGLE CLOUD" and "GOOGLE ADS" land together. That is
+     * caught downstream rather than here: a merged group has amounts that
+     * disagree, and the 35% test rejects it. Reporting nothing would be the
+     * worse failure, and is what was happening. */
+    break;
+  }
+
+  return words.join(" ");
+}
+
+/* What to call it on screen.
+ *
+ * The bank's descriptor is not a name, and the key is a shout. Known merchants
+ * get the name they trade under; a generic word keeps the whole descriptor,
+ * because "Account" tells nobody anything and "Monthly account fee" does.
+ */
+const ALIASES = {
+  MSFT: "Microsoft", MICROSOFT: "Microsoft", AMZN: "Amazon", AWS: "Amazon Web Services",
+  GOOGLE: "Google", GSUITE: "Google Workspace", ADOBE: "Adobe", FIGMA: "Figma",
+  SLACK: "Slack", NOTION: "Notion", DROPBOX: "Dropbox", ZOOM: "Zoom", CANVA: "Canva",
+  GITHUB: "GitHub", VERCEL: "Vercel", SUPABASE: "Supabase", OPENAI: "OpenAI",
+  ANTHROPIC: "Anthropic", CLOUDFLARE: "Cloudflare", SHOPIFY: "Shopify",
+  SQUARESPACE: "Squarespace", GODADDY: "GoDaddy", MAILCHIMP: "Mailchimp",
+  HUBSPOT: "HubSpot", ATLASSIAN: "Atlassian", ASANA: "Asana", AIRTABLE: "Airtable",
+  QUICKBOOKS: "QuickBooks", INTUIT: "Intuit", XERO: "Xero", APPLE: "Apple",
+  SPOTIFY: "Spotify", NETFLIX: "Netflix", LINKEDIN: "LinkedIn",
+};
+
+/* Words that are a category rather than a merchant. */
+const GENERIC = new Set([
+  "ACCOUNT", "SERVICE", "BANK", "INTEREST", "FEE", "CHARGE", "OVERDRAFT",
+  "TRANSFER", "WITHDRAWAL", "DEPOSIT", "INSURANCE", "PREMIUM", "RENT", "LEASE",
+]);
+
+export function displayName(key, descriptor) {
+  if (ALIASES[key]) return ALIASES[key];
+
+  if (GENERIC.has(key)) {
+    /* Keep the bank's own words, tidied. A fee is better described by the
+       whole phrase than by its first word. */
+    const whole = String(descriptor || key)
+      .replace(/[*#]/g, " ").replace(/\b\w*\d\w*\b/g, " ")
+      .replace(/\s+/g, " ").trim().toLowerCase();
+    return whole ? whole[0].toUpperCase() + whole.slice(1) : key;
+  }
+
+  return key.split(" ")
+    .map((w) => (w.length <= 3 ? w : w[0] + w.slice(1).toLowerCase()))
+    .join(" ");
 }
 
 /* How often, in plain words, and only when the gaps agree.
@@ -132,8 +214,15 @@ export function findSubscriptions(lines = [], { minCharges = 3 } = {}) {
        look cheap next to monthly ones until they are on the same footing. */
     const monthly = typical * (30 / cadence.days);
 
+    /* A name somebody recognises, not the bank's descriptor.
+       "ADOBE  *800-833-6687 CA" is what the bank wrote; "Adobe" is what the
+       person pays. The raw one is kept, because when a name is wrong the
+       descriptor is how anybody works out why. */
+    const pretty = displayName(name, last.raw.description);
+
     found.push({
-      name: last.raw.description || name,
+      name: pretty,
+      descriptor: last.raw.description || name,
       key: name,
       amount: Math.round(typical * 100) / 100,
       monthly: Math.round(monthly * 100) / 100,
