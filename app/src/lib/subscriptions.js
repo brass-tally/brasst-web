@@ -509,6 +509,14 @@ const rowToTag = (r) => ({
   note: r.note || "",
   hidden: Boolean(r.hidden),
   cancelledOn: r.cancelled_on || null,
+  manual: Boolean(r.manual),
+  expectedAmount: r.expected_amount == null ? null : Number(r.expected_amount),
+  expectedCurrency: r.expected_currency || null,
+  expectedCadence: r.expected_cadence || "month",
+  startedOn: r.started_on || null,
+  nextDue: r.next_due || null,
+  verifiedAt: r.verified_at || null,
+  verifiedAmount: r.verified_amount == null ? null : Number(r.verified_amount),
 });
 
 export async function listTags(ledgerId) {
@@ -544,6 +552,12 @@ export async function saveTag(ledgerId, tag) {
       note: tag.note || null,
       hidden: Boolean(tag.hidden),
       cancelled_on: tag.cancelledOn || null,
+      manual: Boolean(tag.manual),
+      expected_amount: tag.expectedAmount ?? null,
+      expected_currency: tag.expectedCurrency || null,
+      expected_cadence: tag.expectedCadence || null,
+      started_on: tag.startedOn || null,
+      next_due: tag.nextDue || null,
       updated_at: new Date().toISOString(),
     };
     const { data, error } = await supabase
@@ -557,10 +571,42 @@ export async function saveTag(ledgerId, tag) {
   }
 }
 
+const PER_MONTH = { week: 52 / 12, month: 1, quarter: 1 / 3, year: 1 / 12 };
+
+/** What somebody typed in, as a row the interface can draw like any other. */
+function fromManualTag(tag) {
+  const every = tag.expectedCadence || "month";
+  const amount = Number(tag.expectedAmount) || 0;
+  return {
+    key: tag.payeeKey,
+    name: tag.label || displayName(tag.payeeKey, tag.payeeKey),
+    descriptor: tag.payeeKey,
+    kind: "fixed",
+    confidence: "manual",
+    known: Boolean(identify(tag.payeeKey)),
+    amount,
+    monthly: Math.round(amount * (PER_MONTH[every] ?? 1) * 100) / 100,
+    low: amount, high: amount,
+    currency: tag.expectedCurrency || null,
+    every,
+    charges: 0,
+    firstCharged: tag.startedOn || null,
+    lastCharged: null,
+    nextDue: tag.nextDue || null,
+    status: tag.cancelledOn ? "cancelled" : "active",
+    statusWhy: tag.verifiedAt
+      ? `confirmed by your bank ${String(tag.verifiedAt).slice(0, 10)}`
+      : "added by you, not yet seen in your bank feed",
+    manual: true,
+    verifiedAt: tag.verifiedAt,
+    lines: [],
+  };
+}
+
 /** Detection and judgement, merged. What the interface actually draws. */
 export function applyTags(subs = [], tags = []) {
   const byKey = new Map(tags.map((t) => [t.payeeKey, t]));
-  return subs
+  const out = subs
     .map((s) => {
       const tag = byKey.get(s.key) || null;
       if (!tag) return { ...s, side: "unset", tagged: false };
@@ -578,6 +624,19 @@ export function applyTags(subs = [], tags = []) {
       };
     })
     .filter((s) => !s.hidden);
+
+  /* Anything typed in that the feed has not caught up with yet.
+   *
+   * Added here rather than kept in a separate list, because the moment three
+   * charges appear the detected row takes over and the manual one falls away
+   * on its own. Nobody has to notice, and there is never a moment where the
+   * same subscription appears twice. */
+  const seen = new Set(subs.map((s) => s.key));
+  const manual = tags
+    .filter((t) => t.manual && !t.hidden && !seen.has(t.payeeKey))
+    .map(fromManualTag);
+
+  return [...out, ...manual].sort((a, b) => b.monthly - a.monthly);
 }
 
 /** What the business is actually paying, including anything on a personal card. */

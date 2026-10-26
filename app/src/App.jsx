@@ -6969,6 +6969,9 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   /* Either this component owns its icons, or something above it has decided
      which panel to show. The second is how three invoice sections became three
      tabs without any of them being rewritten. */
+  /* Which row has its exceptions showing. One at a time: two open at once
+     is a list of buttons again. */
+  const [moreFor, setMoreFor] = useState(null);
   const [open, setOpen] = useState(only);            // "inbox" | "link" | null
   useEffect(() => { if (only) setOpen(only); }, [only]);
   const [pending, setPending] = useState([]);
@@ -7363,16 +7366,39 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
   const [expanded, setExpanded] = useState("");
 
   const grouped = useMemo(() => {
-    const live = [];
+    /* Three groups, because they are three different jobs.
+     *
+     * Deciding on an invoice and looking at one you have already accepted are
+     * not the same activity, and mixing them makes a reader check every row to
+     * find the ones that want something. Separating them means the first
+     * heading answers "is there anything for me" before a single row is read.
+     */
+    const needsYou = [];
+    const inBooks = [];
     const done = [];
+
     for (const row of rows) {
       const inv = row.last || row.invoice;
       const ob = inv?.obligationId ? onFindPayable?.(inv.obligationId) : null;
       // An arrangement is never done: next month is always coming.
-      if (ob && ob.status !== "open" && !row.schedule) done.push({ ...row, ob });
-      else live.push(row);
+      if (ob && ob.status !== "open" && !row.schedule) { done.push({ ...row, ob }); continue; }
+
+      const waiting = inv?.status === "pending" || (row.schedule && !inv);
+      if (waiting) needsYou.push(row);
+      else inBooks.push({ ...row, ob });
     }
-    return { live, done };
+
+    /* Within "needs you", oldest first. Something that arrived three weeks ago
+       has been waiting three weeks. */
+    needsYou.sort((a, b) =>
+      String((a.last || a.invoice)?.submittedAt || "")
+        .localeCompare(String((b.last || b.invoice)?.submittedAt || "")));
+
+    /* Within "in your books", most overdue first. */
+    inBooks.sort((a, b) =>
+      String(a.ob?.dueDate || "9999").localeCompare(String(b.ob?.dueDate || "9999")));
+
+    return { needsYou, inBooks, done, live: [...needsYou, ...inBooks] };
   }, [rows, onFindPayable]);
 
   // Refused, kept, and out of the way.
@@ -7750,6 +7776,9 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
      kind is a label on the line rather than a heading over a section, which
      is what stops the same supplier appearing twice under two headings. */
   const Row = ({ row }) => {
+    /* Whether this row's exceptions are showing. One row at a time: two open
+       at once is a list of buttons again. */
+    const openActions = moreFor === row.key;
     const inv = row.invoice;
     const sc = row.schedule;
     const pendingHere = inv?.status === "pending";
@@ -7923,6 +7952,13 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
         )}
 
         <div className="flex flex-wrap items-center gap-2 mt-2.5">
+            {/* One decision, then everything else.
+             *
+             * Four buttons of equal weight on every row made the reader choose
+             * before they had finished reading. The accept is the decision
+             * nearly always being made; correcting, denying and stopping an
+             * arrangement are the exceptions, and an exception belongs behind
+             * one more press rather than in front of every row. */}
           {(inv || last)?.filePath && (
             <button
               onClick={() => {
@@ -7993,6 +8029,24 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                   not, so the only evidence of having pressed it was a panel
                   further down the page that a phone may not have scrolled
                   to. */}
+              {/* The exceptions, behind one press.
+                  Correcting, denying and stopping an arrangement are the
+                  things you occasionally do; putting them in front of every
+                  row makes a reader choose before they have finished
+                  reading. */}
+              {!openActions && (
+                <button
+                  onClick={() => setMoreFor(row.key)}
+                  style={{ color: P.faint }}
+                  className="h-11 px-2 text-[14px] press"
+                  aria-label="Other things you can do with this invoice"
+                >
+                  &middot;&middot;&middot;
+                </button>
+              )}
+
+              {openActions && (
+                <>
               {/* Gone once the correction has gone.
                   Offering "Needs correction" beside "Waiting on their change"
                   is the interface contradicting itself: the request has been
@@ -8021,8 +8075,10 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
               </button>
             </>
           )}
+            </>
+          )}
 
-          {sc && (
+          {openActions && sc && (
             <button
               onClick={() => stopOne(sc)}
               disabled={busy === sc.id}
@@ -8033,7 +8089,7 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
             </button>
           )}
 
-          {!pendingHere && (inv || last) && (
+          {openActions && !pendingHere && (inv || last) && (
             <button
               onClick={() => voidOne(inv || last)}
               disabled={busy === (inv || last).id}
@@ -8260,7 +8316,21 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                 </div>
               )}
 
-              {!filed && grouped.live.map((row) => (
+              {/* What wants a decision, under a heading that says how many.
+                  Somebody can tell whether this section needs them before
+                  reading a single row. */}
+              {!filed && grouped.needsYou.length > 0 && (
+                <div
+                  style={{ color: P.brassText, borderTop: `1px solid ${P.line}` }}
+                  className="text-[13px] font-medium pt-3 pb-1"
+                >
+                  {grouped.needsYou.length === 1
+                    ? "One wants a decision"
+                    : `${grouped.needsYou.length} want a decision`}
+                </div>
+              )}
+
+              {!filed && grouped.needsYou.map((row) => (
                 <div key={row.key}>
                   <Row row={row} />
                   {/* Both have to exist.
@@ -8311,6 +8381,24 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
                       )}
                     </div>
                   )}
+                </div>
+              ))}
+
+              {!filed && grouped.inBooks.length > 0 && (
+                <div
+                  style={{ color: P.faint, borderTop: `1px solid ${P.line}` }}
+                  className="text-[13px] font-medium pt-3 pb-1"
+                >
+                  In your books
+                  <span style={{ color: P.faint }} className="font-normal">
+                    {" "}&middot; nothing to do unless something is wrong
+                  </span>
+                </div>
+              )}
+
+              {!filed && grouped.inBooks.map((row) => (
+                <div key={row.key}>
+                  <Row row={row} />
                 </div>
               ))}
 
@@ -13070,7 +13158,19 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
   const save = async (patch) => {
     setBusy(editing.key);
     setErr("");
-    const res = await subscriptions.saveTag(ledgerId, { payeeKey: editing.key, ...editing.tag, ...patch });
+    /* The key is normalised the same way a bank descriptor is, so a hand
+       typed "Linear" and a future "LINEAR*SUB 4471" land on one row rather
+       than two. */
+    const key = editing.isNew
+      ? subscriptions.normalisePayee(editing.key)
+      : editing.key;
+    if (!key) { setBusy(""); setErr("Give it a name, so a charge can be matched to it."); return; }
+    const res = await subscriptions.saveTag(ledgerId, {
+      payeeKey: key,
+      label: editing.isNew ? (editing.tag.label || editing.key) : editing.tag.label,
+      ...editing.tag,
+      ...patch,
+    });
     setBusy("");
     if (!res.ok) { setErr(res.error); return; }
     setEditing(null);
@@ -13170,17 +13270,58 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
           A personal card paying for business software is the ordinary case for
           an owner-operator, and the business side should not have to pretend
           it does not happen. */}
+      {/* Charged to a card on another ledger and tagged as belonging here.
+       *
+       * Shown in full, with the same figures and dates the other ledger shows,
+       * because a count told the business nothing: "3 paid on another card"
+       * raises a question instead of answering one. The only difference is a
+       * tag saying where the charge actually lands. */}
       {elsewhere.length > 0 && (
-        <div
-          style={{ background: P.surface, borderLeft: `3px solid ${P.brass}`, borderRadius: "0 12px 12px 0" }}
-          className="p-3 mt-3"
-        >
+        <div className="mt-3">
           <div style={{ color: P.text }} className="text-[14px]">
-            {elsewhere.length} paid on another card
+            Paid on another card
+            <span style={{ color: P.faint }} className="font-normal">
+              {" "}&middot; the charge lands there, the cost is yours
+            </span>
           </div>
-          <div style={{ color: P.faint }} className="text-[12.5px]">
-            {elsewhere.map((t) => t.label || t.payeeKey).join(", ")} · tagged as belonging to this ledger
-          </div>
+
+          {elsewhere.map((t) => {
+            const every = t.expectedCadence || "month";
+            const per = { week: 52 / 12, month: 1, quarter: 1 / 3, year: 1 / 12 }[every] ?? 1;
+            const monthly = (Number(t.expectedAmount) || 0) * per;
+            const share = t.side === "mixed" && t.businessShare != null ? t.businessShare : 1;
+            return (
+              <div key={t.id} className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span style={{ color: P.text }} className="text-[14.5px] min-w-0 truncate">
+                    {t.label || t.payeeKey}
+                    <span
+                      style={{ background: P.surface, color: P.muted, borderRadius: 999 }}
+                      className="ml-2 px-2 py-0.5 text-[11.5px] font-medium"
+                    >
+                      from personal
+                    </span>
+                    {t.side === "mixed" && (
+                      <span style={{ color: P.faint }} className="text-[12px] ml-1.5">
+                        {Math.round(share * 100)}% yours
+                      </span>
+                    )}
+                  </span>
+                  <span style={{ fontFamily: MONO, color: P.text }} className="text-[14.5px] tabular-nums shrink-0">
+                    {monthly ? fmt(monthly * share) : "—"}
+                  </span>
+                </div>
+                <div style={{ color: P.faint }} className="text-[12.5px]">
+                  {monthly ? `${fmt(t.expectedAmount)} every ${every}` : "amount not recorded"}
+                  {t.startedOn ? ` · since ${t.startedOn}` : ""}
+                  {t.cancelledOn ? ` · cancelled ${t.cancelledOn}` : ""}
+                </div>
+                {t.note && (
+                  <div style={{ color: P.faint }} className="text-[12.5px]">{t.note}</div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -13202,6 +13343,21 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
         </>
       )}
 
+      {!readOnly && !editing && (
+        <button
+          onClick={() => setEditing({
+            key: "",
+            name: "",
+            isNew: true,
+            tag: { manual: true, expectedCadence: "month", side: "unset" },
+          })}
+          style={{ color: P.brassText }}
+          className="text-[13px] press mt-3"
+        >
+          <Plus size={12} className="inline mb-0.5" /> Add one the bank has not seen
+        </button>
+      )}
+
       {editing && (
         <div style={{ background: P.surface, borderRadius: 14 }} className="p-3.5 mt-3">
           <div className="flex items-center justify-between gap-2 mb-2">
@@ -13209,6 +13365,62 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
             <button onClick={() => setEditing(null)} style={{ color: P.faint }}
               className="text-[13.5px] press">Close</button>
           </div>
+
+          {/* A new one needs a name to key on. An existing one already has
+              its key from the bank and must not be renamed into a different
+              row. */}
+          {editing.isNew && (
+            <>
+              <label style={{ color: P.muted }} className="text-[13.5px] block">
+                Who charges you
+                <span style={{ color: P.faint }}> · as it will appear on your statement</span>
+              </label>
+              <input
+                value={editing.key}
+                onChange={(e) => setEditing({ ...editing, key: e.target.value })}
+                placeholder="Linear"
+                style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+                className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1 mb-3"
+              />
+
+              <div className="flex gap-2 mb-3">
+                <span className="flex-1">
+                  <label style={{ color: P.muted }} className="text-[13.5px] block">What it costs</label>
+                  <input
+                    value={editing.tag.expectedAmount ?? ""}
+                    onChange={(e) => setEditing({
+                      ...editing,
+                      tag: { ...editing.tag, expectedAmount: e.target.value === "" ? null : Number(e.target.value) },
+                    })}
+                    inputMode="decimal"
+                    placeholder="17.99"
+                    style={{ background: P.surface2, color: P.text, borderRadius: 13, fontFamily: MONO }}
+                    className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+                  />
+                </span>
+                <span className="w-32">
+                  <label style={{ color: P.muted }} className="text-[13.5px] block">How often</label>
+                  <select
+                    value={editing.tag.expectedCadence || "month"}
+                    onChange={(e) => setEditing({ ...editing, tag: { ...editing.tag, expectedCadence: e.target.value } })}
+                    style={{ background: P.surface2, color: P.text, borderRadius: 13 }}
+                    className="w-full h-11 px-2 text-[15px] outline-none border-none mt-1"
+                  >
+                    <option value="week">Weekly</option>
+                    <option value="month">Monthly</option>
+                    <option value="quarter">Quarterly</option>
+                    <option value="year">Yearly</option>
+                  </select>
+                </span>
+              </div>
+
+              <p style={{ color: P.faint }} className="text-[12.5px] mb-3 leading-snug">
+                Your figure stands until the bank shows a charge that matches, and then the real one
+                takes over. Nothing is double counted: the moment it is detected, this entry steps
+                aside.
+              </p>
+            </>
+          )}
 
           <label style={{ color: P.muted }} className="text-[13.5px] block">What you call it</label>
           <input
