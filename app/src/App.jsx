@@ -7855,51 +7855,68 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
       ob && ob.status === "open" && ob.dueDate ? insight.dueWords(ob.dueDate).label : null,
     ].filter(Boolean).join(" · ");
 
+    /* A card, not a row.
+     *
+     * Every invoice used to be a line under a hairline, so a page of them
+     * read as one block of text and the eye had nothing to separate them
+     * by. Each is its own object now, with an edge in the colour of what it
+     * needs: brass for a decision, grey for something already filed, green
+     * for money that has moved.
+     *
+     * Inside, the hierarchy is the order somebody reads in. Who, what for,
+     * how much. Then the one fact that matters about it, then what to do. */
     return (
-      <div className="py-3.5" style={{ borderTop: `1px solid ${P.line}` }}>
-        <div className="flex items-baseline justify-between gap-3">
-          <span style={{ color: P.text }} className="text-[15.5px] min-w-0 truncate">
-            {row.party}
-            {row.description ? <span style={{ color: P.muted }}> &middot; {row.description}</span> : null}
-            {/* One tag, not three. Monthly, paid and part paid were separate
-                pills that could all appear at once, so a row could carry three
-                badges and a sentence and still not say what to do. */}
+      <div
+        style={{
+          background: P.surface2,
+          borderRadius: 16,
+          borderLeft: `3px solid ${
+            tag.tone === "warn" ? P.brass : tag.tone === "good" ? P.credit : P.line
+          }`,
+        }}
+        className="p-4 mb-2.5"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <span className="min-w-0">
+            {/* Who, small and quiet, because the same name appears on many
+                cards and does not need shouting each time. */}
             <span
-              style={{ background: TAG_BG[tag.tone], color: TAG_FG[tag.tone], borderRadius: 999 }}
-              className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
+              style={{ color: P.faint, letterSpacing: ".04em" }}
+              className="text-[11.5px] font-semibold uppercase block truncate"
             >
-              {tag.label}
+              {row.party}
+            </span>
+            {/* What it is for, which is what actually distinguishes one card
+                from the next. */}
+            <span style={{ color: P.text }} className="text-[16px] block truncate mt-0.5">
+              {row.description || inv?.invoiceNo || "Invoice"}
+            </span>
+          </span>
+
+          <span className="text-right shrink-0">
+            <span
+              style={{ fontFamily: MONO, color: P.text }}
+              className="text-[19px] tabular-nums whitespace-nowrap block"
+            >
+              {ob ? fmt(Math.abs(ob.amount)) : foreignHere ? fmtIn(row.amount, inv.currency, ledgerCcy) : fmt(row.amount)}
             </span>
             {row.kind === "monthly" && (
-              <span
-                style={{ background: P.brass + "24", color: P.brassText, borderRadius: 999 }}
-                className="ml-2 px-2 py-0.5 text-[12px] font-medium whitespace-nowrap"
-              >
-                Monthly
-              </span>
+              <span style={{ color: P.faint }} className="text-[12px]">every month</span>
             )}
-            {/* What has happened to the money.
-
-                An invoice that has been paid looked exactly like one that had
-                not, so the only way to find out was to go to AR / AP and look
-                it up. The stamp says which, and for a part payment it says how
-                much, because "part paid" without a figure is a question
-                rather than an answer. */}
-            {/* The paid pill was here. It is the tag now, so the row cannot
-                show "Paid" twice in two different shapes. */}
           </span>
+        </div>
+
+        {/* The state, as a tag, beside the one line of detail. */}
+        <div className="flex flex-wrap items-center gap-2 mt-2.5">
           <span
-            style={{ fontFamily: MONO, color: pendingHere ? P.debit : P.faint }}
-            className="text-[15.5px] tabular-nums shrink-0 whitespace-nowrap"
+            style={{ background: TAG_BG[tag.tone], color: TAG_FG[tag.tone], borderRadius: 999 }}
+            className="px-2.5 py-1 text-[12px] font-medium whitespace-nowrap"
           >
-            {/* Once it is in the books, the books' figure is the truth.
-
-                A foreign invoice kept showing its original amount after being
-                accepted, so the row said PKR 385,000.00 while the payable said
-                $1,920.77. The original belongs underneath as history, not on
-                top as the headline. */}
-            {ob ? fmt(Math.abs(ob.amount)) : foreignHere ? fmtIn(row.amount, inv.currency, ledgerCcy) : fmt(row.amount)}
+            {tag.label}
           </span>
+          {detail && (
+            <span style={{ color: P.faint }} className="text-[13px]">{detail}</span>
+          )}
         </div>
 
         {/* The conversion, at today's rate, with its source.
@@ -7925,11 +7942,8 @@ function InvoiceTools({ ledgerId, ledgerCurrency, openPreview, onAccept, onCount
           </div>
         )}
 
-        {/* The detail, quiet and skippable. The state is a tag on the line
-            above, where the eye already is. */}
-        {detail && (
-          <div style={{ color: P.faint }} className="text-[13px] mt-0.5">{detail}</div>
-        )}
+        {/* The detail line moved into the card header beside its tag, so it
+            is not printed twice. */}
 
         {inv?.lines?.length > 0 && pendingHere && (
           <div style={{ background: P.surface2, borderRadius: 12 }} className="mt-2 px-3 py-2">
@@ -13143,6 +13157,16 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
   const found = useMemo(() => subscriptions.findAll(bankTxns), [bankTxns]);
   const rows = useMemo(() => subscriptions.applyTags(found, tags), [found, tags]);
 
+  /* Carry the figures to whichever ledger a tag points at.
+     Only this ledger can see the charges, so only this ledger can work them
+     out; without this the business side showed a name and nothing else. */
+  useEffect(() => {
+    if (readOnly || !ledgerId || !found.length || !tags.length) return;
+    subscriptions.syncObserved(ledgerId, found, tags).then((r) => {
+      if (r?.wrote) refresh();
+    });
+  }, [found, tags, ledgerId, readOnly, refresh]);
+
   const known = rows.filter((r) => r.confidence === "known" || r.side === "business");
   const rest = rows.filter((r) => !known.includes(r));
   /* The headline is what you are still paying. Something that stopped
@@ -13286,9 +13310,12 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
           </div>
 
           {elsewhere.map((t) => {
-            const every = t.expectedCadence || "month";
+            /* What the personal feed observed, when it has; what was typed in,
+               when it has not. Observed wins because it is what was charged. */
+            const o = t.observed;
+            const every = o?.every || t.expectedCadence || "month";
             const per = { week: 52 / 12, month: 1, quarter: 1 / 3, year: 1 / 12 }[every] ?? 1;
-            const monthly = (Number(t.expectedAmount) || 0) * per;
+            const monthly = o ? o.monthly : (Number(t.expectedAmount) || 0) * per;
             const share = t.side === "mixed" && t.businessShare != null ? t.businessShare : 1;
             return (
               <div key={t.id} className="py-2.5" style={{ borderTop: `1px solid ${P.line}` }}>
@@ -13312,9 +13339,25 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
                   </span>
                 </div>
                 <div style={{ color: P.faint }} className="text-[12.5px]">
-                  {monthly ? `${fmt(t.expectedAmount)} every ${every}` : "amount not recorded"}
-                  {t.startedOn ? ` · since ${t.startedOn}` : ""}
-                  {t.cancelledOn ? ` · cancelled ${t.cancelledOn}` : ""}
+                  {o
+                    ? o.kind === "varies"
+                      ? `${fmt(o.low)} to ${fmt(o.high)} a month · ${o.charges} charges`
+                      : `${fmt(o.amount)} every ${o.every} · ${o.charges} charges`
+                    : monthly
+                      ? `${fmt(t.expectedAmount)} every ${every} · added by hand`
+                      : "Open the personal ledger once and the figures will follow"}
+                </div>
+                <div
+                  style={{ color: o?.status === "stopped" ? P.debit : P.faint }}
+                  className="text-[12.5px]"
+                >
+                  {o?.status === "stopped"
+                    ? `Stopped · nothing since ${o.lastCharged}`
+                    : t.cancelledOn
+                      ? `Cancelled ${t.cancelledOn}`
+                      : o?.firstCharged
+                        ? `Since ${o.firstCharged}`
+                        : t.startedOn ? `Since ${t.startedOn}` : ""}
                 </div>
                 {t.note && (
                   <div style={{ color: P.faint }} className="text-[12.5px]">{t.note}</div>

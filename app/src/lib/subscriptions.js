@@ -517,6 +517,19 @@ const rowToTag = (r) => ({
   nextDue: r.next_due || null,
   verifiedAt: r.verified_at || null,
   verifiedAmount: r.verified_amount == null ? null : Number(r.verified_amount),
+  observed: r.observed_at ? {
+    amount: Number(r.observed_amount) || 0,
+    monthly: Number(r.observed_monthly) || 0,
+    low: r.observed_low == null ? null : Number(r.observed_low),
+    high: r.observed_high == null ? null : Number(r.observed_high),
+    kind: r.observed_kind || "fixed",
+    every: r.observed_cadence || "month",
+    charges: Number(r.observed_charges) || 0,
+    firstCharged: r.first_charged || null,
+    lastCharged: r.last_charged || null,
+    status: r.observed_status || "active",
+    at: r.observed_at,
+  } : null,
 });
 
 export async function listTags(ledgerId) {
@@ -601,6 +614,66 @@ function fromManualTag(tag) {
     verifiedAt: tag.verifiedAt,
     lines: [],
   };
+}
+
+/* Write what the feed showed into each shared tag.
+ *
+ * The ledger whose bank holds the charges is the only one that can work out
+ * the figures. A tag pointed at another ledger carries them across, so that
+ * ledger can show the same numbers without reading somebody else's bank lines.
+ *
+ * Only tags that are shared, and only when something changed: rewriting forty
+ * rows on every render would be a write storm for no benefit.
+ */
+export async function syncObserved(ledgerId, subs = [], tags = []) {
+  const byKey = new Map(subs.map((s) => [s.key, s]));
+  const writes = [];
+
+  for (const t of tags) {
+    if (!t.chargedTo) continue;
+    const s = byKey.get(t.payeeKey);
+    if (!s) continue;
+
+    const next = {
+      observed_amount: s.amount,
+      observed_monthly: s.monthly,
+      observed_low: s.low ?? null,
+      observed_high: s.high ?? null,
+      observed_kind: s.kind || "fixed",
+      observed_cadence: s.every || "month",
+      observed_charges: s.charges || 0,
+      first_charged: s.firstCharged || null,
+      last_charged: s.lastCharged || null,
+      observed_status: s.status || "active",
+    };
+
+    const o = t.observed;
+    const same = o
+      && o.monthly === next.observed_monthly
+      && o.charges === next.observed_charges
+      && o.lastCharged === next.last_charged
+      && o.status === next.observed_status;
+    if (same) continue;
+
+    writes.push(
+      supabase.from("subscription_tags")
+        .update({ ...next, observed_at: new Date().toISOString() })
+        .eq("id", t.id),
+    );
+  }
+
+  if (!writes.length) return { ok: true, wrote: 0 };
+  try {
+    assertWritable();
+    await Promise.all(writes);
+    return { ok: true, wrote: writes.length };
+  } catch (e) {
+    /* Quietly: this runs in the background on someone viewing their own
+       subscriptions, and a read-only accountant viewing them must not see an
+       error for a write they never asked for. */
+    console.warn("sync observed figures failed:", e?.message || e);
+    return { ok: false };
+  }
 }
 
 /** Detection and judgement, merged. What the interface actually draws. */
