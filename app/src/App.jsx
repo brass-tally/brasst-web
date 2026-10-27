@@ -3177,7 +3177,7 @@ function Ledger({ onSignOut }) {
             onDismissArrived={dismissArrival}
             arrivedBusy={arrivedBusy}
             onInboundChange={refreshInbound}
-          onContactsChange={refreshContacts} inbound={inbound} />
+          onContactsChange={refreshContacts} inbound={inbound} updateTx={updateTx} />
         )}
         {tab === "credits" && <CreditsCard readOnly={readOnly} data={data} addCredit={addCredit} updateCredit={updateCredit} delCredit={delCredit} />}
         {tab === "calendar" && <CashCalendar data={data} />}
@@ -3620,7 +3620,7 @@ function Ledger({ onSignOut }) {
           ledgerCcy={data.ledger.currency || "CAD"}
           openPreview={openPreview}
           onClose={() => setExplaining(null)}
-        />
+        onExplore={() => { setTab("arap"); window.scrollTo({ top: 0 }); }} />
       )}
 
       {matchOpen && (
@@ -5451,7 +5451,7 @@ function BalanceTrail({ balance, transactions, bankTxns, month, onClose, onConso
   );
 }
 
-function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerCcy, cardValue, onClose, openPreview }) {
+function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerCcy, cardValue, onClose, openPreview, onExplore }) {
   /* Owed and owing follow a different trail.
 
      Money in and out are built from movements, so the question is where the
@@ -5465,6 +5465,7 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
         rows={obligations || []}
         onClose={onClose}
         openPreview={openPreview}
+        onExplore={onExplore}
       />
     );
   }
@@ -5722,7 +5723,7 @@ function FigureTrail({ side, month, transactions, bankTxns, obligations, ledgerC
    which answers how much and nothing else. The useful questions are which of
    these is late, which is about to be, and how much of each is actually left
    after part payments. */
-function ObligationTrail({ kind, rows, onClose, openPreview }) {
+function ObligationTrail({ kind, rows, onClose, openPreview, onExplore }) {
   const isAR = kind === "receivables";
   const today = todayStr();
   const soon = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
@@ -5841,6 +5842,23 @@ function ObligationTrail({ kind, rows, onClose, openPreview }) {
           >
             That is all {open.length} of them.
           </p>
+        )}
+
+        {/* Somewhere to act on what you have just read.
+            This panel answers "what makes up the figure", and the next question
+            is nearly always "so let me pay one", which this panel cannot do. It
+            used to simply end, and somebody had to close it and find AR / AP on
+            their own. */}
+        {onExplore && (
+          <div className="flex justify-center mt-4">
+            <button
+              onClick={() => { onClose?.(); onExplore(); }}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="h-11 px-5 text-[15px] font-medium press"
+            >
+              {isAR ? "See them in AR / AP" : "Pay them in AR / AP"}
+            </button>
+          </div>
         )}
       </ModalBody>
     </Modal>
@@ -14916,7 +14934,7 @@ function InvoicesHub(props) {
   );
 }
 
-function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank , onContactsChange , inbound = [] }) {
+function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, openGuide, receiptSettle, onReceiptSettleUsed, readOnly, onInboundChange, contacts = [], arrived = [], onApproveArrived, onDismissArrived, arrivedBusy, bankTxns = [], onPairBank , onContactsChange , inbound = [] , updateTx }) {
   /* Plans live beside the payables, never inside them. */
   const [plans, setPlans] = useState([]);
   const refreshPlans = useCallback(async () => {
@@ -15023,10 +15041,10 @@ function ARAP({ data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, a
         </div>
       )}
       <div className="grid md:grid-cols-2 gap-6">
-        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} inbound={inbound} ledgerName={data.ledger.name} />
+        <ARList kind="receivables" title="They owe you" items={data.receivables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.credit} action="Mark received" contacts={contacts} bankTxns={bankTxns} onPairBank={onPairBank} inbound={inbound} ledgerName={data.ledger.name} updateTx={updateTx} readOnlyLedger={readOnly} />
 
 
-        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} inbound={inbound} ledgerName={data.ledger.name} />
+        <ARList kind="payables" title="You owe them" items={data.payables} data={data} addAR={addAR} settleAR={settleAR} delAR={delAR} removeSettled={removeSettled} updateAR={updateAR} addSub={addSub} addCredit={addCredit} openPreview={openPreview} tone={P.debit} action="Mark paid" receiptSettle={receiptSettle} onReceiptSettleUsed={onReceiptSettleUsed} contacts={contacts} inbound={inbound} ledgerName={data.ledger.name} updateTx={updateTx} readOnlyLedger={readOnly} />
       </div>
 
       {/* Below the pair, not between them.
@@ -15282,7 +15300,35 @@ function PlannedList({ ledgerId, plans, onChanged, readOnly, onCommit }) {
   );
 }
 
-function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [], bankTxns = [], onPairBank , inbound = [], ledgerName }) {
+function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettled, updateAR, addSub, addCredit, openPreview, tone, action, receiptSettle, onReceiptSettleUsed, contacts = [], bankTxns = [], onPairBank , inbound = [], ledgerName , updateTx, readOnlyLedger = false }) {
+  /* Which settled row is having its receipt added, and why that failed if it
+     did. A file input that fails silently is the same as no file input. */
+  const [attachingFor, setAttachingFor] = useState(null);
+  const [attachErr, setAttachErr] = useState("");
+  const attachInput = useRef(null);
+  const attachTarget = useRef(null);
+
+  const onAttachPicked = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const row = attachTarget.current;
+    attachTarget.current = null;
+    if (!file || !row) return;
+    setAttachingFor(row.id);
+    try {
+      const id = await storeAttachment(file);
+      if (!id) throw new Error("The receipt could not be saved. Check your connection and try again.");
+      /* On the obligation and on the payment that settled it, so the receipt
+         is found from either side. */
+      updateAR?.(kind, row.id, { attachmentId: id, attachmentName: file.name });
+      if (row.settledTxId) updateTx?.(row.settledTxId, { attachmentId: id, attachmentName: file.name });
+    } catch (err) {
+      setAttachErr(err?.message || "That did not attach.");
+      setTimeout(() => setAttachErr(""), 6000);
+    }
+    setAttachingFor(null);
+  };
+
   const [adding, setAdding] = useState(false);
   /* Which bill's pay order is open. Declared in ARList because ARList renders
      it: the first attempt anchored on a line that occurs earlier in the file
@@ -15500,7 +15546,34 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
             <Paperclip size={10} /> receipt
           </button>
         ) : (
-          <span className="shrink-0">no receipt</span>
+          /* "No receipt" was a statement with no way to act on it. A payment
+             marked paid without proof is allowed and often right, and the
+             receipt turns up later as an email or a photo; this is where it
+             goes when it does.
+
+             A button, not an input. SettledLine is declared inside ARList, so
+             anything in it remounts on every render, and a file input that
+             remounts while its picker is open loses the file. The one input
+             lives at the list level and this points it at a row. */
+          readOnlyLedger ? (
+            <span className="shrink-0">no receipt</span>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                attachTarget.current = i;
+                attachInput.current?.click();
+              }}
+              style={{ color: P.brassText }}
+              className="shrink-0 inline-flex items-center gap-1"
+              title="Add the receipt"
+            >
+              <Paperclip size={10} />
+              {attachingFor === i.id ? "adding…" : "add receipt"}
+            </button>
+          )
         )}
       </div>
     </div>
@@ -15691,6 +15764,19 @@ function ARList({ kind, title, items, data, addAR, settleAR, delAR, removeSettle
 
   return (
     <section style={cardStyle()} className="p-5 arap-panel">
+      {/* The one file input for adding a receipt to a settled row. Lives here,
+          outside the rows, so it is not remounted while its picker is open. */}
+      <input
+        ref={attachInput}
+        type="file"
+        accept="image/*,application/pdf"
+        className="sr-only"
+        onChange={onAttachPicked}
+      />
+      {attachErr && (
+        <p style={{ color: P.debit }} className="text-[13px] mb-2">{attachErr}</p>
+      )}
+
       <div className="flex justify-between items-center mb-1 gap-2">
         <h2 style={{ fontFamily: SERIF }} className="text-xl flex-1">{title}</h2>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
@@ -16004,7 +16090,19 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
     }) || null;
   }, [kind, parsed, date, bankTxns, notThis]);
 
-  const valid = !Number.isNaN(parsed) && parsed > 0 && date && (doc || filedName || bankProof || alreadyInBooks);
+  /* Proof is wanted, not required.
+   *
+   * Settling demanded a receipt, a bank line or an existing entry, which is
+   * right about evidence and wrong about timing. People pay by e-Transfer on
+   * the train and get the confirmation email later, or pay in cash and never
+   * get one at all. Blocking the record until the paperwork exists means the
+   * payment goes unrecorded, and an unrecorded payment is a bill that looks
+   * open and gets paid twice.
+   *
+   * So it records now, says plainly that there is nothing behind it yet, and
+   * the receipt can be added later from the settled row. */
+  const hasProof = Boolean(doc || filedName || bankProof || alreadyInBooks);
+  const valid = !Number.isNaN(parsed) && parsed > 0 && date;
 
   /* Paying less than what is left is a part payment, and the dialog says so
      rather than letting somebody discover it afterwards. */
@@ -16284,9 +16382,29 @@ function SettleModal({ kind, item, data, addCredit, action, onConfirm, onClose, 
         )}
         {docErr && <p style={{ color: P.brassText }} className="text-xs mt-2">{docErr}</p>}
 
+        {/* Said before pressing, not discovered after.
+            Recording a payment with nothing behind it is allowed and often
+            right, and the person should know that is what they are doing. */}
+        {valid && !hasProof && (
+          <p
+            style={{
+              color: P.brassText,
+              background: `linear-gradient(90deg, ${P.brass}1A, transparent 75%)`,
+              borderLeft: `2px solid ${P.brass}`,
+              borderRadius: "0 8px 8px 0",
+            }}
+            className="text-[13px] mt-3 px-2.5 py-2"
+          >
+            No receipt yet. It will be marked paid now, and you can add the receipt from
+            the paid row whenever it turns up.
+          </p>
+        )}
+
         <Btn className="w-full justify-center mt-4" disabled={!valid || saving} onClick={confirm}>
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-          {saving ? "filing the receipt…" : `${action} · ${!Number.isNaN(parsed) && parsed > 0 ? fmt(parsed) : "…"}`}
+          {saving
+            ? (hasProof ? "filing the receipt…" : "marking it paid…")
+            : `${hasProof ? action : "Mark paid"} · ${!Number.isNaN(parsed) && parsed > 0 ? fmt(parsed) : "…"}`}
         </Btn>
         <p style={{ color: P.faint }} className="text-xs mt-2">
           {doc || filedName
