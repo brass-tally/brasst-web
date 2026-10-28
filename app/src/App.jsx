@@ -22,6 +22,7 @@ import * as subscriptions from "./lib/subscriptions";
 import * as spendgraph from "./lib/spendgraph";
 import * as catalogue from "./lib/catalogue";
 import * as insight from "./lib/invoiceInsight";
+import * as statementImport from "./lib/statementImport";
 import * as voidCheque from "./lib/voidcheque";
 import * as share from "./lib/sharing";
 import * as chat from "./lib/chat";
@@ -2718,6 +2719,10 @@ function Ledger({ onSignOut }) {
       description: bankTxn.description || "Bank transaction",
       account: account || (data.ledger.kind === "personal" ? "personal" : "business"),
       recurrence: "once",
+      /* Money paid onto a card the owner funds is the owner funding the
+         company, not revenue. Applied last so no category chosen earlier can
+         turn a top-up into income. */
+      ...(bank.fundingShape(bankTxn) || {}),
     };
     setData((d) => ({ ...d, transactions: [tx, ...d.transactions] }));
     patchBankTxn(bankTxn.id, { status: "matched", matchedTxId: tx.id, matchSource: "created", reviewReason: null });
@@ -3188,7 +3193,7 @@ function Ledger({ onSignOut }) {
             balance={balance}
             onAsk={askAgent}
             bankTxns={bankTxns}
-          ledgers={ledgers || []} readOnly={readOnly} />
+          ledgers={ledgers || []} readOnly={readOnly} addTx={addTx} addAR={addAR} />
         )}
 
         {tab === "integrations" && <IntegrationsTab data={data} syncedAt={syncedAt} openGuide={openGuide} onReview={() => setMatchOpen(true)} onSynced={afterSync} onConnectionsChange={setBankConns} updateLedgerMeta={(patch) => {
@@ -4883,7 +4888,11 @@ function itemStory(it) {
 function AddFromBank({ bankTxn, data, bankTxns = [], onAdd, onMatchInstead, onCancel, addSub }) {
   const type = bankTxn.direction === "credit" ? "income" : "expense";
   const cats = data.categories[type] || [];
-  const [category, setCategory] = useState(cats[0]?.name || "Other");
+  /* A top-up onto an owner-funded card opens already filed correctly, rather
+     than defaulting to the first income category and waiting for somebody to
+     notice their revenue has grown by the amount they moved. */
+  const funded = bank.fundingShape(bankTxn);
+  const [category, setCategory] = useState(funded?.category || cats[0]?.name || "Other");
   const [subcategory, setSubcategory] = useState("");
   const subs = cats.find((c) => c.name === category)?.subs || [];
   // The matcher only looks a few days out, so an entry dated a fortnight from
@@ -13152,7 +13161,7 @@ function CardPaymentsCard({ ledgerId, readOnly, addTx, settleAR, onChanged }) {
  * It catches the forgotten ones precisely because it does not need to know the
  * vendor exists, which is the whole reason this is worth having.
  */
-function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], readOnly }) {
+function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], readOnly , addTx, addAR, ownerName }) {
   const [tags, setTags] = useState([]);
   const [elsewhere, setElsewhere] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -13312,6 +13321,18 @@ function SubscriptionsCard({ bankTxns = [], ledgerId, ledgerKind, ledgers = [], 
           A personal card paying for business software is the ordinary case for
           an owner-operator, and the business side should not have to pretend
           it does not happen. */}
+      {/* What still needs filing, before what has been charged. The panel
+          only renders on a ledger that has costs pointed at it. */}
+      {ledgerKind === "business" && (
+        <PaidPersonallyCard
+          ledgerId={ledgerId}
+          ownerName={ownerName}
+          addTx={addTx}
+          addAR={addAR}
+          readOnly={readOnly}
+        />
+      )}
+
       {/* Charged to a card on another ledger and tagged as belonging here.
        *
        * Shown in full, with the same figures and dates the other ledger shows,
@@ -13670,7 +13691,7 @@ function SpendGraph({ rows = [], total = 0, onPick, picked }) {
  * Three things in the order somebody actually asks them. Where is it going.
  * What is going out whether I act or not. Show me the figures.
  */
-function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] , ledgers = [], readOnly = false }) {
+function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] , ledgers = [], readOnly = false , addTx, addAR }) {
   const [picked, setPicked] = useState(null);
 
   const monthTx = useMemo(
@@ -13765,7 +13786,7 @@ function FinanceGraphTab({ data, month, balance, onAsk, bankTxns = [] , ledgers 
           ledgerKind={data.ledger?.kind}
           ledgers={ledgers || []}
           readOnly={readOnly}
-        />
+        addTx={addTx} addAR={addAR} />
       </section>
 
       {/* Month over month. Small, because it answers one question: is this
@@ -13965,6 +13986,289 @@ function ConnectorGrid({ bankTxns = [], connected = [] }) {
         those services directly.
       </p>
     </div>
+  );
+}
+
+/* Business costs paid on the owner's personal card.
+ *
+ * The software the company runs on is charged to a personal card, so it never
+ * reached the company's books: expenses understated, deductions lost.
+ *
+ * Filed as what actually happened. The vendor has been paid, so this is not a
+ * payable to them; raising one would say the company still owes Anthropic and
+ * paying it would pay them twice. The company incurred an expense and the
+ * owner funded it, so each month becomes an expense here and the total becomes
+ * one amount the company owes the owner, cleared when it reimburses them.
+ *
+ * Nothing files itself. The owner presses the button, once per batch.
+ */
+function PaidPersonallyCard({ ledgerId, ownerName, addTx, addAR, readOnly }) {
+  const [shared, setShared] = useState([]);
+  const [filings, setFilings] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState("");
+
+  const refresh = useCallback(async () => {
+    if (!ledgerId) return;
+    const [t, f] = await Promise.all([
+      subscriptions.listChargedHere(ledgerId),
+      subscriptions.listFilings(ledgerId),
+    ]);
+    setShared(t);
+    setFilings(f);
+  }, [ledgerId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const rows = useMemo(() => subscriptions.unfiledPersonal(shared, filings), [shared, filings]);
+  const total = rows.reduce((n, r) => n + r.amount, 0);
+  const filedTotal = filings.reduce((n, f) => n + f.amount, 0);
+
+  if (!shared.length) return null;
+
+  const file = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      /* One expense per subscription per month, dated to the month it was
+         incurred, so the deduction lands in the right period whether or not
+         the owner has been paid back yet. */
+      const txIds = {};
+      for (const r of rows) {
+        const made = await addTx({
+          type: "expense",
+          amount: r.amount,
+          date: `${r.month}-28`,
+          description: `${r.name} · paid personally${r.share < 1 ? ` · ${Math.round(r.share * 100)}% business` : ""}`,
+          category: r.category || "Software",
+          payMethod: "other",
+        });
+        if (made?.id) txIds[`${r.payeeKey}|${r.month}`] = made.id;
+      }
+
+      /* Who the company owes. Asked for here rather than threaded down
+         through four components, because this is the only place that needs
+         it and the session already knows. */
+      let owner = ownerName;
+      if (!owner) {
+        const { data: who } = await supabase.auth.getUser();
+        owner = who?.user?.user_metadata?.name || who?.user?.email || "Owner";
+      }
+
+      /* And one payable to the owner for the lot. A single figure, because
+         what the owner wants to know is how much the company owes them, not
+         a line per subscription per month. */
+      const owed = await addAR?.("payables", {
+        /* Shareholder loan: the company owes the owner, who funded business
+           costs personally. Named as the accountant will name it, so the
+           balance sheet and the payables list say the same thing. */
+        party: `Shareholder loan · ${owner}`,
+        description: `Business costs paid personally · ${rows[0].month} to ${rows[rows.length - 1].month}`,
+        amount: Math.round(total * 100) / 100,
+        dueDate: todayStr(),
+      });
+
+      const res = await subscriptions.markFiled(ledgerId, rows, {
+        transactionIds: txIds,
+        obligationId: owed?.id || null,
+      });
+      if (!res.ok) throw new Error(res.error);
+
+      setDone(`${fmt(total)} filed as business expenses, and added to the shareholder loan owed to ${owner}.`);
+      setTimeout(() => setDone(""), 9000);
+      refresh();
+    } catch (e) {
+      setErr(e?.message || "That did not file. Nothing has been marked as done.");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div
+      style={{ background: P.surface2, borderRadius: 16, borderLeft: `3px solid ${P.brass}` }}
+      className="p-4 mb-3"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span style={{ color: P.text }} className="text-[15.5px]">Paid on a personal card</span>
+        {rows.length > 0 && (
+          <span style={{ fontFamily: MONO, color: P.text }} className="text-[16px] tabular-nums">
+            {fmt(total)}
+          </span>
+        )}
+      </div>
+
+      <p style={{ color: P.faint }} className="text-[13.5px] mt-0.5">
+        {rows.length
+          ? `${rows.length} ${rows.length === 1 ? "charge" : "charges"} not yet in these books.`
+          : `Everything is filed${filedTotal ? `: ${fmt(filedTotal)} so far` : ""}.`}
+      </p>
+
+      {done && <p style={{ color: P.credit }} className="text-[13.5px] mt-1">{done}</p>}
+      {err && <p style={{ color: P.debit }} className="text-[13.5px] mt-1">{err}</p>}
+
+      {/* truncation-ok: every unfiled month is listed, there is no cap. */}
+      {rows.map((r) => (
+        <div
+          key={`${r.payeeKey}|${r.month}`}
+          className="flex items-baseline justify-between gap-3 py-2"
+          style={{ borderTop: `1px solid ${P.line}` }}
+        >
+          <span className="min-w-0">
+            <span style={{ color: P.text }} className="text-[14px] block truncate">{r.name}</span>
+            <span style={{ color: P.faint }} className="text-[12.5px]">
+              {r.month}{r.share < 1 ? ` · ${Math.round(r.share * 100)}% business` : ""}
+            </span>
+          </span>
+          <span style={{ fontFamily: MONO, color: P.text }} className="text-[14px] tabular-nums shrink-0">
+            {fmt(r.amount)}
+          </span>
+        </div>
+      ))}
+
+      {rows.length > 0 && !readOnly && (
+        <>
+          <button
+            onClick={file}
+            disabled={busy}
+            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+            className="h-11 px-4 text-[15px] font-medium press mt-3"
+          >
+            {busy ? "Filing" : `File ${fmt(total)} as business costs`}
+          </button>
+          <p style={{ color: P.faint }} className="text-[12.5px] mt-2 leading-snug">
+            Each becomes an expense in the month it happened, and the total is added to your
+            shareholder loan: what the company owes you for funding it. When the company pays you
+            back, settle that amount. It is not owed to the vendors: they have been paid.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* Importing a statement from a file, for an account Plaid cannot reach.
+ *
+ * The case that prompted it is a Wise card: prepaid in Canada, spending from
+ * the Wise balance, so the bank feed only ever saw money going into Wise and
+ * never what the card paid for.
+ *
+ * One file input, owned here at the top level, so it is never remounted
+ * while its picker is open.
+ */
+function StatementImportCard({ ledgerId, readOnly, onImported }) {
+  const input = useRef(null);
+  const [label, setLabel] = useState("Wise card");
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState("");
+
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setErr(""); setDone("");
+    try {
+      const text = await file.text();
+      const parsed = statementImport.parseStatement(text);
+      if (parsed.problems.length) {
+        setErr(`${parsed.problems.join(" ")} Export the statement as CSV and try again.`);
+        return;
+      }
+      setPreview({ ...parsed, name: file.name });
+      if (parsed.source === "wise") setLabel("Wise card");
+    } catch (x) {
+      setErr(x?.message || "That file could not be read.");
+    }
+  };
+
+  const confirm = async () => {
+    setBusy(true);
+    const res = await statementImport.importStatement(ledgerId, label.trim() || "Imported card", preview.lines);
+    setBusy(false);
+    if (!res.ok) { setErr(res.error); return; }
+    setDone(res.already
+      ? `${res.added} new lines added. ${res.already} were already here from an earlier import.`
+      : `${res.added} lines added to ${label}.`);
+    setPreview(null);
+    onImported?.();
+  };
+
+  const debits = preview ? preview.lines.filter((l) => l.direction === "debit") : [];
+  const spent = debits.reduce((n, l) => n + l.amount, 0);
+  const span = preview && preview.lines.length
+    ? [preview.lines.map((l) => l.date).sort()[0], preview.lines.map((l) => l.date).sort().slice(-1)[0]]
+    : null;
+
+  return (
+    <section style={cardStyle()} className="p-5">
+      <input ref={input} type="file" accept=".csv,text/csv" className="sr-only" onChange={pick} />
+
+      <h2 style={{ fontFamily: SERIF }} className="text-xl leading-tight">Import a statement</h2>
+      <p style={{ color: P.muted }} className="text-[15px] mb-3">
+        For a card or account your bank connection cannot reach. Download the statement as CSV
+        and add it here; its charges join your feed and are read for subscriptions like any other.
+      </p>
+
+      {err && <p style={{ color: P.debit }} className="text-[13.5px] mb-2">{err}</p>}
+      {done && <p style={{ color: P.credit }} className="text-[13.5px] mb-2">{done}</p>}
+
+      {!preview && !readOnly && (
+        <button
+          onClick={() => input.current?.click()}
+          style={{ background: P.surface2, color: P.text, border: `1px solid ${P.line}`, borderRadius: R.pill }}
+          className="h-11 px-4 text-[15px] font-medium press"
+        >
+          Choose a CSV statement
+        </button>
+      )}
+
+      {/* What is about to be added, before anything is. Somebody should be
+          able to see that this is the right file covering the right months
+          before it lands in their books. */}
+      {preview && (
+        <div style={{ background: P.surface2, borderRadius: 14 }} className="p-3.5">
+          <div style={{ color: P.text }} className="text-[14.5px]">{preview.name}</div>
+          <div style={{ color: P.faint }} className="text-[13px]">
+            {preview.lines.length} lines
+            {span ? ` · ${span[0]} to ${span[1]}` : ""}
+            {debits.length ? ` · ${fmt(spent)} spent` : ""}
+            {preview.skipped ? ` · ${preview.skipped} could not be read` : ""}
+          </div>
+
+          <label style={{ color: P.muted }} className="text-[13.5px] block mt-3">Call this account</label>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            style={{ background: P.surface, color: P.text, borderRadius: 13 }}
+            className="w-full h-11 px-3.5 text-[15px] outline-none border-none mt-1"
+          />
+          <p style={{ color: P.faint }} className="text-[12.5px] mt-1">
+            Use the same name next month and the new statement joins this one. Lines already
+            imported are skipped, so overlapping statements are fine.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              onClick={confirm}
+              disabled={busy}
+              style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+              className="h-11 px-4 text-[15px] font-medium press"
+            >
+              {busy ? "Importing" : `Add ${preview.lines.length} lines`}
+            </button>
+            <button onClick={() => setPreview(null)} style={{ color: P.muted }} className="h-11 px-2 text-[14.5px] press">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p style={{ color: P.faint }} className="text-[12.5px] mt-3 leading-snug">
+        In Wise: Statements and reports, choose the card account and the months, then CSV.
+      </p>
+    </section>
   );
 }
 
@@ -18130,6 +18434,14 @@ function IntegrationsTab({ data, updateLedgerMeta, onSynced, onConnectionsChange
 
       <BankFeedCard data={data} onSynced={onSynced} onConnectionsChange={onConnectionsChange} openGuide={openGuide} onReview={onReview} syncedAt={syncedAt} />
 
+      {/* Below the live connections, because it is the fallback for what they
+          cannot reach rather than an alternative to them. */}
+      <StatementImportCard
+        ledgerId={data.ledger.id}
+        readOnly={data.ledger.readOnly}
+        onImported={onSynced}
+      />
+
       {/* Everything Brasstally can see, by category. Connected where a
           connection exists, recognised where one does not, and never a Connect
           button on something that cannot be connected. */}
@@ -18493,6 +18805,7 @@ function FeedDiagnosis({ rows, env, onClose }) {
 }
 
 function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview, syncedAt = 0 }) {
+  const [fundingBusy, setFundingBusy] = useState(null);
   const [plaidEnv, setPlaidEnv] = useState("");
   const [conns, setConns] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
@@ -18712,12 +19025,15 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
   // Update mode: re-authenticate the Item the ledger already holds. Distinct
   // from connect() on purpose, linking the bank again would create a second
   // connection, which double-counts the balance and re-imports every line.
-  const reconnect = async (id) => {
+  /* `addAccounts` re-opens the account picker on the same Item, which is how
+     a credit card at the same bank is added without minting a second Item on
+     that login. */
+  const reconnect = async (id, { addAccounts = false } = {}) => {
     setErr(""); setNotice(""); setBusy(true);
     try {
       const redirect_uri = bank.plaidRedirectUri();
       const { link_token, oauth, oauth_error } = await bank.plaid(
-        "create_link_token", { redirect_uri, connection_id: id },
+        "create_link_token", { redirect_uri, connection_id: id, add_accounts: addAccounts },
       );
 
       /* An OAuth bank cannot be reconnected without the redirect.
@@ -18923,6 +19239,63 @@ function BankFeedCard({ data, onSynced, onConnectionsChange, openGuide, onReview
                   >
                     {syncing === c.id ? <Loader2 size={15} className="animate-spin" /> : null} Sync now
                   </button>}
+              {/* Adding a credit card at the same bank.
+                  Offered on the connection itself, because the card goes onto
+                  this Item rather than a new one. A second Connect on the same
+                  login is what produced nine dead Items and a connection that
+                  dropped every day. */}
+              {!stale && (
+                <button
+                  onClick={() => reconnect(c.id, { addAccounts: true })}
+                  disabled={busy}
+                  style={{ color: P.brassText }}
+                  className="px-2 py-2.5 text-[14px] press"
+                  title="Add a credit card or another account at this bank"
+                >
+                  + Add a card at this bank
+                </button>
+              )}
+
+              {/* Who puts money into this account.
+                  Asked only on a business ledger. A card the owner keeps for
+                  business costs and tops up personally is the case this is
+                  for: what it spends is the company's expense, and what is
+                  paid onto it is the owner funding the company, never
+                  revenue. Without this, every top-up would have counted as
+                  income. */}
+              {data.ledger?.kind === "business" && (
+                <label
+                  style={{ color: P.muted }}
+                  className="text-[13px] inline-flex items-center gap-1.5 px-1"
+                  title="Who puts money into this account"
+                >
+                  Funded by
+                  <select
+                    value={c.funding || "own"}
+                    disabled={Boolean(data.ledger?.readOnly) || fundingBusy === c.id}
+                    onChange={async (e) => {
+                      const next = e.target.value;
+                      setFundingBusy(c.id);
+                      const res = await bank.setFunding(c.id, next);
+                      setFundingBusy(null);
+                      if (!res.ok) { setErr(res.error); return; }
+                      setNotice(next === "owner"
+                        ? "Money paid onto this account will be filed as your shareholder loan, not income."
+                        : next === "company"
+                          ? "Money paid onto this account will be filed as a transfer, not income."
+                          : "Money paid onto this account will be filed as ordinary income.");
+                      onConnectionsChange?.();
+                      onSynced?.();
+                    }}
+                    style={{ background: P.surface2, color: P.text, borderRadius: 10 }}
+                    className="h-9 px-2 text-[13px] outline-none border-none"
+                  >
+                    <option value="own">the company</option>
+                    <option value="owner">me, personally</option>
+                    <option value="company">another company account</option>
+                  </select>
+                </label>
+              )}
 
               {/* Why is this behind.
 

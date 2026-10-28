@@ -330,7 +330,10 @@ export function findRecurring(lines = [], { minMonths = 3 } = {}) {
    * Money moved between your own accounts, wages, and tax. All of these
    * repeat beautifully and none of them is something you could cancel, which
    * is the point of this list. */
-  const NOT_A_SUBSCRIPTION = /\b(TRANSFER|E-?TRANSFER|SAVE|SAVINGS|PAYROLL|WAGE|SALARY|DEPOSIT|WITHDRAWAL|ATM|CRA|REVENUE|TAX|MORTGAGE|LOAN|CREDIT CARD|VISA PAYMENT|MASTERCARD)\b/i;
+  /* Wise and its kin are where money is moved, not what it is spent on. A
+     top-up from chequing to a Wise card is a transfer between your own
+     accounts; what the card then pays for is the subscription. */
+  const NOT_A_SUBSCRIPTION = /\b(TRANSFER|E-?TRANSFER|SAVE|SAVINGS|PAYROLL|WAGE|SALARY|DEPOSIT|WITHDRAWAL|ATM|CRA|REVENUE|TAX|MORTGAGE|LOAN|CREDIT CARD|VISA PAYMENT|MASTERCARD|WISE|TRANSFERWISE|REVOLUT|KOHO|WEALTHSIMPLE|PAYPAL TRANSFER|SENDWAVE|REMITLY)\b/i;
 
   for (const row of byPayee.values()) {
     const seen = row.months.size;
@@ -528,6 +531,7 @@ const rowToTag = (r) => ({
     firstCharged: r.first_charged || null,
     lastCharged: r.last_charged || null,
     status: r.observed_status || "active",
+    months: r.observed_months || {},
     at: r.observed_at,
   } : null,
 });
@@ -616,6 +620,17 @@ function fromManualTag(tag) {
   };
 }
 
+/** Charges grouped by calendar month: { "2026-09": 312.40, ... }. */
+export function byMonth(lines = []) {
+  const out = {};
+  for (const l of lines) {
+    const m = String(l.date || "").slice(0, 7);
+    if (!m) continue;
+    out[m] = Math.round(((out[m] || 0) + Math.abs(Number(l.amount) || 0)) * 100) / 100;
+  }
+  return out;
+}
+
 /* Write what the feed showed into each shared tag.
  *
  * The ledger whose bank holds the charges is the only one that can work out
@@ -645,10 +660,14 @@ export async function syncObserved(ledgerId, subs = [], tags = []) {
       first_charged: s.firstCharged || null,
       last_charged: s.lastCharged || null,
       observed_status: s.status || "active",
+      /* Month by month, so the business side can file each month on its own
+         and never file one twice. */
+      observed_months: byMonth(s.lines || []),
     };
 
     const o = t.observed;
     const same = o
+      && JSON.stringify(o.months || {}) === JSON.stringify(next.observed_months)
       && o.monthly === next.observed_monthly
       && o.charges === next.observed_charges
       && o.lastCharged === next.last_charged
@@ -723,4 +742,80 @@ export function businessTotals(subs = []) {
     monthly: Math.round(monthly * 100) / 100,
     yearly: Math.round(monthly * 12 * 100) / 100,
   };
+}
+
+/* ---------------- costs paid personally ---------------- */
+
+/* What the business owes for, month by month, that has not been filed.
+ *
+ * Built from tags pointed at this ledger, using the figures the personal side
+ * carried across. A split subscription contributes only its business share.
+ * Months already filed are left out, so this list is "what to do", not
+ * "everything that ever happened".
+ */
+export function unfiledPersonal(sharedTags = [], filings = []) {
+  const done = new Set(filings.map((f) => `${f.payeeKey}|${f.month}`));
+  const out = [];
+
+  for (const t of sharedTags) {
+    if (t.side !== "business" && t.side !== "mixed") continue;
+    const months = t.observed?.months || {};
+    const share = t.side === "mixed" ? (t.businessShare ?? 0) : 1;
+    if (!share) continue;
+
+    for (const [month, total] of Object.entries(months)) {
+      if (done.has(`${t.payeeKey}|${month}`)) continue;
+      const amount = Math.round(total * share * 100) / 100;
+      if (amount <= 0) continue;
+      out.push({
+        payeeKey: t.payeeKey,
+        name: t.label || t.payeeKey,
+        month,
+        amount,
+        share,
+        fromLedgerId: t.ledgerId,
+        category: t.category || "Software",
+      });
+    }
+  }
+
+  return out.sort((a, b) => a.month.localeCompare(b.month) || b.amount - a.amount);
+}
+
+export async function listFilings(ledgerId) {
+  return softly("filings", async () => {
+    const { data, error } = await supabase
+      .from("personal_paid_filings").select("*").eq("to_ledger_id", ledgerId);
+    if (error) throw error;
+    return (data || []).map((r) => ({
+      id: r.id, payeeKey: r.payee_key, month: r.month,
+      amount: Number(r.amount) || 0, transactionId: r.transaction_id,
+      obligationId: r.obligation_id, filedAt: r.filed_at,
+    }));
+  }, []);
+}
+
+/* Record that a set of months has been filed. Called after the business side
+ * has written its expenses and the amount owed to the owner, so a failure
+ * there leaves nothing marked as done. */
+export async function markFiled(toLedgerId, items = [], { transactionIds = {}, obligationId = null } = {}) {
+  assertWritable();
+  try {
+    const rows = items.map((it) => ({
+      from_ledger_id: it.fromLedgerId,
+      to_ledger_id: toLedgerId,
+      payee_key: it.payeeKey,
+      month: it.month,
+      amount: it.amount,
+      transaction_id: transactionIds[`${it.payeeKey}|${it.month}`] || null,
+      obligation_id: obligationId,
+    }));
+    const { error } = await supabase
+      .from("personal_paid_filings").upsert(rows, { onConflict: "to_ledger_id,payee_key,month" });
+    if (error) throw error;
+    return { ok: true };
+  } catch (e) {
+    console.warn("mark filed failed:", e?.message || e);
+    return { ok: false, error: e?.message || "Could not record what was filed." };
+  }
 }

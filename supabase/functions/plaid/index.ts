@@ -261,7 +261,10 @@ Deno.serve(async (req) => {
 
       const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       const plaid = makePlaid(base, creds);
-      const { data: conns, error } = await admin.from("bank_connections").select("*");
+      const { data: conns, error } = await admin.from("bank_connections").select("*")
+        /* Imported statements have no token and nothing to sync. Without this
+           the morning pass would try to refresh a Wise CSV through Plaid. */
+        .not("access_token", "is", null);
       if (error) throw error;
 
       const results: Array<Record<string, unknown>> = [];
@@ -332,6 +335,21 @@ Deno.serve(async (req) => {
         if (error || !conn?.access_token) throw new Error("Connection not found");
         payload.access_token = conn.access_token;
         delete payload.products;
+
+        /* Adding an account to a connection that already exists.
+         *
+         * A credit card at the same bank, on the same login, belongs on the
+         * same Item. Pressing Connect again would mint a second Item on that
+         * login, which is precisely how the personal RBC connection ended up
+         * with nine dead Items contending for one session and dropping every
+         * day.
+         *
+         * With account selection on, update mode re-opens the account picker
+         * for the existing Item: the card is ticked and added, and the Item,
+         * its token and its cursor all stay as they are. */
+        if (body.add_accounts) {
+          payload.update = { account_selection_enabled: true };
+        }
       }
       if (typeof body.redirect_uri === "string" && body.redirect_uri) {
         payload.redirect_uri = body.redirect_uri;
@@ -749,11 +767,11 @@ Deno.serve(async (req) => {
            list says. Support sees Plaid's side; only we can see whether
            somebody is using it. */
         const { data: live } = await supabase
-          .from("bank_connections").select("id, access_token, institution_name")
+          .from("bank_connections").select("id, access_token, institution")
           .eq("item_id", itemId).maybeSingle();
 
         if (live?.access_token) {
-          skippedLive.push(`${itemId} (${live.institution_name || "a live connection"})`);
+          skippedLive.push(`${itemId} (${live.institution || "a live connection"})`);
           continue;
         }
 

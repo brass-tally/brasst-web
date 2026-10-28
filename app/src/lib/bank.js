@@ -25,7 +25,10 @@ export async function plaid(action, body = {}) {
 export async function listConnections(ledgerId) {
   const { data, error } = await supabase
     .from("bank_connections")
-    .select("id, institution, last_synced, current_balance, balance_as_of, accounts, status, status_code, status_error, status_at")
+    /* funding and source are named here, or the account's setting is saved
+       and then never read back: the control would show "the company" after
+       every reload whatever had been chosen. */
+    .select("id, institution, last_synced, current_balance, balance_as_of, accounts, status, status_code, status_error, status_at, funding, source, last_import_at, last_import_lines")
     .eq("ledger_id", ledgerId)
     .order("created_at");
   if (error) throw error;
@@ -59,9 +62,17 @@ export function sumBankBalance(connections) {
 
 const BANK_TXN_COLS =
   "id, connection_id, plaid_txn_id, date, amount, direction, description, pending," +
-  " status, matched_tx_id, match_source, review_reason, removed_at";
+  " status, matched_tx_id, match_source, review_reason, removed_at," +
+  /* The account's funding, embedded through the foreign key, so every line
+     knows whether money arriving on it is income or the owner topping it up.
+     One join here, instead of every path that files a line having to look
+     the account up. */
+  " bank_connections(funding, institution, source)";
 
 const rowToBankTxn = (r) => ({
+  funding: r.bank_connections?.funding || "own",
+  accountName: r.bank_connections?.institution || undefined,
+  imported: r.bank_connections?.source === "import",
   id: r.id,
   connectionId: r.connection_id,
   plaidTxnId: r.plaid_txn_id,
@@ -348,4 +359,50 @@ export async function refreshStale(ledgerIds, { onDone } = {}) {
   }
   if (synced) onDone?.(synced);
   return { synced, skipped };
+}
+
+
+/* How money arriving on an account should be filed.
+ *
+ * Money going out is an expense whoever funds the account. Money coming in is
+ * income only on an account whose money is its own. On a card the owner tops
+ * up, it is the owner funding the company; on one the company tops up from
+ * elsewhere, it is a transfer. Neither is revenue, and both are kept out of
+ * the P&L the same way transfers between ledgers already are.
+ *
+ * Returns the override, or null when the ordinary rule applies.
+ */
+/* A refund is money coming in that is not funding.
+ *
+ * ElevenLabs refunding a charge on the Wise card arrives as a credit exactly
+ * like a top-up does. Filed as a shareholder loan it would say the owner put
+ * money in, when really a cost went away. Those stay on the ordinary path,
+ * where they can be filed against the expense they reverse. */
+const REFUND = /\b(REFUND|REFUNDED|REVERSAL|REVERSED|CHARGEBACK|CASHBACK|CASH BACK|RETURN|CREDIT ADJUSTMENT)\b/i;
+
+export function fundingShape(bankTxn) {
+  if (!bankTxn || bankTxn.direction !== "credit") return null;
+  if (REFUND.test(bankTxn.description || "")) return null;
+  if (bankTxn.funding === "owner") {
+    return { type: "income", category: "Shareholder loan", plExclude: true };
+  }
+  if (bankTxn.funding === "company") {
+    return { type: "income", category: "Transfer in", plExclude: true };
+  }
+  return null;
+}
+
+
+/* Who puts money into an account. See fundingShape for what it changes.
+ * Reports its own failure, because it is pressed by a person. */
+export async function setFunding(connectionId, funding) {
+  assertWritable();
+  try {
+    const { error } = await supabase
+      .from("bank_connections").update({ funding }).eq("id", connectionId);
+    if (error) throw error;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "That did not save." };
+  }
 }

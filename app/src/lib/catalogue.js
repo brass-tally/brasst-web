@@ -87,7 +87,11 @@ export const SERVICES = [
   { id: "signcom", name: "Sign.com", category: "productivity", match: ["SIGN COM", "SIGNCOM"] },
   { id: "spotify", name: "Spotify", category: "other", match: ["SPOTIFY"] },
   { id: "netflix", name: "Netflix", category: "other", match: ["NETFLIX"] },
-  { id: "wise", name: "Wise", category: "finance", match: ["WISE", "TRANSFERWISE"] },
+  /* Wise is not here, deliberately. On a bank feed it appears as money moved
+     INTO a Wise account, which is a transfer between your own accounts, and
+     listing it as "known" exempted it from every check: it was reported as a
+     $341 a month subscription, and would have double counted against the
+     charges the Wise card then made. */
 
   /* Named by the owner after reading their own statements, plus the hosting
      and mail services that sit alongside them. */
