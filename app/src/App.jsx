@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import {
+import { Phone,
   Camera, Plus, Trash2, Check, Send, Loader2, RotateCcw, X, LogOut, Mail, Pencil, ArrowLeftRight, ChevronDown, User,
   ArrowUpRight, ArrowDownRight, Paperclip, FileText, Sun, Moon, Download, MessageSquare, Repeat,
   LayoutGrid, Receipt, TrendingUp, PieChart, FileClock, Coins, CalendarDays, Plug, Lock, StickyNote,
@@ -9057,7 +9057,29 @@ function ContactHistory({ contact, data, inbound, onClose, openPreview }) {
   );
 }
 
+/* Copy, with a fallback. The clipboard API is refused outside a secure
+   context and in some installed apps; selecting a hidden field and copying
+   that works almost everywhere else. Returns whether it worked, so the
+   caller can say so rather than leave somebody pasting nothing. */
+async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall through */ }
+  try {
+    const el = document.createElement("textarea");
+    el.value = text; el.setAttribute("readonly", ""); el.style.position = "fixed"; el.style.opacity = "0";
+    document.body.appendChild(el); el.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    return ok;
+  } catch { return false; }
+}
+
 function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound = [], openPreview , onConfirmVoid }) {
+  /* Which card has its ··· open, and which link was just copied. */
+  const [moreFor, setMoreFor] = useState(null);
+  const [copied, setCopied] = useState(null);
+
   /* Whose history is open. */
   const [historyFor, setHistoryFor] = useState(null);
   const [inviting, setInviting] = useState("");
@@ -9099,13 +9121,22 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
 
   const byRole = useMemo(() => {
     const out = new Map();
+    /* An unrecognised role joins one "other" group. Keyed on the raw value,
+       two different odd roles made two groups that both rendered under the
+       heading "Contact", one after the other. */
+    const known = new Set(CONTACT_ROLES.map((r) => r.id));
     for (const c of shown) {
-      if (!out.has(c.role)) out.set(c.role, []);
-      out.get(c.role).push(c);
+      const key = known.has(c.role) ? c.role : "other";
+      if (!out.has(key)) out.set(key, []);
+      out.get(key).push(c);
     }
-    return [...out.entries()].sort(
-      (a, b) => CONTACT_ROLES.findIndex((r) => r.id === a[0]) - CONTACT_ROLES.findIndex((r) => r.id === b[0]),
-    );
+    /* The "other" group last: an unknown role's index is -1, which sorted
+       leftovers above everybody with a proper role. */
+    const rank = (id) => {
+      const n = CONTACT_ROLES.findIndex((r) => r.id === id);
+      return n < 0 ? CONTACT_ROLES.length : n;
+    };
+    return [...out.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
   }, [shown]);
 
   const blank = () => setForm({ name: "", email: "", phone: "", role: "vendor", note: "" });
@@ -9252,202 +9283,250 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                 Name and details take the first line; the controls take the
                 second on a phone and rejoin the first where there is room. */}
             {people.map((c) => (
-              <div key={c.id} className="py-3 sm:flex sm:items-center sm:gap-3" style={{ borderTop: `1px solid ${P.line}` }}>
-                <div className="flex items-center gap-3 min-w-0">
-                <span
-                  aria-hidden
-                  style={{ background: P.surface2, color: P.muted, borderRadius: 11 }}
-                  className="w-10 h-10 flex items-center justify-center shrink-0 text-[13px] font-semibold"
-                >
-                  {/* truncation-ok: initials, two letters by design. */}
-                  {c.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()}
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span style={{ color: P.text }} className="text-[15.5px] block truncate">{c.name}</span>
-                  <span style={{ color: P.faint }} className="text-[13.5px] block truncate">
-                    {[c.email, c.phone, c.note].filter(Boolean).join(" · ") || "No details"}
-                  </span>
-                  {/* Beneath the person it happened to, where somebody pressing
-                      a button on their row is already looking. */}
-                  {rowErr[c.id] && (
-                    <span style={{ color: P.debit }} className="text-[13.5px] block mt-0.5">
-                      {rowErr[c.id]}
-                    </span>
-                  )}
-                </span>
+              <div
+                key={c.id}
+                style={{ background: P.surface2, borderRadius: 16 }}
+                className="p-4 mb-2.5"
+              >
+                {/* One card per person, read top to bottom.
 
+                    It was one row with the name squashed beside a dozen
+                    equally weighted controls (history, the supplier page
+                    label, an open count, send again, turn off, edit, remove)
+                    that wrapped in whatever order the screen allowed. Now:
+                    who they are, how to reach them, their supplier page, and
+                    their history, each in its own place. Editing and removing
+                    a contact are rare, so they sit behind the ··· . */}
+                <div className="flex items-start gap-3">
+                  <span
+                    style={{ background: P.surface, color: P.brassText, borderRadius: 12 }}
+                    className="w-11 h-11 flex items-center justify-center shrink-0 text-[14px] font-semibold"
+                    aria-hidden
+                  >
+                    {/* truncation-ok: initials, two letters by design. */}
+                    {c.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase()}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span style={{ color: P.text }} className="text-[16px] block truncate">{c.name}</span>
+                    {/* No role line: the group heading above already says it,
+                        and every card repeating "Contractor" under a
+                        "Contractor" heading was noise. */}
+                  </span>
+                  {!readOnly && (
+                    <button
+                      onClick={() => setMoreFor(moreFor === c.id ? null : c.id)}
+                      aria-expanded={moreFor === c.id}
+                      aria-label={`More for ${c.name}`}
+                      style={{ color: P.faint }}
+                      className="w-10 h-10 -mr-2 -mt-1 flex items-center justify-center text-[18px] press shrink-0"
+                    >
+                      &middot;&middot;&middot;
+                    </button>
+                  )}
                 </div>
 
-                {/* The controls, wrapping rather than overflowing.
-
-                    Before Edit, and outside the readOnly guard: reading what
-                    has passed between you and somebody is not an edit, and an
-                    accountant with read access has more reason to want it than
-                    anyone. */}
-                <div className="flex items-center flex-wrap gap-1 mt-2 sm:mt-0 sm:ml-auto sm:shrink-0">
-                <button
-                  onClick={() => setHistoryFor(c)}
-                  style={{ color: P.brassText }}
-                  className="h-11 px-2 text-[14px] shrink-0 press"
-                >
-                  History
-                </button>
-
-                {/* Their own page, by link rather than by account.
-
-                    Only for somebody with an address, because there is nowhere
-                    to send it otherwise, and the button would be a promise the
-                    row cannot keep. */}
-                {/* Labelled, so the control says what it is before anybody
-                    presses it. It used to be a lone button reading "Send their
-                    account", which in a finance app reads as a bank account,
-                    and the owner looking for exactly this feature did not
-                    recognise it. */}
-                {!readOnly && (
-                  <span
-                    style={{ color: P.faint, letterSpacing: ".04em" }}
-                    className="text-[11px] font-semibold uppercase mr-1"
-                  >
-                    Supplier page
-                  </span>
-                )}
-                {/* Offered without an email too, with what is missing.
-                    It used to render nothing at all for a contact with no
-                    address, so the feature was invisible exactly where
-                    somebody would first look for it. */}
-                {!readOnly && !c.email && (
-                  <span style={{ color: P.faint }} className="text-[13px]">
-                    add their email to give them one
-                  </span>
-                )}
-                {!readOnly && c.email && (() => {
-                  const portal = portalFor(c.id);
-
-                  /* Real buttons, and each says what pressing it does.
-
-                     These were bare text that happened to be clickable, which
-                     on a row full of other text reads as a label rather than a
-                     control. And once somebody has an account, "send" is the
-                     wrong word: the address already exists, so sending again
-                     is a reminder rather than a first invitation. */
-                  const Pill = ({ onClick, busy, label, tone }) => (
+                {moreFor === c.id && !readOnly && (
+                  <div className="flex items-center gap-4 mt-2 ml-14">
                     <button
-                      onClick={onClick}
-                      disabled={busy}
-                      style={{
-                        background: tone === "danger" ? "transparent" : P.surface2,
-                        color: tone === "danger" ? P.debit : P.text,
-                        border: tone === "danger" ? `1px solid ${P.line}` : "none",
-                        borderRadius: R.pill,
+                      onClick={() => {
+                        setEditing(c); setAdding(false); setMoreFor(null);
+                        setForm({ name: c.name, email: c.email || "", phone: c.phone || "", role: c.role, note: c.note || "" });
                       }}
-                      className="h-10 px-3.5 text-[13.5px] font-medium shrink-0 press"
+                      style={{ color: P.text }}
+                      className="h-10 text-[14px] press"
                     >
-                      {busy ? "Working" : label}
+                      Edit details
                     </button>
-                  );
+                    <button onClick={() => { setMoreFor(null); remove(c); }} style={{ color: P.debit }} className="h-10 text-[14px] press">
+                      Remove
+                    </button>
+                  </div>
+                )}
 
-                  if (portal?.active) {
-                    return (
-                      <span className="flex items-center gap-1.5 shrink-0">
-                        <span
-                          style={{ color: P.faint }}
-                          className="text-[12.5px] hidden sm:inline"
-                          title={portal.openedAt ? `Last opened ${String(portal.openedAt).slice(0, 10)}` : "Never opened"}
-                        >
-                          {portal.opens > 0 ? `${portal.opens} opens` : "unopened"}
-                        </span>
-                        <Pill
-                          busy={inviting === c.id}
-                          label={invited.has(c.id) ? "Sent again" : "Send the link again"}
-                          onClick={async () => {
-                            setInviting(c.id);
-                            const res = await share.invitePortal(c.id);
-                            setInviting("");
-                            if (res?.ok) {
-                              setInvited((prev) => new Set(prev).add(c.id));
-                              failRow(c.id, "");
-                            } else {
-                              failRow(c.id, res?.error || "It did not send. Try again in a moment.");
-                            }
-                            refreshPortals();
-                          }}
-                        />
-                        <Pill
-                          tone="danger"
-                          busy={inviting === c.id}
-                          label="Turn off"
-                          onClick={async () => {
-                            if (!(await onConfirmVoid?.({
-                              title: `Turn off ${c.name}'s supplier page?`,
-                              body: "Their address stops working immediately. Nothing they have sent you is affected, and you can turn it back on.",
-                              confirmLabel: "Turn it off",
-                            }))) return;
-                            setInviting(c.id);
-                            await share.setPortalActive(c.id, false);
-                            setInviting("");
-                            refreshPortals();
-                          }}
-                        />
-                      </span>
-                    );
-                  }
+                {/* How to reach them, one fact per line rather than run
+                    together with dots, so a long address does not push the
+                    phone number off the card. */}
+                {(c.email || c.phone || c.note) && (
+                  <div className="mt-2.5 ml-14 space-y-0.5">
+                    {c.email && (
+                      <a href={`mailto:${c.email}`} style={{ color: P.muted }} className="text-[13.5px] flex items-center gap-1.5 min-w-0">
+                        <Mail size={13} className="shrink-0" /> <span className="truncate">{c.email}</span>
+                      </a>
+                    )}
+                    {c.phone && (
+                      <a href={`tel:${c.phone}`} style={{ color: P.muted }} className="text-[13.5px] flex items-center gap-1.5">
+                        <Phone size={13} className="shrink-0" /> {c.phone}
+                      </a>
+                    )}
+                    {c.note && <div style={{ color: P.faint }} className="text-[13px]">{c.note}</div>}
+                  </div>
+                )}
 
-                  if (portal && !portal.active) {
-                    return (
-                      <Pill
-                        busy={inviting === c.id}
-                        label="Turn their supplier page back on"
-                        onClick={async () => {
-                          setInviting(c.id);
-                          await share.setPortalActive(c.id, true);
-                          setInviting("");
-                          refreshPortals();
-                        }}
-                      />
-                    );
-                  }
+                {rowErr[c.id] && (
+                  <p style={{ color: P.debit }} className="text-[13.5px] mt-2 ml-14">{rowErr[c.id]}</p>
+                )}
+
+                {/* Their supplier page, as its own section with its state
+                    stated, not inferred from which buttons happen to show. */}
+                {!readOnly && (() => {
+                  const portal = portalFor(c.id);
+                  const on = Boolean(portal?.active);
+                  const paused = Boolean(portal && !portal.active);
+                  const status = on
+                    ? (portal.opens > 0
+                        ? `On · opened ${portal.opens === 1 ? "once" : `${portal.opens} times`}`
+                        : "On · not opened yet")
+                    : paused ? "Turned off" : "Off";
 
                   return (
-                    <Pill
-                      busy={inviting === c.id}
-                      label="Give them a supplier page"
-                      onClick={async () => {
-                        setInviting(c.id);
-                        const res = await share.invitePortal(c.id);
-                        setInviting("");
-                        if (res?.ok) {
-                          setInvited((prev) => new Set(prev).add(c.id));
-                          failRow(c.id, "");
-                        } else {
-                          failRow(c.id, res?.error || "It did not send. Try again in a moment.");
-                        }
-                        refreshPortals();
-                      }}
-                    />
+                    <div style={{ borderTop: `1px solid ${P.line}` }} className="mt-3 pt-3">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span
+                          style={{ color: P.faint, letterSpacing: ".04em" }}
+                          className="text-[11px] font-semibold uppercase"
+                        >
+                          Supplier page
+                        </span>
+                        <span style={{ color: on ? P.credit : P.faint }} className="text-[12.5px]">
+                          {on && <span style={{ background: P.credit }} className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" />}
+                          {status}
+                        </span>
+                      </div>
+
+                      {!c.email && (
+                        <p style={{ color: P.faint }} className="text-[13.5px] mt-1.5">
+                          Add their email to give them one: it is where the link is sent.{" "}
+                          <button
+                            onClick={() => {
+                              setEditing(c); setAdding(false);
+                              setForm({ name: c.name, email: "", phone: c.phone || "", role: c.role, note: c.note || "" });
+                            }}
+                            style={{ color: P.brassText }}
+                            className="press"
+                          >
+                            Add it
+                          </button>
+                        </p>
+                      )}
+
+                      {c.email && !portal && (
+                        <>
+                          <p style={{ color: P.faint }} className="text-[13px] mt-1">
+                            Their own page to send you invoices, see what is paid, and fix anything you send back.
+                          </p>
+                          <button
+                            onClick={async () => {
+                              setInviting(c.id);
+                              const res = await share.invitePortal(c.id);
+                              setInviting("");
+                              if (res?.ok) { setInvited((prev) => new Set(prev).add(c.id)); failRow(c.id, ""); }
+                              else failRow(c.id, res?.error || "It did not send. Try again in a moment.");
+                              refreshPortals();
+                            }}
+                            disabled={inviting === c.id}
+                            style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                            className="h-10 px-4 text-[14px] font-medium press mt-2.5"
+                          >
+                            {inviting === c.id ? "Sending" : "Give them a supplier page"}
+                          </button>
+                        </>
+                      )}
+
+                      {on && (
+                        <>
+                          {/* The address itself, so it can be read, and copied
+                              to paste into a text or a chat. The same short
+                              address the invitation email sends. */}
+                          {portal.url && (
+                            <div
+                              style={{ background: P.surface, borderRadius: 10, fontFamily: MONO, color: P.muted }}
+                              className="text-[12.5px] px-3 py-2 mt-2 truncate"
+                              title={portal.url}
+                            >
+                              {portal.url.replace(/^https:\/\/(www\.)?/, "")}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
+                            {portal.url && (
+                              <button
+                                onClick={async () => {
+                                  const ok = await copyText(portal.url);
+                                  setCopied(ok ? c.id : null);
+                                  if (!ok) failRow(c.id, "Could not copy. Press and hold the address to copy it.");
+                                  setTimeout(() => setCopied((v) => (v === c.id ? null : v)), 2000);
+                                }}
+                                style={{ background: P.brass, color: P.onbrass, borderRadius: R.pill }}
+                                className="h-10 px-4 text-[14px] font-medium press inline-flex items-center gap-1.5"
+                              >
+                                {copied === c.id ? <Check size={14} /> : <Copy size={14} />}
+                                {copied === c.id ? "Copied" : "Copy link"}
+                              </button>
+                            )}
+                            <button
+                              onClick={async () => {
+                                setInviting(c.id);
+                                const res = await share.invitePortal(c.id);
+                                setInviting("");
+                                if (res?.ok) { setInvited((prev) => new Set(prev).add(c.id)); failRow(c.id, ""); }
+                                else failRow(c.id, res?.error || "It did not send. Try again in a moment.");
+                                refreshPortals();
+                              }}
+                              disabled={inviting === c.id}
+                              style={{ color: P.text }}
+                              className="h-10 text-[14px] press"
+                            >
+                              {inviting === c.id ? "Sending" : invited.has(c.id) ? "Emailed again" : "Email it again"}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!(await onConfirmVoid?.({
+                                  title: `Turn off ${c.name}'s supplier page?`,
+                                  body: "Their address stops working immediately. Nothing they have sent is deleted, and you can turn it back on.",
+                                  confirmLabel: "Turn it off",
+                                }))) return;
+                                setInviting(c.id);
+                                await share.setPortalActive(c.id, false);
+                                setInviting("");
+                                refreshPortals();
+                              }}
+                              style={{ color: P.faint }}
+                              className="h-10 text-[14px] press"
+                            >
+                              Turn off
+                            </button>
+                          </div>
+                        </>
+                      )}
+
+                      {paused && (
+                        <button
+                          onClick={async () => {
+                            setInviting(c.id);
+                            await share.setPortalActive(c.id, true);
+                            setInviting("");
+                            refreshPortals();
+                          }}
+                          disabled={inviting === c.id}
+                          style={{ color: P.brassText }}
+                          className="h-10 text-[14px] press mt-1"
+                        >
+                          Turn it back on
+                        </button>
+                      )}
+                    </div>
                   );
                 })()}
 
-                {!readOnly && (
-                  <>
-                    <button
-                      onClick={() => { setEditing(c); setAdding(false); setForm({
-                        name: c.name, email: c.email || "", phone: c.phone || "", role: c.role, note: c.note || "",
-                      }); }}
-                      style={{ color: P.muted }}
-                      className="h-11 px-2 text-[14px] shrink-0 press"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => remove(c)}
-                      style={{ color: P.debit }}
-                      className="h-11 px-2 text-[14px] shrink-0 press"
-                    >
-                      Remove
-                    </button>
-                  </>
-                )}
-                </div>
+                {/* Their history, where it belongs: at the foot of the card,
+                    as somewhere to go rather than another button in a row. */}
+                <button
+                  onClick={() => setHistoryFor(c)}
+                  style={{ color: P.brassText, borderTop: `1px solid ${P.line}` }}
+                  className="w-full flex items-center justify-between mt-3 pt-3 text-[13.5px] press"
+                >
+                  <span>Invoices and payments with {c.name.split(/\s+/)[0]}</span>
+                  <ChevronRight size={15} />
+                </button>
               </div>
             ))}
           </section>

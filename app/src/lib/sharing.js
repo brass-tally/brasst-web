@@ -585,12 +585,16 @@ export async function listPortals(ledgerId) {
   return soft("portals", async () => {
     const { data, error } = await supabase
       .from("contact_portals")
-      .select("contact_id, token, active, opens, opened_at")
+      /* slug and short_code too, so the app can show and copy the same short
+         address the invitation sends. Without them the only link it could
+         build was the long token. */
+      .select("contact_id, token, slug, short_code, active, opens, opened_at")
       .eq("ledger_id", ledgerId);
     if (error) throw error;
     return (data || []).map((r) => ({
       contactId: r.contact_id, token: r.token, active: r.active,
       opens: r.opens || 0, openedAt: r.opened_at || undefined,
+      url: portalUrl(r),
     }));
   }, []);
 }
@@ -608,4 +612,18 @@ export async function setPortalActive(contactId, active) {
     if (error) throw error;
     return { ok: true };
   }, { ok: false });
+}
+
+
+/* The address a supplier opens, exactly as the invitation email builds it:
+ * the short code when there is one, the name for the reader in front of it.
+ *
+ * Built in one place so the email, the copy button and anywhere else can
+ * never disagree about what somebody's link is. */
+export function portalUrl(r) {
+  if (!r) return "";
+  const code = r.short_code || r.token;
+  if (!code) return "";
+  const base = "https://www.brasstally.com";
+  return r.slug ? `${base}/c/${r.slug}/${code}` : `${base}/c/${code}`;
 }
