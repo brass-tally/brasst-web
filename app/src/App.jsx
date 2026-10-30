@@ -9298,6 +9298,28 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                     Only for somebody with an address, because there is nowhere
                     to send it otherwise, and the button would be a promise the
                     row cannot keep. */}
+                {/* Labelled, so the control says what it is before anybody
+                    presses it. It used to be a lone button reading "Send their
+                    account", which in a finance app reads as a bank account,
+                    and the owner looking for exactly this feature did not
+                    recognise it. */}
+                {!readOnly && (
+                  <span
+                    style={{ color: P.faint, letterSpacing: ".04em" }}
+                    className="text-[11px] font-semibold uppercase mr-1"
+                  >
+                    Supplier page
+                  </span>
+                )}
+                {/* Offered without an email too, with what is missing.
+                    It used to render nothing at all for a contact with no
+                    address, so the feature was invisible exactly where
+                    somebody would first look for it. */}
+                {!readOnly && !c.email && (
+                  <span style={{ color: P.faint }} className="text-[13px]">
+                    add their email to give them one
+                  </span>
+                )}
                 {!readOnly && c.email && (() => {
                   const portal = portalFor(c.id);
 
@@ -9336,7 +9358,7 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                         </span>
                         <Pill
                           busy={inviting === c.id}
-                          label={invited.has(c.id) ? "Sent again" : "Reinvite"}
+                          label={invited.has(c.id) ? "Sent again" : "Send the link again"}
                           onClick={async () => {
                             setInviting(c.id);
                             const res = await share.invitePortal(c.id);
@@ -9356,7 +9378,7 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                           label="Turn off"
                           onClick={async () => {
                             if (!(await onConfirmVoid?.({
-                              title: `Turn off ${c.name}'s account?`,
+                              title: `Turn off ${c.name}'s supplier page?`,
                               body: "Their address stops working immediately. Nothing they have sent you is affected, and you can turn it back on.",
                               confirmLabel: "Turn it off",
                             }))) return;
@@ -9374,7 +9396,7 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                     return (
                       <Pill
                         busy={inviting === c.id}
-                        label="Turn account back on"
+                        label="Turn their supplier page back on"
                         onClick={async () => {
                           setInviting(c.id);
                           await share.setPortalActive(c.id, true);
@@ -9388,7 +9410,7 @@ function ContactsPage({ ledgerId, contacts, onChanged, readOnly, data, inbound =
                   return (
                     <Pill
                       busy={inviting === c.id}
-                      label="Send their account"
+                      label="Give them a supplier page"
                       onClick={async () => {
                         setInviting(c.id);
                         const res = await share.invitePortal(c.id);

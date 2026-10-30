@@ -472,7 +472,7 @@ Deno.serve(async (req) => {
       }
 
       let { data: portal } = await db
-        .from("contact_portals").select("token, slug")
+        .from("contact_portals").select("token, slug, short_code")
         .eq("ledger_id", contact.ledger_id).eq("contact_id", contact.id).maybeSingle();
 
       if (!portal) {
@@ -497,7 +497,7 @@ Deno.serve(async (req) => {
             slug: slugify(contact.name),
             user_id: led.user_id,
           })
-          .select("token, slug").single();
+          .select("token, slug, short_code").single();
         if (error) return json({ ok: false, error: error.message });
         portal = made;
       }
@@ -505,13 +505,17 @@ Deno.serve(async (req) => {
       const base = (Deno.env.get("APP_URL") || "https://www.brasstally.com").replace(/\/+$/, "");
       /* The name is for the reader, not the lookup. A portal made before slugs
          existed has none, and its plain address still works. */
+      /* The short code when there is one: /c/syed-belal/k7m2q9xr rather than a
+         twenty-two character token. The page resolves it. The name is for the
+         reader and is never checked, so renaming a contact breaks nothing. */
+      const code = portal.short_code || portal.token;
       const link = portal.slug
-        ? `${base}/c/${portal.slug}/${portal.token}`
-        : `${base}/c/${portal.token}`;
+        ? `${base}/c/${portal.slug}/${code}`
+        : `${base}/c/${code}`;
 
       const r = await sendMail(
         contact.email,
-        `${led.name}: your account`,
+        `${led.name}: your supplier page`,
         portalInviteEmail({
           business: led.name,
           name: contact.name,

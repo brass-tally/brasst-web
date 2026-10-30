@@ -543,7 +543,7 @@ export function portalInviteEmail(
 
   return `<!doctype html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/>
-<title>Your account with ${business}</title></head>
+<title>Your supplier page with ${business}</title></head>
 <body style="margin:0;padding:0;background:${paper};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${paper};padding:32px 16px;">
 <tr><td align="center">
@@ -552,7 +552,7 @@ export function portalInviteEmail(
            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
     <tr><td>
       <h1 style="margin:0 0 6px;font-size:21px;line-height:1.3;color:${ink};font-weight:600;">
-        ${name ? `${name}, your` : "Your"} account with ${business}
+        ${name ? `${name}, your` : "Your"} supplier page with ${business}
       </h1>
       ${outstanding != null && outstanding > 0.005
         ? `<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${brass};margin-bottom:16px;">${money(outstanding)} outstanding to you</div>`
@@ -562,7 +562,7 @@ export function portalInviteEmail(
         <tr><td style="border-radius:999px;background:${fill};">
           <a href="${link}" style="display:inline-block;padding:14px 28px;font-size:16px;
              font-weight:600;color:#241703;text-decoration:none;border-radius:999px;">
-            Open your account
+            Open your page
           </a>
         </td></tr>
       </table>

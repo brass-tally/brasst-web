@@ -103,6 +103,71 @@
   .total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
     padding-top:12px;margin-top:6px;border-top:1px solid var(--line);font-size:16px}
   footer{color:var(--faint);font-size:12.5px;text-align:center;margin-top:22px;line-height:1.5}
+
+/* An invoice as an object, not a line.
+   The edge is the colour of what it needs from the reader. */
+.inv{position:relative;background:var(--sunk);border-radius:14px;padding:14px 14px 12px 16px;margin:10px 0}
+.inv::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--line)}
+.inv.needs::before{background:var(--debit)}
+.inv.paid-edge::before{background:var(--credit)}
+.inv.part-edge::before{background:var(--accent)}
+.inv .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.inv .what{font-size:16px;color:var(--text);margin:6px 0 2px;line-height:1.35}
+.inv .meta{font-size:13px;color:var(--faint)}
+.inv .amt{font-family:var(--mono);font-size:17px;color:var(--text);white-space:nowrap}
+.inv .sub{font-family:var(--mono);font-size:12px;color:var(--faint);text-align:right}
+.inv .pill{margin-top:0}
+/* The waiting pill's grey matched the card behind it and vanished. On a sunk
+   card it sits on the surface colour instead, so every state has a shape. */
+.inv .pill.wait{background:var(--surface);color:var(--muted)}
+.inv .sub{white-space:nowrap}
+.inv .asked{margin:10px 0 2px;padding:8px 10px;border-left:2px solid var(--debit);border-radius:0 8px 8px 0;
+  background:color-mix(in srgb,var(--debit) 8%,transparent);font-size:13.5px;color:var(--text)}
+.inv .asked b{color:var(--debit);font-weight:600}
+.inv .acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:10px}
+.inv .acts button.primary{background:var(--accent);color:var(--onAccent);border:none;border-radius:999px;
+  padding:9px 16px;font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+.inv .acts button.ghost{padding:6px 0;font-size:14px;text-decoration:none;color:var(--muted)}
+.inv .acts button.ghost:hover{color:var(--text)}
+
+/* Folders. Native <details>, so a tap opens them, a keyboard opens them, a
+   screen reader announces them, and none of it needs script. */
+details.fold{background:var(--surface);border:1px solid var(--line);border-radius:18px;
+  margin-bottom:12px;box-shadow:var(--sh);overflow:hidden}
+details.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;
+  padding:16px 18px;min-height:60px;-webkit-tap-highlight-color:transparent}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary .ft{flex:1;min-width:0}
+details.fold>summary .ft b{display:block;font-size:16px;font-weight:600;color:var(--text)}
+details.fold>summary .ft span{display:block;font-size:13px;color:var(--faint);margin-top:1px}
+details.fold>summary .fv{font-family:var(--mono);font-size:15px;color:var(--text);white-space:nowrap}
+details.fold>summary .chev{width:22px;height:22px;flex:none;color:var(--faint);
+  transition:transform .22s cubic-bezier(.22,1,.36,1)}
+details.fold[open]>summary .chev{transform:rotate(90deg)}
+details.fold>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:18px}
+details.fold>.fb{padding:0 18px 18px}
+details.fold .needs-dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:var(--debit);margin-right:6px;vertical-align:1px}
+
+/* An invoice rolled up to a label, opening to its detail and its action. */
+details.inv{padding:0;margin:8px 0}
+details.inv>summary{list-style:none;cursor:pointer;padding:12px 14px 12px 16px;
+  -webkit-tap-highlight-color:transparent}
+details.inv>summary::-webkit-details-marker{display:none}
+details.inv>.ib{padding:0 14px 12px 16px}
+details.inv .lbl{display:flex;align-items:baseline;gap:10px}
+details.inv .lbl .what{flex:1;min-width:0;margin:0;font-size:15px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details.inv[open] .lbl .what{white-space:normal}
+details.inv .lbl2{display:flex;align-items:center;gap:8px;margin-top:5px}
+
+@media (max-width:480px){
+  .wrap{padding-left:12px;padding-right:12px}
+  details.fold>summary{padding:15px 16px}
+  details.fold>.fb{padding:0 14px 16px}
+  .inv .acts button.primary{flex:1 1 100%;padding:12px 16px}
+  input,select{font-size:16px}  /* stops iOS zooming into a field */
+}
 </style>
 </head>
 <body>
@@ -139,7 +204,7 @@ const money = (n, ccy) =>
   `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0)
     .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const BUILD = "2026-09-15 00:33Z";
+const BUILD = "2026-10-30 04:20Z";
 
 /* The token is the last part of the address, whatever comes before it.
  *
@@ -151,7 +216,7 @@ const BUILD = "2026-09-15 00:33Z";
  *
  * The name is never checked against anything. It is there to be recognised,
  * so renaming a contact cannot break an address already in somebody's inbox. */
-const token =
+let token =
   (location.pathname.match(/^\/c\/(?:[A-Za-z0-9_-]+\/)?([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
   new URLSearchParams(location.search).get("t") || "";
 
@@ -245,6 +310,41 @@ function who(contact, business) {
     </span>
   </div>`;
 }
+
+/* "2 days ago" is read; "2026-10-28" is arithmetic. */
+function ago(when) {
+  const t = new Date(when).getTime();
+  if (!when || Number.isNaN(t)) return "";
+  const d = Math.round((Date.now() - t) / 86400000);
+  if (d <= 0) return "today";
+  if (d === 1) return "yesterday";
+  if (d < 7) return `${d} days ago`;
+  if (d < 35) return `${Math.round(d / 7)} ${Math.round(d / 7) === 1 ? "week" : "weeks"} ago`;
+  return `${Math.round(d / 30)} ${Math.round(d / 30) === 1 ? "month" : "months"} ago`;
+}
+
+function dueIn(date) {
+  if (!date) return "";
+  const d = Math.round((new Date(`${String(date).slice(0, 10)}T00:00:00`) - Date.now()) / 86400000);
+  if (d < -1) return `overdue by ${-d} days`;
+  if (d <= 0) return "due today";
+  if (d === 1) return "due tomorrow";
+  return `due in ${d} days`;
+}
+
+/* Which folders are open, kept across redraws.
+   The page redraws itself on refresh; without this every folder would snap
+   shut each time, usually while somebody was reading one. */
+/* Only the summary starts open. Everything else is rolled up, and each
+   folder's heading says what is inside, so nothing needing attention is
+   hidden: "2 need you" is on the closed Invoices folder. */
+const openFolds = new Set(["summary"]);
+/* Opened automatically once, then left to the supplier. */
+const seenNeeds = new Set();
+const CHEV = `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M9 6l6 6-6 6"/></svg>`;
+const isOpen = (key) => (openFolds.has(key) ? "open" : "");
 
 function statusOf(inv) {
   /* Withdrawn by the supplier, which is the only meaning this status has.
@@ -387,6 +487,10 @@ async function showPortal(t, { anonymous = false } = {}) {
   const shelved = (d.invoices || []).filter((i) => i.archived_at);
   const onShow = (d.invoices || []).filter((i) => !i.archived_at);
 
+  /* How many want the supplier, for the folder's own label: a closed folder
+     should still say whether there is anything inside it for them. */
+  const needCount = onShow.filter((i) => i.correction_at || i.status === "declined").length;
+
   const invoices = onShow.length
     ? onShow.map((i) => {
         const [cls, label] = statusOf(i);
@@ -408,55 +512,86 @@ async function showPortal(t, { anonymous = false } = {}) {
         const asked = i.correction_note
           ? `<div class="small" style="color:var(--debit)">They asked: ${esc(i.correction_note)}</div>` : "";
 
-        /* What can still be done to this one.
+        /* One card per invoice, read top to bottom in the order that matters.
          *
-         * A declined invoice was a dead end: the label said no and the page
-         * offered nothing. Usually the answer is to send it again with the
-         * thing they objected to fixed, and that should be one tap rather
-         * than retyping it.
+         * The state first, because it decides everything else: whether this
+         * needs them, or is simply waiting, or is done. Then what it was for,
+         * which is what tells one invoice from the next; the number alone did
+         * not, and every row read "INV-something". Then the one action that
+         * fits the state, with anything rarer beside it in a quieter voice.
          *
-         * Withdrawing is offered until they accept it. After that it is a
-         * payable in their books, possibly part paid, and changing it from
-         * out here would move their figures without their knowledge. */
-        const canRedo = i.status === "declined" || i.correction_at;
-        const canPull = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
-        /* Only something already finished can be put away. Hiding an invoice
-           still waiting on them would hide the thing this page is for. */
-        const canShelve = (i.status === "withdrawn" || i.status === "declined") && !i.archived_at;
-        /* Correcting one in place, rather than withdrawing and re-sending.
-           Two rows for one piece of work is how a business ends up asking
-           which is real. Allowed until they accept it; after that it is a
-           payable in their books and not ours to change. */
-        const canEdit = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
-        const actions = (canRedo || canPull || canShelve)
-          ? `<div class="small" style="margin-top:4px">
-              ${canEdit ? `<button class="ghost" data-edit="${esc(i.id)}"
-                  data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
-                  data-num="${esc(i.invoice_no || "")}" data-due="${esc(i.due_on || i.due_date || "")}"
-                  data-ccy="${esc(i.currency || "")}"
-                  >Change it</button>` : ""}
-              ${canEdit && (canRedo || canPull || canShelve) ? " · " : ""}
-              ${canRedo ? `<button class="ghost" data-fix="${esc(i.invoice_no || "")}"
-                  data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
-                  data-ccy="${esc(i.currency || "")}"
-                  >Adjust and send again</button>` : ""}
-              ${canRedo && canPull ? " · " : ""}
-              ${canPull ? `<button class="ghost" data-pull="${esc(i.id)}"
-                  >Withdraw it</button>` : ""}
-              ${(canRedo || canPull) && canShelve ? " · " : ""}
-              ${canShelve ? `<button class="ghost" data-shelve="${esc(i.id)}"
-                  >Put it away</button>` : ""}
-            </div>` : "";
-        return `<div class="row">
-          <span>
-            <div>${esc(i.invoice_no || i.description || "Invoice")}</div>
-            <div class="small">${String(i.submitted_at || "").slice(0, 10)}${i.has_file ? " · attachment on file" : ""}</div>
-            ${part}${asked}${i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : ""}
-            ${actions}
-            <span class="pill ${cls}">${label}</span>
-          </span>
-          <span class="m">${shown}${foreign}</span>
-        </div>`;
+         * "Adjust and send again" is gone. It predated editing in place and
+         * sent a second invoice while leaving the first behind, which is the
+         * two-rows-for-one-piece-of-work problem editing was built to end. A
+         * declined or questioned invoice is now changed where it stands, and
+         * the change sends it back for review. */
+        const editable = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
+        const finished = i.status === "withdrawn" || i.status === "declined";
+        const needsThem = Boolean(i.correction_at) || i.status === "declined";
+
+        const editBtn = (label, cls) => `<button class="${cls}" data-edit="${esc(i.id)}"
+            data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
+            data-num="${esc(i.invoice_no || "")}" data-due="${esc(i.due_on || i.due_date || "")}"
+            data-ccy="${esc(i.currency || "")}">${label}</button>`;
+
+        let acts = "";
+        if (i.correction_at && editable) {
+          acts = editBtn("Make the change", "primary")
+            + `<button class="ghost" data-pull="${esc(i.id)}">Withdraw it</button>`;
+        } else if (i.status === "declined") {
+          acts = editBtn("Change it and resend", "primary")
+            + (!i.archived_at ? `<button class="ghost" data-shelve="${esc(i.id)}">Put it away</button>` : "");
+        } else if (i.status === "withdrawn") {
+          acts = !i.archived_at ? `<button class="ghost" data-shelve="${esc(i.id)}">Put it away</button>` : "";
+        } else if (editable) {
+          acts = editBtn("Change it", "ghost")
+            + `<button class="ghost" data-pull="${esc(i.id)}">Withdraw it</button>`;
+        }
+
+        const edge = needsThem ? "needs"
+          : cls === "paid" ? "paid-edge"
+            : cls === "part" ? "part-edge" : "";
+
+        /* One quiet line of fact: which invoice, when it went, and the date
+           that matters next. */
+        const due = i.payable_status === "open" ? (i.balance_due || i.due_date) : (!finished && !i.payable_status ? i.due_date : null);
+        const meta = [
+          i.invoice_no,
+          i.submitted_at ? `sent ${ago(i.submitted_at)}` : null,
+          i.settled_on ? `paid ${i.settled_on}` : null,
+          due ? dueIn(due) : null,
+          i.has_file ? "attachment on file" : null,
+        ].filter(Boolean).join(" · ");
+
+        const paidPart = (Number(i.paid_amount) || 0) > 0.005 && i.payable_status === "open"
+          ? `<div class="sub">${money(i.paid_amount, ccy)} received</div>` : "";
+
+        /* Rolled up to a label: the state, what it was for, the amount.
+           Opened, it shows the detail and the action. One that needs the
+           supplier opens by itself the first time, because the page exists
+           for exactly that moment. */
+        const key = `inv-${i.id}`;
+        if (needsThem && !seenNeeds.has(key)) { openFolds.add(key); seenNeeds.add(key); }
+
+        return `<details class="inv ${edge}" data-fold="${esc(key)}" ${isOpen(key)}>
+          <summary>
+            <div class="lbl">
+              <div class="what">${esc(i.description || i.invoice_no || "Invoice")}</div>
+              <span class="amt">${shown}</span>
+            </div>
+            <div class="lbl2">
+              <span class="pill ${cls}">${label}</span>
+              <span class="meta">${esc(i.submitted_at ? ago(i.submitted_at) : "")}</span>
+            </div>
+          </summary>
+          <div class="ib">
+            ${foreign || paidPart ? `<div style="text-align:right">${foreign ? foreign.replace('class="small m"', 'class="sub"') : ""}${paidPart}</div>` : ""}
+            <div class="meta">${esc(meta)}</div>
+            ${i.correction_note && i.correction_at
+              ? `<div class="asked"><b>They asked:</b> ${esc(i.correction_note)}</div>` : ""}
+            ${acts ? `<div class="acts">${acts}</div>` : ""}
+          </div>
+        </details>`;
       }).join("")
     : `<p class="none">Nothing yet.</p>`;
 
@@ -511,9 +646,14 @@ async function showPortal(t, { anonymous = false } = {}) {
         <button class="ghost" id="help2">How this works</button></p>
     </div>
     ` : `
-    <div class="card">
-      <div class="eyebrow">${esc(d.business)}</div>
-      <h1>${esc(firstName(d.contact.name))}, here is where you stand</h1>
+    <details class="fold" data-fold="summary" ${isOpen("summary")}>
+      <summary>
+        <span class="ft"><b>${esc(d.business)} · Summary</b>
+          <span>${esc(firstName(d.contact.name))}, here is where you stand</span></span>
+        <span class="fv">${money(owed, ccy)}</span>
+        ${CHEV}
+      </summary>
+      <div class="fb">
       <p class="sub">Everything between ${esc(d.contact.name || "you")} and ${esc(d.business)}. Always current.</p>
       ${who(d.contact, d.business)}
       <div class="total"><span>Outstanding to you</span><span class="m">${money(owed, ccy)}</span></div>
@@ -526,10 +666,16 @@ async function showPortal(t, { anonymous = false } = {}) {
       ${paidTotal > 0.005 ? `<div class="total" style="border:none;padding-top:2px">
         <span class="small">Paid to you so far</span>
         <span class="m small">${money(paidTotal, ccy)}</span></div>` : ""}
-    </div>
+      </div>
+    </details>
 
-    <div class="card">
-      <div class="eyebrow">Invoices you have sent</div>
+    <details class="fold" data-fold="invoices" ${isOpen("invoices")}>
+      <summary>
+        <span class="ft"><b>Invoices you have sent</b>
+          <span>${needCount ? `<i class="needs-dot"></i>${needCount} ${needCount === 1 ? "needs" : "need"} you · ` : ""}${onShow.length} in all</span></span>
+        ${CHEV}
+      </summary>
+      <div class="fb">
       ${invoices}
       ${shelved.length ? `<div class="row" style="border-top:1px solid var(--line)">
         <button class="ghost" id="showshelved">${shelved.length} put away</button>
@@ -543,11 +689,29 @@ async function showPortal(t, { anonymous = false } = {}) {
           </span>
           <span class="m small">${money(i.payable_amount != null ? i.payable_amount : i.amount, ccy)}</span>
         </div>`).join("")}</div>` : ""}
-    </div>
-    <div class="card"><div class="eyebrow">Payments received</div>${payments}</div>
+      </div>
+    </details>
+
+    <details class="fold" data-fold="payments" ${isOpen("payments")}>
+      <summary>
+        <span class="ft"><b>Payments received</b>
+          <span>${(d.payments || []).length
+            ? `${d.payments.length} ${d.payments.length === 1 ? "payment" : "payments"} · last ${esc(ago(d.payments[0].date))}`
+            : "Nothing paid out yet"}</span></span>
+        <span class="fv">${money(paidTotal, ccy)}</span>
+        ${CHEV}
+      </summary>
+      <div class="fb">${payments}</div>
+    </details>
     `}
 
-    <div class="card">
+    <details class="fold" data-fold="send" id="sendfold" ${brandNew ? "open" : isOpen("send")}>
+      <summary>
+        <span class="ft"><b>${brandNew ? "Your first invoice" : "Send a new invoice"}</b>
+          <span>It goes to ${esc(d.business)} for review</span></span>
+        ${CHEV}
+      </summary>
+      <div class="fb">
       <div style="display:flex;align-items:center;gap:8px">
         <div class="eyebrow" id="form-title" style="margin:0;flex:1">${brandNew ? "Your first invoice" : "Send a new invoice"}</div>
         <button class="helpbtn" id="clear" title="Empty the form" aria-label="Empty the form"
@@ -581,7 +745,8 @@ async function showPortal(t, { anonymous = false } = {}) {
 
       <button class="go" id="send">Send it</button>
       <p class="err" id="serr"></p><p class="ok" id="sok"></p>
-    </div>
+      </div>
+    </details>
 
     ${anonymous ? `<div class="card" style="text-align:center">
       <p class="sub" style="margin:0 0 6px">Working with more than one business on Brasstally?</p>
@@ -593,6 +758,14 @@ async function showPortal(t, { anonymous = false } = {}) {
         : `Signed in as ${esc(d.contact.email || "")}. <button class="ghost" id="out">Sign out</button>`}
       <br/><span style="opacity:.6">${BUILD}</span>
     </footer>`;
+
+  /* Keep each folder as the supplier left it, across redraws. */
+  wrap.querySelectorAll("details[data-fold]").forEach((el) => {
+    el.addEventListener("toggle", () => {
+      if (el.open) openFolds.add(el.dataset.fold);
+      else openFolds.delete(el.dataset.fold);
+    });
+  });
 
   for (const b of wrap.querySelectorAll(".tab")) {
     b.onclick = () => showPortal(b.dataset.token);
@@ -683,6 +856,11 @@ async function showPortal(t, { anonymous = false } = {}) {
       document.getElementById("form-title").textContent = `Changing ${b.dataset.num || "that invoice"}`;
       document.getElementById("clear").style.display = "inline-flex";
       document.getElementById("send").textContent = "Send the change";
+      /* The form lives in a folder, which may be shut. Filling in fields
+         nobody can see, then scrolling to nothing, would read as a button
+         that does nothing. Open it first. */
+      const fold = document.getElementById("sendfold");
+      if (fold) { fold.open = true; openFolds.add("send"); }
       document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
       document.getElementById("desc").focus();
     };
@@ -958,6 +1136,18 @@ window.addEventListener("focus", refreshIfStale);
 setInterval(refreshIfStale, 5 * 60 * 1000);
 
 async function start() {
+  /* The address carries a short code, not the token itself.
+     Resolved once, here, so everything below keeps using the token exactly
+     as it always has. If nothing comes back (an old long link, or a server
+     not yet migrated) the address is used as it is, which is what this page
+     did before codes existed. */
+  if (token) {
+    try {
+      const { data } = await sb.rpc("portal_resolve", { p_code: token });
+      if (typeof data === "string" && data) token = data;
+    } catch { /* fall back to the address as given */ }
+  }
+
   const { data: { session } } = await sb.auth.getSession();
 
   if (session) {
