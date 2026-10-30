@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="robots" content="noindex, nofollow"/>
+<link rel="icon" href="https://www.brasstally.com/app/favicon.ico"/>
+<link rel="apple-touch-icon" href="https://www.brasstally.com/app/apple-touch-icon.png"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<title>Your account · Brasstally</title>
+<style>
+  /* The site's own tokens, read from brasstally.com rather than guessed.
+     I built this against the app's ember palette first, which is a different
+     set: the marketing site and the supplier page are what an outsider sees
+     together, so they have to match each other. */
+  :root{
+    --bg:#FAF9F7; --surface:#FFFFFF; --sunk:#F5F3F0; --line:#EDEAE5; --line2:#E2DDD6;
+    --text:#1C1917; --muted:#5A534E; --faint:#8A827B;
+    --accent:#F59E0B; --accentText:#A9620A; --onAccent:#241703;
+    --tint:rgba(245,158,11,.12); --credit:#08805A; --debit:#C4442F;
+    --sh:0 1px 2px rgba(28,25,23,.05),0 10px 26px -14px rgba(28,25,23,.14);
+    --sans:'Inter',ui-sans-serif,system-ui,sans-serif;
+    --mono:'Geist Mono',ui-monospace,monospace;
+  }
+  html[data-t="dark"], :root:has(#darkpref:checked){
+    --bg:#100E0C; --surface:#1A1714; --sunk:#141210; --line:#2A2521; --line2:#37312B;
+    --text:#F5F1EC; --muted:#B0A79F; --faint:#877E76;
+    --accent:#FBBF24; --accentText:#FBBF24; --onAccent:#1C1200;
+    --tint:rgba(251,191,36,.13); --credit:#34D399; --debit:#FB7185;
+    --sh:0 1px 2px rgba(0,0,0,.3),0 12px 30px -16px rgba(0,0,0,.5);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#100E0C; --surface:#1A1714; --sunk:#141210; --line:#2A2521; --line2:#37312B;
+      --text:#F5F1EC; --muted:#B0A79F; --faint:#877E76;
+      --accent:#FBBF24; --accentText:#FBBF24; --onAccent:#1C1200;
+      --tint:rgba(251,191,36,.13); --credit:#34D399; --debit:#FB7185;
+      --sh:0 1px 2px rgba(0,0,0,.3),0 12px 30px -16px rgba(0,0,0,.5);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    font-size:16px;line-height:1.55;padding:22px 16px 72px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:620px;margin:0 auto}
+
+  .mast{display:flex;align-items:center;gap:10px;margin:0 auto 18px;max-width:620px}
+  .mast img{width:26px;height:26px;border-radius:7px}
+  .mark{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .mark span{color:var(--accentText)}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:18px;
+    padding:22px;margin-bottom:14px;box-shadow:var(--sh)}
+  h1{font-size:23px;line-height:1.25;margin:0 0 6px;font-weight:600;letter-spacing:-.015em}
+  .sub{color:var(--muted);font-size:15px;margin:0 0 18px}
+  .eyebrow{font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--accentText);margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding:11px 0;border-top:1px solid var(--line)}
+  .row:first-of-type{border-top:none}
+  .m{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:500}
+  .small{font-size:13px;color:var(--faint)}
+  b{font-weight:600}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;margin-top:4px}
+  .paid{background:color-mix(in srgb,var(--credit) 15%,transparent);color:var(--credit)}
+  .part{background:var(--tint);color:var(--accentText)}
+  .wait{background:var(--sunk);color:var(--muted)}
+  .stop{background:color-mix(in srgb,var(--debit) 14%,transparent);color:var(--debit)}
+  .gone{background:var(--sunk);color:var(--faint);text-decoration:line-through}
+  .none{color:var(--muted);font-size:15px;padding:8px 0}
+
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .tab{padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
+    color:var(--muted);font:inherit;font-size:14.5px;cursor:pointer}
+  .tab.on{background:var(--accent);color:var(--onAccent);border-color:transparent;font-weight:600}
+
+  input,select,textarea{width:100%;min-height:46px;padding:0 13px;margin:6px 0 2px;
+    background:var(--sunk);border:1px solid var(--line);border-radius:12px;color:var(--text);
+    font:inherit;font-size:16px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  label{display:block;font-size:14px;color:var(--muted);margin-top:12px}
+  button.go{background:var(--accent);color:var(--onAccent);border:none;padding:13px 22px;
+    border-radius:999px;font:inherit;font-weight:600;font-size:15.5px;cursor:pointer;margin-top:14px}
+  button.ghost{background:transparent;color:var(--accentText);border:none;font:inherit;
+    font-size:14.5px;cursor:pointer;padding:10px 4px;text-decoration:underline}
+  .err{color:var(--debit);font-size:14.5px;margin-top:10px}
+  .ok{color:var(--credit);font-size:14.5px;margin-top:10px}
+  .drop{border:1.5px dashed var(--line2);border-radius:12px;padding:18px 14px;text-align:center;
+    color:var(--muted);font-size:15px;cursor:pointer;margin-top:6px;
+    transition:border-color .15s,background .15s}
+  .drop.over{border-color:var(--accent);background:var(--tint)}
+  .drop b{color:var(--text)}
+
+  .helpbtn{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);
+    background:var(--surface);color:var(--muted);font:inherit;font-size:14px;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:auto}
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;
+    justify-content:center;padding:16px;z-index:50}
+  .sheet .card{max-width:560px;width:100%;margin:0;max-height:86vh;overflow:auto}
+  @media (min-width:640px){ .sheet{align-items:center} }
+
+  .total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding-top:12px;margin-top:6px;border-top:1px solid var(--line);font-size:16px}
+  footer{color:var(--faint);font-size:12.5px;text-align:center;margin-top:22px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="mast">
+  <img src="https://www.brasstally.com/app/icon-192.png" alt="" width="26" height="26"/>
+  <span class="mark">Brass<span>tally</span></span>
+  <span class="small" id="whoami" style="margin-left:2px"></span>
+  <button class="helpbtn" id="help" aria-label="How this page works">?</button>
+</div>
+<div class="wrap" id="wrap">
+  <div class="card"><p class="none" id="loading">Opening your account…</p></div>
+</div>
+
+<script type="module">
+/* A supplier's own view.
+ *
+ * Two ways in, and the difference matters. A token link is one relationship,
+ * no sign-in, and anybody holding the address can read it. Signing in with
+ * your own address gathers every business that has invited you, and a
+ * forwarded link cannot reach it.
+ *
+ * Signing in is an upgrade, not a gate: the token link keeps working for
+ * somebody who does not want an account, because most suppliers do not.
+ */
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const PROJECT = "https://xwoccmgppjmgficvmogr.supabase.co";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh3b2NjbWdwcGptZ2ZpY3Ztb2dyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3MDkwNjEsImV4cCI6MjEwMDI4NTA2MX0.B8rEqFhe53_URqHQHpWpW5JIIENsFqJ4o95o10gL6Hw";
+const sb = createClient(PROJECT, ANON);
+
+const wrap = document.getElementById("wrap");
+const esc = (v) => String(v ?? "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+const money = (n, ccy) =>
+  `${ccy === "CAD" ? "$" : ccy + " "}${(Math.abs(Number(n)) || 0)
+    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const BUILD = "2026-09-15 00:33Z";
+
+/* The token is the last part of the address, whatever comes before it.
+ *
+ * Both shapes are read, because a link somebody bookmarked before the name was
+ * added has to keep working:
+ *
+ *   /c/syed-belal/k7m2q9xr4t
+ *   /c/a7f3c91e42b8d05f16a2c9
+ *
+ * The name is never checked against anything. It is there to be recognised,
+ * so renaming a contact cannot break an address already in somebody's inbox. */
+const token =
+  (location.pathname.match(/^\/c\/(?:[A-Za-z0-9_-]+\/)?([A-Za-z0-9_-]+)\/?$/) || [])[1] ||
+  new URLSearchParams(location.search).get("t") || "";
+
+let portals = [];   // every business, when signed in
+let active = null;  // the token being viewed
+
+/* A confirmation that outlives the redraw.
+ *
+ * The message was written into the form and the page redrew 1.2 seconds
+ * later, taking it with it. So the one moment somebody wants reassurance,
+ * having just sent an invoice for real money, was the moment it vanished.
+ *
+ * Held here instead, rendered as part of the page, and gone only when they
+ * dismiss it or send something else. */
+let flash = null;
+
+/* Which invoice the form is changing, if any. Null means it is writing a new
+   one, which is what it has always done. */
+let editingId = null;
+
+/* Help behind a mark.
+ *
+ * The explanations used to sit on the page, which is right once and clutter
+ * every time after. Somebody who needs them can ask; somebody who does not
+ * never sees them again. */
+function openHelp(business) {
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+  sheet.innerHTML = `
+    <div class="card">
+      <h1>How this page works</h1>
+      <p class="sub">Your side of the books you share with ${esc(business || "them")}.</p>
+      <div class="row"><span><b>Sending an invoice</b><div class="small">It arrives in their books for
+        review. Nothing is owed until they accept it, and you are emailed either way.</div></span></div>
+      <div class="row"><span><b>What the labels mean</b><div class="small">
+        <b>With them for review</b> is waiting on them.
+        <b>Accepted</b> is in their books and owed.
+        <b>Part paid</b> shows what has arrived and when the rest is due.
+        <b>Paid</b> is settled.
+        <b>Correction asked for</b> means they want it resent with a change.
+        <b>Set aside</b> means they have declined it.</div></span></div>
+      <div class="row"><span><b>Attachments</b><div class="small">A PDF or a photo is optional. The
+        description and amount are enough on their own.</div></span></div>
+      <div class="row"><span><b>Who can see this</b><div class="small">Anyone holding the address, so
+        treat it like a statement. Signing in with your own email means a forwarded link cannot reach
+        it, and gathers every business that has invited you.</div></span></div>
+      <div class="row"><span><b>If something looks wrong</b><div class="small">Tell them directly.
+        This page reflects their books, so a correction has to happen there.</div></span></div>
+      <button class="go" id="closehelp">Close</button>
+    </div>`;
+  sheet.onclick = (e) => { if (e.target === sheet) sheet.remove(); };
+  document.body.appendChild(sheet);
+  sheet.querySelector("#closehelp").onclick = () => sheet.remove();
+}
+
+/* One label per outcome, and none of them a guess.
+ *
+ * The old version fell through to "Set aside" for anything it did not
+ * recognise, so an invoice in an unexpected state was reported as declined.
+ * Telling a supplier their work was refused when it was not is the worst
+ * thing this page could get wrong, so an unknown state now says it is unknown.
+ */
+/* A first name to greet by, without mangling anything.
+ *
+ * A company name, or anything that does not look like a person's first name,
+ * is left whole: "Acme Roofing Ltd, here is where you stand" is odd, and
+ * "Acme, here is where you stand" is worse. */
+function firstName(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return "Hello";
+  const first = clean.split(/\s+/)[0];
+  const looksLikeCompany = /\b(ltd|inc|llc|corp|co|gmbh|plc|limited|company|services|group)\b/i.test(clean);
+  return looksLikeCompany || first.length < 2 ? clean : first;
+}
+
+/* What the business holds for them.
+ *
+ * Not decoration. An invoice reply, a payment notice and a correction all go
+ * to that address, so if it is wrong they need to be able to see that it is
+ * wrong, from the page itself, rather than wondering why nothing arrives. */
+function who(contact, business) {
+  const bits = [contact.email, contact.phone].filter(Boolean).map(esc);
+  const role = contact.role ? esc(String(contact.role).replace(/^\w/, (c) => c.toUpperCase())) : "";
+  const since = contact.since ? `dealing since ${String(contact.since).slice(0, 7)}` : "";
+  return `<div class="row" style="border-top:1px solid var(--line);padding-top:12px">
+    <span>
+      <div><b>${esc(contact.name || "You")}</b>${role ? ` <span class="small">${role}</span>` : ""}</div>
+      <div class="small">${bits.join(" · ") || "no contact details on file"}${since ? ` · ${since}` : ""}</div>
+      <div class="small">${business} sends everything to ${contact.email ? esc(contact.email) : "no address"}.
+        Tell them if that is wrong.</div>
+    </span>
+  </div>`;
+}
+
+function statusOf(inv) {
+  /* Withdrawn by the supplier, which is the only meaning this status has.
+     There is no "voided": an owner removing an invoice deletes it outright, so
+     it simply stops appearing. */
+  if (inv.status === "withdrawn") return ["gone", "You withdrew this"];
+  if (inv.payable_status && inv.payable_status !== "open") return ["paid", "Paid"];
+  if (inv.correction_at) return ["stop", "They asked for a change"];
+  if ((Number(inv.paid_amount) || 0) > 0.005) return ["part", "Part paid"];
+  if (inv.status === "accepted") return ["wait", "Accepted, not yet paid"];
+  if (inv.status === "declined") return ["stop", "Declined"];
+  if (inv.status === "pending") return ["wait", "With them for review"];
+  return ["wait", `Status: ${esc(inv.status || "unknown")}`];
+}
+
+/* ---------- signing in ---------- */
+
+function askForEmail(message) {
+  wrap.innerHTML = `
+    <div class="card">
+      <div class="eyebrow">Brasstally</div>
+      <h1>Your invoices, in one place</h1>
+      <p class="sub">Every business that has invited you, what they owe you, and a way to send the next
+        invoice. Your address, a six digit code, no password.</p>
+      <label for="em">Your email address</label>
+      <input id="em" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"/>
+      <button class="go" id="send">Send me a code</button>
+      ${message ? `<p class="err">${esc(message)}</p>` : ""}
+      ${token ? `<p><button class="ghost" id="skip">Just show me this one invoice link</button></p>` : ""}
+    </div>`;
+  document.getElementById("send").onclick = async () => {
+    const email = document.getElementById("em").value.trim();
+    if (!email) return;
+    const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    if (error) return askForEmail(error.message);
+    askForCode(email);
+  };
+  if (token) document.getElementById("skip").onclick = () => showPortal(token, { anonymous: true });
+}
+
+function askForCode(email) {
+  wrap.innerHTML = `
+    <div class="card">
+      <div class="eyebrow">Brasstally</div>
+      <h1>Check your email</h1>
+      <p class="sub">A six digit code is on its way to ${esc(email)}. It expires in an hour.</p>
+      <label for="code">The code</label>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"/>
+      <button class="go" id="go">Open my account</button>
+      <p><button class="ghost" id="back">Use a different address</button></p>
+      <p class="err" id="err"></p>
+    </div>`;
+  document.getElementById("back").onclick = () => askForEmail();
+  document.getElementById("go").onclick = async () => {
+    const code = document.getElementById("code").value.trim();
+    const { error } = await sb.auth.verifyOtp({ email, token: code, type: "email" });
+    if (error) { document.getElementById("err").textContent = error.message; return; }
+    start();
+  };
+}
+
+/* ---------- the businesses ---------- */
+
+async function loadPortals() {
+  const { data } = await sb.rpc("my_supplier_portals");
+  if (!data || data.ok === false) return [];
+  return data.portals || [];
+}
+
+function businessTabs() {
+  if (portals.length < 2) return "";
+  return `<div class="tabs">${portals.map((p) =>
+    `<button class="tab ${p.token === active ? "on" : ""}" data-token="${esc(p.token)}">
+       ${esc(p.business)}${p.outstanding > 0.005 ? ` · ${money(p.outstanding, p.currency)}` : ""}
+     </button>`).join("")}</div>`;
+}
+
+/* ---------- one business ---------- */
+
+async function showPortal(t, { anonymous = false } = {}) {
+  active = t;
+  /* A page that cannot reach the server says so, rather than throwing.
+     The catch used to cover only the parsing, so a failed request escaped. */
+  let d = null;
+  try {
+    const r = await fetch(`${PROJECT}/rest/v1/rpc/contact_portal_view`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: ANON, Authorization: `Bearer ${ANON}` },
+      body: JSON.stringify({ p_token: t }),
+    });
+    d = await r.json();
+  } catch {
+    /* Only replace what is on screen if there is nothing on it: a refresh
+       that fails should leave the last good page where it is. */
+    if (!wrap.querySelector(".card")) {
+      wrap.innerHTML = `<div class="card"><p class="none">Could not reach the server.
+        Check your connection and reload.</p></div>`;
+    }
+    return;
+  }
+  if (!d || d.ok === false) {
+    wrap.innerHTML = `<div class="card"><p class="none">${esc((d && d.error) || "This link is not active.")}</p></div>`;
+    return;
+  }
+
+  const ccy = d.currency || "CAD";
+  /* Three figures, because one of them alone misleads.
+   *
+   * "Outstanding" counts only what they have accepted, which is correct: an
+   * invoice under review is not owed. But a supplier reading $0.00 with two
+   * invoices waiting concludes the page is broken, so what is waiting is said
+   * too, and separately, because they are not the same kind of money.
+   *
+   * Anything in another currency is left out of both and counted apart. A
+   * conversion we cannot do honestly is worse than a total that says it is
+   * short, and the rate only exists once they accept it. */
+  const live = (d.invoices || []).filter((i) => i.status !== "withdrawn");
+  const owed = live.reduce((n, i) =>
+    i.payable_status === "open"
+      ? n + Math.max(0, Math.abs(Number(i.payable_amount) || 0) - (Number(i.paid_amount) || 0))
+      : n, 0);
+  const waiting = live.reduce((n, i) => {
+    if (i.payable_status || i.status !== "pending") return n;
+    if (i.currency && i.currency !== ccy) return n;
+    return n + Math.abs(Number(i.amount) || 0);
+  }, 0);
+  const unconverted = live.filter(
+    (i) => !i.payable_status && i.currency && i.currency !== ccy && i.status !== "declined",
+  ).length;
+  const paidTotal = (d.payments || []).reduce((n, p) => n + Math.abs(Number(p.amount) || 0), 0);
+
+  /* Finished business, folded away.
+   *
+   * A withdrawn invoice has to stay visible when it happens, or it vanishes
+   * and cannot be asked about. It does not have to stay in the way for ever:
+   * somebody sending a few a month would be reading past a column of
+   * struck-through rows that are nobody's business any more.
+   *
+   * Behind a count, not gone. One press brings them back. */
+  const shelved = (d.invoices || []).filter((i) => i.archived_at);
+  const onShow = (d.invoices || []).filter((i) => !i.archived_at);
+
+  const invoices = onShow.length
+    ? onShow.map((i) => {
+        const [cls, label] = statusOf(i);
+        /* Accepted, so the rate is known and the figure is theirs in your
+           currency. Not accepted and in another currency, so the only honest
+           figure is the one they invoiced, in the currency they invoiced it.
+           It was being printed with a dollar sign either way. */
+        const converted = i.payable_amount != null;
+        const amount = converted ? i.payable_amount : i.amount;
+        const shown = converted || !i.currency || i.currency === ccy
+          ? money(amount, ccy)
+          : `${esc(i.currency)} ${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+        const foreign = converted && i.currency && i.currency !== ccy
+          ? `<div class="small m">${esc(i.currency)} ${Math.abs(i.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>` : "";
+        const part = (Number(i.paid_amount) || 0) > 0.005 && i.payable_status === "open"
+          ? `<div class="small">${money(i.paid_amount, ccy)} received${i.balance_due ? `, rest due ${i.balance_due}` : ""}</div>` : "";
+        /* Their words, not a paraphrase. Somebody being asked to change
+           something needs to know what. */
+        const asked = i.correction_note
+          ? `<div class="small" style="color:var(--debit)">They asked: ${esc(i.correction_note)}</div>` : "";
+
+        /* What can still be done to this one.
+         *
+         * A declined invoice was a dead end: the label said no and the page
+         * offered nothing. Usually the answer is to send it again with the
+         * thing they objected to fixed, and that should be one tap rather
+         * than retyping it.
+         *
+         * Withdrawing is offered until they accept it. After that it is a
+         * payable in their books, possibly part paid, and changing it from
+         * out here would move their figures without their knowledge. */
+        const canRedo = i.status === "declined" || i.correction_at;
+        const canPull = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
+        /* Only something already finished can be put away. Hiding an invoice
+           still waiting on them would hide the thing this page is for. */
+        const canShelve = (i.status === "withdrawn" || i.status === "declined") && !i.archived_at;
+        /* Correcting one in place, rather than withdrawing and re-sending.
+           Two rows for one piece of work is how a business ends up asking
+           which is real. Allowed until they accept it; after that it is a
+           payable in their books and not ours to change. */
+        const canEdit = i.status !== "withdrawn" && i.status !== "accepted" && !i.payable_status;
+        const actions = (canRedo || canPull || canShelve)
+          ? `<div class="small" style="margin-top:4px">
+              ${canEdit ? `<button class="ghost" data-edit="${esc(i.id)}"
+                  data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
+                  data-num="${esc(i.invoice_no || "")}" data-due="${esc(i.due_on || i.due_date || "")}"
+                  data-ccy="${esc(i.currency || "")}"
+                  >Change it</button>` : ""}
+              ${canEdit && (canRedo || canPull || canShelve) ? " · " : ""}
+              ${canRedo ? `<button class="ghost" data-fix="${esc(i.invoice_no || "")}"
+                  data-desc="${esc(i.description || "")}" data-amt="${Math.abs(i.amount)}"
+                  data-ccy="${esc(i.currency || "")}"
+                  >Adjust and send again</button>` : ""}
+              ${canRedo && canPull ? " · " : ""}
+              ${canPull ? `<button class="ghost" data-pull="${esc(i.id)}"
+                  >Withdraw it</button>` : ""}
+              ${(canRedo || canPull) && canShelve ? " · " : ""}
+              ${canShelve ? `<button class="ghost" data-shelve="${esc(i.id)}"
+                  >Put it away</button>` : ""}
+            </div>` : "";
+        return `<div class="row">
+          <span>
+            <div>${esc(i.invoice_no || i.description || "Invoice")}</div>
+            <div class="small">${String(i.submitted_at || "").slice(0, 10)}${i.has_file ? " · attachment on file" : ""}</div>
+            ${part}${asked}${i.settled_on ? `<div class="small">paid ${i.settled_on}</div>` : ""}
+            ${actions}
+            <span class="pill ${cls}">${label}</span>
+          </span>
+          <span class="m">${shown}${foreign}</span>
+        </div>`;
+      }).join("")
+    : `<p class="none">Nothing yet.</p>`;
+
+  const payments = (d.payments || []).length
+    ? d.payments.map((p) => `<div class="row">
+        <span><div>${esc(p.description || "Payment")}</div><div class="small">${p.date}</div></span>
+        <span class="m">${money(p.amount, ccy)}</span></div>`).join("")
+    : `<p class="none">Nothing has been paid out yet.</p>`;
+
+  /* An empty account is a first visit, not a failure.
+   *
+   * Three cards reading "Nothing yet" under a total of $0.00 tells somebody
+   * who has just followed an invitation that they have arrived somewhere
+   * broken. What they need is what this is, what happens when they use it, and
+   * the one thing there is to do.
+   *
+   * Once anything exists the ledger view is the right one, so this replaces it
+   * only while there is genuinely nothing to show. */
+  const brandNew = !(d.invoices || []).length && !(d.payments || []).length;
+
+  /* It lasts as long as it is useful and no longer.
+   *
+   * Dismissible, but somebody who leaves this open on a desk should not come
+   * back tomorrow to a confirmation about something they sent yesterday. Ten
+   * minutes is longer than anybody needs to read it and shorter than a
+   * working day. */
+  if (flash && Date.now() - flash.at > 10 * 60 * 1000) flash = null;
+
+  const flashCard = flash
+    ? `<div class="card" style="border-color:var(--credit)">
+         <div style="display:flex;align-items:flex-start;gap:10px">
+           <span style="flex:1">
+             <div style="color:var(--credit);font-weight:600">${esc(flash.title)}</div>
+             <div class="small" style="margin-top:2px">${esc(flash.detail)}</div>
+           </span>
+           <button class="helpbtn" id="dropflash" aria-label="Dismiss">&#10005;</button>
+         </div>
+       </div>`
+    : "";
+
+  wrap.innerHTML = `
+    ${businessTabs()}
+    ${flashCard}
+    ${brandNew ? `
+    <div class="card">
+      <div class="eyebrow">${esc(d.business)}</div>
+      <h1>${esc(firstName(d.contact.name))}, you have not sent anything yet</h1>
+      <p class="sub">${esc(d.business)} has given you this page so you can invoice them and see where
+        each one stands, without emailing anybody to ask.</p>
+      <p class="sub" style="margin:0">Send one below and you will see it here, from review through to
+        paid. Bookmark the address: it stays live until ${esc(d.business)} turns it off.
+        <button class="ghost" id="help2">How this works</button></p>
+    </div>
+    ` : `
+    <div class="card">
+      <div class="eyebrow">${esc(d.business)}</div>
+      <h1>${esc(firstName(d.contact.name))}, here is where you stand</h1>
+      <p class="sub">Everything between ${esc(d.contact.name || "you")} and ${esc(d.business)}. Always current.</p>
+      ${who(d.contact, d.business)}
+      <div class="total"><span>Outstanding to you</span><span class="m">${money(owed, ccy)}</span></div>
+      ${waiting > 0.005 ? `<div class="total" style="border:none;padding-top:4px">
+        <span class="small">Waiting on their review</span>
+        <span class="m small">${money(waiting, ccy)}</span></div>` : ""}
+      ${unconverted > 0 ? `<div class="total" style="border:none;padding-top:2px">
+        <span class="small">${unconverted} in another currency, converted when accepted</span>
+        <span class="m small"></span></div>` : ""}
+      ${paidTotal > 0.005 ? `<div class="total" style="border:none;padding-top:2px">
+        <span class="small">Paid to you so far</span>
+        <span class="m small">${money(paidTotal, ccy)}</span></div>` : ""}
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Invoices you have sent</div>
+      ${invoices}
+      ${shelved.length ? `<div class="row" style="border-top:1px solid var(--line)">
+        <button class="ghost" id="showshelved">${shelved.length} put away</button>
+      </div>
+      <div id="shelved" style="display:none">${shelved.map((i) => `
+        <div class="row">
+          <span>
+            <div style="text-decoration:line-through;color:var(--faint)">${esc(i.invoice_no || i.description || "Invoice")}</div>
+            <div class="small">${String(i.submitted_at || "").slice(0, 10)} · ${esc(statusOf(i)[1])}</div>
+            <button class="ghost" data-unshelve="${esc(i.id)}">Bring it back</button>
+          </span>
+          <span class="m small">${money(i.payable_amount != null ? i.payable_amount : i.amount, ccy)}</span>
+        </div>`).join("")}</div>` : ""}
+    </div>
+    <div class="card"><div class="eyebrow">Payments received</div>${payments}</div>
+    `}
+
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="eyebrow" id="form-title" style="margin:0;flex:1">${brandNew ? "Your first invoice" : "Send a new invoice"}</div>
+        <button class="helpbtn" id="clear" title="Empty the form" aria-label="Empty the form"
+          style="display:none;margin:0">&#10005;</button>
+      </div>
+      <div style="height:12px"></div>
+      <p class="sub">${brandNew
+        ? `Fill this in and it goes straight to ${esc(d.business)}. A description and an amount are enough.`
+        : "It arrives in their books for review. Nothing is owed until they accept it."}</p>
+      <label for="desc">What it is for</label>
+      <input id="desc" placeholder="Framing, second floor"/>
+      <label for="amt">Amount</label>
+      <input id="amt" inputmode="decimal" placeholder="1250.00"/>
+      <label for="ccy">Currency</label>
+      <select id="ccy">
+        ${["CAD","USD","EUR","GBP","PKR","INR","AED","AUD"].map((c) =>
+          `<option value="${c}" ${c === ccy ? "selected" : ""}>${c}</option>`).join("")}
+      </select>
+      <label for="num">Your invoice number, if you use one</label>
+      <input id="num" placeholder="INV-014"/>
+      <label for="due">Due by</label>
+      <input id="due" type="date"/>
+
+      <label for="file">The invoice itself, if you have a PDF</label>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Attach a file, or drop one here">
+        <b>Drop a file here</b> or tap to choose<br/>
+        <span class="small">Optional. The details above are enough on their own.</span>
+      </div>
+      <input id="file" type="file" accept=".pdf,image/*" style="position:absolute;width:1px;height:1px;opacity:0"/>
+      <div class="small" id="fname"></div>
+
+      <button class="go" id="send">Send it</button>
+      <p class="err" id="serr"></p><p class="ok" id="sok"></p>
+    </div>
+
+    ${anonymous ? `<div class="card" style="text-align:center">
+      <p class="sub" style="margin:0 0 6px">Working with more than one business on Brasstally?</p>
+      <button class="ghost" id="signin">Sign in to see them all</button></div>` : ""}
+
+    <footer>
+      ${anonymous
+        ? "Anyone with this address can read this page, so treat it like a statement."
+        : `Signed in as ${esc(d.contact.email || "")}. <button class="ghost" id="out">Sign out</button>`}
+      <br/><span style="opacity:.6">${BUILD}</span>
+    </footer>`;
+
+  for (const b of wrap.querySelectorAll(".tab")) {
+    b.onclick = () => showPortal(b.dataset.token);
+  }
+
+  /* Answering a correction fills the form from the invoice being corrected.
+     Retyping something they already sent, to fix one line of it, is the kind
+     of small friction that makes people email a PDF instead. */
+  for (const b of wrap.querySelectorAll("[data-fix]")) {
+    b.onclick = () => {
+      document.getElementById("desc").value = b.dataset.desc || "";
+      document.getElementById("amt").value = b.dataset.amt || "";
+      document.getElementById("num").value = b.dataset.fix || "";
+      if (b.dataset.ccy) document.getElementById("ccy").value = b.dataset.ccy;
+      // Say which invoice is being answered, so the form is not a mystery.
+      document.getElementById("form-title").textContent =
+        b.dataset.fix ? `Replacing ${b.dataset.fix}` : "Replacing that invoice";
+      // The way out only exists once there is something to back out of.
+      document.getElementById("clear").style.display = "inline-flex";
+      document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("desc").focus();
+    };
+  }
+
+  /* Putting one away, and bringing it back.
+   *
+   * No confirmation on either: both are reversible in one press, and asking
+   * somebody to confirm something they can undo instantly is a toll rather
+   * than a safeguard. */
+  const shelve = async (id, archive) => {
+    const { data, error } = await sb.rpc("portal_archive_invoice", {
+      p_token: active, p_invoice_id: id, p_archive: archive,
+    });
+    if (error || data?.ok === false) return error?.message || (data && data.error);
+    await showPortal(active, { anonymous: !portals.length });
+    return null;
+  };
+
+  for (const b of wrap.querySelectorAll("[data-shelve]")) {
+    b.onclick = async () => {
+      b.textContent = "Putting away";
+      const why = await shelve(b.dataset.shelve, true);
+      if (why) {
+        b.insertAdjacentHTML("afterend", `<div class="small" style="color:var(--debit)">${esc(why)}</div>`);
+        b.textContent = "Put it away";
+      }
+    };
+  }
+
+  const shelvedToggle = document.getElementById("showshelved");
+  if (shelvedToggle) {
+    shelvedToggle.onclick = () => {
+      const box = document.getElementById("shelved");
+      const open = box.style.display !== "none";
+      box.style.display = open ? "none" : "block";
+      shelvedToggle.textContent = open
+        ? `${box.children.length} put away`
+        : "Hide those";
+    };
+  }
+
+  for (const b of wrap.querySelectorAll("[data-unshelve]")) {
+    b.onclick = async () => {
+      b.textContent = "Bringing it back";
+      const why = await shelve(b.dataset.unshelve, false);
+      if (why) {
+        b.insertAdjacentHTML("afterend", `<div class="small" style="color:var(--debit)">${esc(why)}</div>`);
+        b.textContent = "Bring it back";
+      }
+    };
+  }
+
+  /* Withdrawing asks first, because it cannot be undone from this side: the
+     business would have to be asked to reinstate it. */
+  /* Changing an invoice in place.
+   *
+   * The form is the one already on the page, filled from the invoice and
+   * pointed at it. A second form would drift from the first, and this one
+   * already knows how to take a currency and a due date. */
+  for (const b of wrap.querySelectorAll("[data-edit]")) {
+    b.onclick = () => {
+      editingId = b.dataset.edit;
+      document.getElementById("desc").value = b.dataset.desc || "";
+      document.getElementById("amt").value = b.dataset.amt || "";
+      document.getElementById("num").value = b.dataset.num || "";
+      document.getElementById("due").value = b.dataset.due || "";
+      if (b.dataset.ccy) document.getElementById("ccy").value = b.dataset.ccy;
+      document.getElementById("form-title").textContent = `Changing ${b.dataset.num || "that invoice"}`;
+      document.getElementById("clear").style.display = "inline-flex";
+      document.getElementById("send").textContent = "Send the change";
+      document.getElementById("desc").scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("desc").focus();
+    };
+  }
+
+  for (const b of wrap.querySelectorAll("[data-pull]")) {
+    b.onclick = async () => {
+      if (!confirm("Withdraw this invoice? They will see it as withdrawn, and you would have to send a new one.")) return;
+      b.textContent = "Withdrawing";
+      const { data, error } = await sb.rpc("portal_withdraw_invoice", {
+        p_token: active, p_invoice_id: b.dataset.pull,
+      });
+      /* Say what went wrong, in the server's words.
+       *
+       * This printed "Could not withdraw it" whatever happened, so a 400 from
+       * PostgREST arrived as a shrug. The message is usually specific enough
+       * to act on: a function missing from the schema cache names itself. */
+      if (error || data?.ok === false) {
+        const why = error?.message || error?.hint || (data && data.error) || "It did not withdraw.";
+        b.insertAdjacentHTML("afterend",
+          `<div class="small" style="color:var(--debit)">${esc(why)}</div>`);
+        b.textContent = "Withdraw it";
+        return;
+      }
+      /* Reload from the server rather than trusting what is on screen.
+         If the row still comes back as anything but withdrawn, the update did
+         not take, and the page will say so rather than offering the button
+         again as though nothing happened. */
+      await showPortal(active, { anonymous: !portals.length });
+    };
+  }
+  window.__business = d.business;
+  /* The tab says whose account it is, which matters to somebody who works with
+     several businesses and keeps a few of these open. */
+  document.title = `${d.contact.name || "Your account"} · ${d.business}`;
+  const me = document.getElementById("whoami");
+  if (me) me.textContent = d.contact.name ? `· ${d.contact.name}` : "";
+  const df = document.getElementById("dropflash");
+  if (df) df.onclick = () => { flash = null; showPortal(active, { anonymous }).catch(() => {}); };
+  const help2 = document.getElementById("help2");
+  if (help2) help2.onclick = () => openHelp(d.business);
+  const signin = document.getElementById("signin");
+  if (signin) signin.onclick = () => askForEmail();
+  const out = document.getElementById("out");
+  if (out) out.onclick = async () => { await sb.auth.signOut(); start(); };
+
+  /* The file, on the same terms as the public form: one target for dropping
+     and tapping, because a drop zone that is not clickable is a trap on a
+     phone. */
+  const drop = document.getElementById("drop");
+  const fileInput = document.getElementById("file");
+  const showFile = () => {
+    const f = fileInput.files && fileInput.files[0];
+    document.getElementById("fname").textContent = f ? `${f.name}, ${(f.size / 1048576).toFixed(1)} MB` : "";
+    drop.querySelector("b").textContent = f ? "Attached" : "Drop a file here";
+  };
+  /* Choosing a file is not leaving the page.
+   *
+   * The blur and focus a picker causes look exactly like switching tabs.
+   * Holding the refresh off for a moment either side means the ordinary case
+   * cannot be mistaken for a return, whatever is or is not typed. */
+  const holdRefresh = () => { lastLook = Date.now() + 4000; };
+  drop.onclick = () => { holdRefresh(); fileInput.click(); };
+  drop.onkeydown = (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); holdRefresh(); fileInput.click(); }
+  };
+  fileInput.onchange = () => { holdRefresh(); showFile(); };
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    const dt = new DataTransfer(); dt.items.add(f);
+    fileInput.files = dt.files; showFile();
+  });
+
+  const originalFormTitle = document.getElementById("form-title").textContent;
+
+  /* Emptying the form.
+   *
+   * "Adjust and send again" fills it from an invoice, and until now there was
+   * no way back out: somebody who changed their mind had to clear four fields
+   * by hand or reload the page. */
+  document.getElementById("clear").onclick = () => {
+    editingId = null;
+    document.getElementById("send").textContent = "Send it";
+    for (const id of ["desc", "amt", "num", "due"]) document.getElementById(id).value = "";
+    fileInput.value = "";
+    showFile();
+    document.getElementById("serr").textContent = "";
+    document.getElementById("sok").textContent = "";
+    document.getElementById("form-title").textContent = originalFormTitle;
+    document.getElementById("clear").style.display = "none";
+  };
+
+  document.getElementById("send").onclick = async () => {
+    const amount = Number(String(document.getElementById("amt").value).replace(/[^0-9.]/g, ""));
+    const err = document.getElementById("serr");
+    const ok = document.getElementById("sok");
+    err.textContent = ""; ok.textContent = "";
+    if (!(amount > 0)) { err.textContent = "Enter an amount greater than zero."; return; }
+
+    /* Upload first, so an invoice never arrives promising an attachment that
+       failed on the way. */
+    let filePath = null;
+    const file = fileInput.files && fileInput.files[0];
+    if (file) {
+      if (file.size > 8 * 1024 * 1024) {
+        err.textContent = `That file is ${(file.size / 1048576).toFixed(1)} MB, and 8 MB is the limit.`;
+        return;
+      }
+      ok.textContent = "Uploading the file…";
+      try {
+        const slot = await fetch(`${PROJECT}/functions/v1/invoice-mail`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` },
+          body: JSON.stringify({ action: "portal-upload", token: active, filename: file.name }),
+        }).then((r) => r.json());
+        if (!slot?.ok) throw new Error(slot?.error || "Could not prepare the upload.");
+        const put = await fetch(slot.signedUrl, { method: "PUT", body: file });
+        if (!put.ok) throw new Error("The file did not upload.");
+        filePath = slot.path;
+      } catch (e) {
+        ok.textContent = "";
+        err.textContent = e.message || "The file did not upload. Try again, or send without it.";
+        return;
+      }
+      ok.textContent = "";
+    }
+
+    /* Changing one, rather than sending another.
+     *
+     * Same button, same fields, and the server decides whether it is allowed:
+     * an invoice they have already accepted is refused there, not merely left
+     * without a button. */
+    if (editingId) {
+      const { data: ed, error: edErr } = await sb.rpc("portal_edit_invoice", {
+        p_token: active,
+        p_invoice_id: editingId,
+        p_amount: amount,
+        p_description: document.getElementById("desc").value.trim() || null,
+        p_invoice_no: document.getElementById("num").value.trim() || null,
+        p_due_date: document.getElementById("due").value || null,
+        p_currency: document.getElementById("ccy").value,
+        p_note: null,
+      });
+      if (edErr || ed?.ok === false) {
+        err.textContent = edErr?.message || ed?.error || "That change did not go through.";
+        return;
+      }
+
+      /* Both sides told, without waiting: the change is already recorded and a
+         slow mail service should not hold up the confirmation. */
+      fetch(`${PROJECT}/functions/v1/invoice-mail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` },
+        body: JSON.stringify({
+          action: "portal-edited",
+          token: active,
+          was: ed.was,
+          now: ed.now,
+          invoice_no: ed.invoice_no,
+          currency: document.getElementById("ccy").value,
+        }),
+      }).catch(() => {});
+
+      const moved = Math.abs(Number(ed.was) - Number(ed.now)) > 0.005;
+      flash = {
+        at: Date.now(),
+        title: moved
+          ? `${ed.invoice_no || "That invoice"} is now ${money(ed.now, ccy)}`
+          : `${ed.invoice_no || "That invoice"} updated`,
+        detail: `${d.business} has been emailed, and it is back with them for review. Nothing was owed on the old figure.`,
+      };
+      editingId = null;
+      ok.textContent = "";
+      showPortal(active, { anonymous }).catch(() => {});
+      return;
+    }
+
+    const { data, error } = await sb.rpc("portal_submit_invoice", {
+      p_token: active,
+      p_amount: amount,
+      p_description: document.getElementById("desc").value.trim() || null,
+      p_invoice_no: document.getElementById("num").value.trim() || null,
+      p_due_date: document.getElementById("due").value || null,
+      p_currency: document.getElementById("ccy").value,
+      p_lines: null,
+      p_file_path: filePath,
+    });
+    if (error) { err.textContent = error.message; return; }
+    if (data && data.ok === false) { err.textContent = data.error; return; }
+    /* Tell them, then say so.
+     *
+     * Fired without waiting: a slow mail service should not hold up the
+     * confirmation for something that has already been recorded. */
+    fetch(`${PROJECT}/functions/v1/invoice-mail`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON}` },
+      body: JSON.stringify({
+        action: "portal-submitted",
+        token: active,
+        amount,
+        description: document.getElementById("desc").value.trim() || null,
+        invoice_no: document.getElementById("num").value.trim() || null,
+        due_date: document.getElementById("due").value || null,
+        currency: document.getElementById("ccy").value,
+      }),
+    }).catch(() => {});
+
+    /* Say what was sent, not only that something was.
+     *
+     * "Sent" alone leaves somebody checking the list to be sure it was the
+     * right amount. Naming it means they do not have to. */
+    const sentFor = document.getElementById("desc").value.trim();
+    const sentCcy = document.getElementById("ccy").value;
+    flash = {
+      at: Date.now(),
+      title: `${sentCcy === ccy ? money(amount, ccy) : `${sentCcy} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} sent to ${d.business}`,
+      detail: `${sentFor ? `${sentFor}. ` : ""}It is with them for review and they have been emailed.${filePath ? " Your attachment went with it." : ""}`,
+    };
+    ok.textContent = "";
+    showPortal(active, { anonymous }).catch(() => {});
+  };
+}
+
+/* ---------- where we begin ---------- */
+
+/* The mark opens help from anywhere, including before anything has loaded. */
+document.getElementById("help").onclick = () => openHelp(window.__business);
+
+/* Current when they look at it.
+ *
+ * A supplier leaves this open, gets paid on Tuesday, and looks again on
+ * Thursday at a page that still says "accepted, not yet paid". The same rule
+ * as the app: refresh on returning to it, and quietly while it is in front of
+ * somebody. */
+let lastLook = Date.now();
+
+/* Anything typed but not sent.
+ *
+ * A refresh redraws the whole page, so it must never run over work in
+ * progress. Opening a file picker blurs the window and closing it fires
+ * focus, which is indistinguishable from coming back to the tab: the refresh
+ * fired and took everything typed with it, including the file just chosen.
+ *
+ * So the question is not "did they leave" but "is there anything to lose". */
+const formDirty = () => {
+  const f = document.getElementById("file");
+  if (f && f.files && f.files.length) return true;
+  return ["desc", "amt", "num", "due"].some((id) => {
+    const el = document.getElementById(id);
+    return el && String(el.value || "").trim() !== "";
+  });
+};
+
+const refreshIfStale = () => {
+  if (!active || document.visibilityState !== "visible") return;
+  if (Date.now() - lastLook < 20000) return;
+  if (document.querySelector(".sheet")) return;
+  if (formDirty()) return;
+  lastLook = Date.now();
+  /* A background refresh that fails should fail quietly.
+   *
+   * This called an async function and ignored the promise, so a dropped
+   * connection surfaced as an uncaught FetchError in the console with nothing
+   * on the page to match it. Nobody asked for this refresh; it should not
+   * report its own failure. */
+  showPortal(active, { anonymous: !portals.length }).catch(() => {});
+};
+document.addEventListener("visibilitychange", refreshIfStale);
+window.addEventListener("focus", refreshIfStale);
+setInterval(refreshIfStale, 5 * 60 * 1000);
+
+async function start() {
+  const { data: { session } } = await sb.auth.getSession();
+
+  if (session) {
+    portals = await loadPortals();
+    if (portals.length) {
+      /* If they arrived by link, open that business; otherwise the first. */
+      const wanted = portals.find((p) => p.token === token) || portals[0];
+      return showPortal(wanted.token);
+    }
+    /* Signed in, but no business has invited this address. Saying so beats an
+       empty page that looks broken. */
+    wrap.innerHTML = `<div class="card">
+      <h1>Nothing here yet</h1>
+      <p class="sub">No business has given this address an account. If you were sent a link, open that
+      instead, or ask them to invite this address.</p>
+      <button class="ghost" id="out">Sign out</button></div>`;
+    document.getElementById("out").onclick = async () => { await sb.auth.signOut(); start(); };
+    return;
+  }
+
+  /* Not signed in. A link gets you straight in; without one, ask. */
+  if (token) return showPortal(token, { anonymous: true });
+  askForEmail();
+}
+
+start();
+</script>
+</body>
+</html>
